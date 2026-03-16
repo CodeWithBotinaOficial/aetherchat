@@ -3,6 +3,8 @@ import UnoCSS from 'unocss/vite';
 import { defineConfig } from 'vite';
 import presetUno from '@unocss/preset-uno';
 import presetWebFonts from '@unocss/preset-web-fonts';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 function forceBrowserConditionsForVitest() {
   return {
@@ -38,7 +40,22 @@ function forceBrowserConditionsForVitest() {
   };
 }
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const isVitest = Boolean(process.env.VITEST);
+const svelteClientEntry = path.resolve(__dirname, 'node_modules/svelte/src/index-client.js');
+const svelteStoreClientEntry = path.resolve(__dirname, 'node_modules/svelte/src/store/index-client.js');
+
 export default defineConfig({
+  resolve: {
+    // Vitest runs modules through Vite SSR in Node. We want the client runtime in jsdom tests.
+    alias: isVitest
+      ? [
+          { find: /^svelte$/, replacement: svelteClientEntry },
+          { find: /^svelte\/store$/, replacement: svelteStoreClientEntry }
+        ]
+      : []
+  },
   plugins: [
     UnoCSS({
       presets: [

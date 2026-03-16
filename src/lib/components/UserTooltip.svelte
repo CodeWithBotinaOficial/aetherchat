@@ -1,22 +1,64 @@
 <script>
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, tick } from 'svelte';
   import { fade, scale } from 'svelte/transition';
 
   /** @type {{ username: string, age: number, color: string, avatarBase64: string } | null} */
   export let user = null;
   /** @type {{ x: number, y: number } | null} */
   export let position = null;
+  /** @type {(() => void) | null} */
+  export let cancelHide = null;
 
   const dispatch = createEventDispatcher();
 
-  $: stylePos =
-    user && position
-      ? `left:${Math.max(12, position.x + 12)}px; top:${Math.max(12, position.y + 12)}px;`
-      : '';
+  const TOOLTIP_ID = 'aether-user-tooltip';
+  /** @type {HTMLDivElement|null} */
+  let el = null;
+  let stylePos = '';
+  let raf = 0;
+
+  async function updatePosition() {
+    if (!user || !position) return;
+    await tick();
+    if (!el) return;
+
+    const margin = 12;
+    const rect = el.getBoundingClientRect();
+
+    let left = position.x + margin;
+    let top = position.y + margin;
+
+    // Flip if overflow.
+    if (left + rect.width + margin > window.innerWidth) left = position.x - rect.width - margin;
+    if (top + rect.height + margin > window.innerHeight) top = position.y - rect.height - margin;
+
+    // Clamp to viewport.
+    left = Math.max(margin, Math.min(left, window.innerWidth - rect.width - margin));
+    top = Math.max(margin, Math.min(top, window.innerHeight - rect.height - margin));
+
+    stylePos = `left:${left}px; top:${top}px;`;
+  }
+
+  $: if (user && position) {
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => void updatePosition());
+  }
+  $: if (!user || !position) {
+    if (raf) cancelAnimationFrame(raf);
+    stylePos = '';
+  }
 
   function startChat() {
     if (!user) return;
     dispatch('startPrivateChat', { user });
+  }
+
+  function handleTooltipMouseEnter() {
+    cancelHide?.();
+  }
+
+  function handleTooltipMouseLeave() {
+    dispatch('close');
   }
 </script>
 
@@ -25,6 +67,12 @@
     class="fixed z-60"
     style={stylePos}
     in:fade={{ duration: 120 }}
+    id={TOOLTIP_ID}
+    role="tooltip"
+    data-aether-tooltip="true"
+    bind:this={el}
+    on:mouseenter={handleTooltipMouseEnter}
+    on:mouseleave={handleTooltipMouseLeave}
   >
     <div
       class="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-overlay)] shadow-[var(--shadow-md)] px-[var(--space-md)] py-[var(--space-md)] backdrop-blur"

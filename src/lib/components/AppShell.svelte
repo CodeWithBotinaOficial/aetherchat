@@ -19,16 +19,25 @@
 
   function tabButtonClass(isActive) {
     return [
-      'w-full flex items-center gap-[var(--space-sm)] px-[var(--space-md)] py-[var(--space-sm)] text-left hover:bg-[var(--bg-elevated)]',
-      isActive ? 'bg-[var(--bg-elevated)] text-[var(--accent)]' : 'text-[var(--text-primary)]'
+      'w-full flex items-center gap-[var(--space-sm)] px-[var(--space-md)] py-[var(--space-sm)] text-left transition-all duration-150 ease-in-out',
+      isActive
+        ? 'bg-[var(--accent-subtle)] text-[var(--text-primary)]'
+        : 'bg-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
     ].join(' ');
   }
 
-  function mobileTabClass(isActive) {
+  function tabButtonStyle(isActive) {
+    return `border-left: 3px solid ${isActive ? 'var(--accent)' : 'transparent'};`;
+  }
+
+  function mobileTabClass(_isActive) {
     return [
-      'rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] py-[var(--space-sm)] grid place-items-center',
-      isActive ? 'bg-[var(--accent-subtle)]' : ''
+      'rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] py-[var(--space-sm)] grid place-items-center transition-all duration-150 ease-in-out'
     ].join(' ');
+  }
+
+  function mobileIconClass(isActive) {
+    return isActive ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]';
   }
 </script>
 
@@ -49,6 +58,7 @@
         {#each tabs as t (t.key)}
           <button
             class={tabButtonClass(active === t.key)}
+            style={tabButtonStyle(active === t.key)}
             on:click={() => (active = t.key)}
             title={t.label}
           >
@@ -119,7 +129,12 @@
               aria-label={t.label}
               title={t.label}
             >
-              <svg class="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <svg
+                class={`h-[18px] w-[18px] ${mobileIconClass(active === t.key)}`}
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
                 <path d={iconPath(t.icon)} />
               </svg>
             </button>

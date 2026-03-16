@@ -3,7 +3,7 @@
   import { addGlobalMessage, globalMessages, loadGlobalMessages } from '$lib/stores/chatStore.js';
   import { peer } from '$lib/stores/peerStore.js';
   import { user } from '$lib/stores/userStore.js';
-  import { broadcastToAll } from '$lib/services/peer.js';
+  import { broadcastGlobalMessage } from '$lib/services/peer.js';
   import { generateInitialsAvatar } from '$lib/utils/avatar.js';
 
   import ChatInput from '$lib/components/ChatInput.svelte';
@@ -16,6 +16,13 @@
   // Tooltip state
   let tooltipUser = null;
   let tooltipPos = null;
+  let tooltipKey = '';
+  /** @type {(() => void) | null} */
+  let tooltipCancelHide = null;
+  const TOOLTIP_ID = 'aether-user-tooltip';
+  const bubbleRefs = Object.create(null);
+  let isTouch = false;
+  let outsideListenerAttached = false;
   /** @type {Record<string, string>} */
   const avatarCache = Object.create(null);
 
@@ -73,7 +80,7 @@
   }
 
   async function onHoverEnter(e) {
-    const { message, position } = e.detail;
+    const { message, messageKey, position } = e.detail;
     const avatarBase64 = await ensureAvatar(message.username, message.color);
     tooltipUser = {
       username: message.username,
@@ -82,6 +89,10 @@
       avatarBase64
     };
     tooltipPos = position;
+    tooltipKey = String(messageKey ?? '');
+    tooltipCancelHide = bubbleRefs[tooltipKey]?.cancelHide ?? null;
+
+    if (isTouch) attachOutsideClose();
   }
 
   function onHoverMove(e) {
@@ -91,37 +102,46 @@
   function onHoverLeave() {
     tooltipUser = null;
     tooltipPos = null;
+    tooltipKey = '';
+    tooltipCancelHide = null;
+    detachOutsideClose();
+  }
+
+  function onTooltipClose() {
+    onHoverLeave();
   }
 
   async function onSend(e) {
     const u = $user;
     if (!u) return;
 
-    const msg = {
-      peerId: $peer.peerId ?? 'local',
-      username: u.username,
-      age: u.age,
-      color: u.color,
-      text: e.detail.text,
-      timestamp: Date.now()
-    };
-
-    // Persist locally and show immediately.
-    await addGlobalMessage(msg);
-
-    // Best-effort broadcast.
-    broadcastToAll({
-      type: 'GLOBAL_MSG',
-      from: { username: u.username, peerId: $peer.peerId ?? 'local', color: u.color, age: u.age },
-      payload: { message: msg },
-      timestamp: msg.timestamp
-    });
+    if ($peer.peerId) {
+      // Peer service handles optimistic add + network broadcast.
+      await broadcastGlobalMessage(e.detail.text, {
+        username: u.username,
+        color: u.color,
+        age: u.age,
+        avatarBase64: u.avatarBase64
+      });
+    } else {
+      // Offline fallback: local-only message.
+      await addGlobalMessage({
+        peerId: 'local',
+        username: u.username,
+        age: u.age,
+        color: u.color,
+        text: e.detail.text,
+        timestamp: Date.now()
+      });
+    }
 
     await scrollToBottom();
     computeRange($globalMessages);
   }
 
   onMount(() => {
+    isTouch = window.matchMedia?.('(hover: none)').matches || (navigator.maxTouchPoints ?? 0) > 0;
+
     const unsubscribe = globalMessages.subscribe((msgs) => {
       computeRange(msgs);
       if (listEl && maybeAutoScroll()) void scrollToBottom();
@@ -151,6 +171,32 @@
   $: padTop = windowed ? start * EST_ITEM_H : 0;
   $: padBottom = windowed ? Math.max(0, (msgs.length - end) * EST_ITEM_H) : 0;
 
+  function attachOutsideClose() {
+    if (outsideListenerAttached) return;
+    outsideListenerAttached = true;
+
+    const handler = (ev) => {
+      if (!tooltipUser) return;
+      const path = ev.composedPath?.() ?? [];
+      const hit = path.some(
+        (n) => n?.dataset?.aetherTooltip === 'true' || n?.dataset?.aetherBubble === 'true'
+      );
+      if (!hit) onHoverLeave();
+    };
+
+    document.addEventListener('pointerdown', handler, true);
+    document.addEventListener('mousedown', handler, true);
+
+    detachOutsideClose = () => {
+      if (!outsideListenerAttached) return;
+      outsideListenerAttached = false;
+      document.removeEventListener('pointerdown', handler, true);
+      document.removeEventListener('mousedown', handler, true);
+      detachOutsideClose = () => {};
+    };
+  }
+
+  let detachOutsideClose = () => {};
 </script>
 
 <div class="h-full flex flex-col">
@@ -175,7 +221,10 @@
             <div class="mb-[var(--space-sm)]">
               <MessageBubble
                 message={m}
+                messageKey={m.id ?? `${m.timestamp}-${m.username}-${m.text}`}
+                bind:this={bubbleRefs[String(m.id ?? `${m.timestamp}-${m.username}-${m.text}`)]}
                 isOwn={$user?.username === m.username}
+                tooltipId={tooltipUser && tooltipKey === String(m.id ?? `${m.timestamp}-${m.username}-${m.text}`) ? TOOLTIP_ID : ''}
                 on:hoverEnter={onHoverEnter}
                 on:hoverMove={onHoverMove}
                 on:hoverLeave={onHoverLeave}
@@ -189,5 +238,11 @@
 
   <ChatInput on:send={onSend} placeholder="Message the global room..." />
 
-  <UserTooltip user={tooltipUser} position={tooltipPos} on:startPrivateChat={onStartPrivateChat} />
+  <UserTooltip
+    user={tooltipUser}
+    position={tooltipPos}
+    cancelHide={tooltipCancelHide}
+    on:close={onTooltipClose}
+    on:startPrivateChat={onStartPrivateChat}
+  />
 </div>

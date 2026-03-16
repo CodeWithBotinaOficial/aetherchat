@@ -12,11 +12,14 @@
 
   /** @type {{ message: Message, isOwn: boolean }} */
   export let message;
+  export let messageKey = '';
   export let isOwn = false;
+  export let tooltipId = '';
 
   const dispatch = createEventDispatcher();
 
   let hovered = false;
+  let hideTimeout = null;
 
   function formatRelative(ts) {
     const diff = Date.now() - ts;
@@ -34,26 +37,55 @@
   $: relativeTime = formatRelative(message.timestamp);
   $: initials = (message.username?.trim()?.[0] ?? '?').toUpperCase();
 
-  function onEnter(e) {
+  function getPositionFromEvent(e) {
+    if (typeof e?.clientX === 'number' && typeof e?.clientY === 'number') {
+      return { x: e.clientX, y: e.clientY };
+    }
+    const rect = e.currentTarget?.getBoundingClientRect?.();
+    if (rect) return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    return { x: 0, y: 0 };
+  }
+
+  function handleBubbleMouseEnter(e) {
     hovered = true;
+    cancelHide();
     dispatch('hoverEnter', {
       message,
-      position: { x: e.clientX, y: e.clientY }
+      messageKey,
+      position: getPositionFromEvent(e)
     });
   }
 
+  function handleBubbleMouseLeave() {
+    hovered = false;
+    hideTimeout = setTimeout(() => {
+      dispatch('hoverLeave', { message, messageKey });
+    }, 120);
+  }
 
   function onMove(e) {
     if (!hovered) return;
     dispatch('hoverMove', {
       message,
+      messageKey,
       position: { x: e.clientX, y: e.clientY }
     });
   }
 
-  function onLeave() {
-    hovered = false;
-    dispatch('hoverLeave', { message });
+  export function cancelHide() {
+    if (hideTimeout) clearTimeout(hideTimeout);
+    hideTimeout = null;
+  }
+
+  function onPointerUp(e) {
+    // Touch / pen: open tooltip on tap.
+    const pointerType = e?.pointerType;
+    if (pointerType && pointerType === 'mouse') return;
+    dispatch('hoverEnter', {
+      message,
+      messageKey,
+      position: getPositionFromEvent(e)
+    });
   }
 
   $: bubbleShadow = hovered
@@ -61,16 +93,19 @@
     : 'none';
 </script>
 
-  <div class={isOwn ? 'flex justify-end' : 'flex justify-start'}>
-    <div
-      class="max-w-[min(720px,100%)] w-fit rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-surface)] px-[var(--space-md)] py-[var(--space-sm)]"
-      style={`border-left: 3px solid ${message.color}; box-shadow: ${bubbleShadow};`}
-      role="group"
-      aria-label={`Message from ${message.username}`}
-      on:mouseenter={onEnter}
-      on:mousemove={onMove}
-      on:mouseleave={onLeave}
-    >
+<div class={isOwn ? 'flex justify-end' : 'flex justify-start'}>
+  <div
+    class="max-w-[min(720px,100%)] w-fit rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-surface)] px-[var(--space-md)] py-[var(--space-sm)]"
+    style={`border-left: 3px solid ${message.color}; box-shadow: ${bubbleShadow};`}
+    role="group"
+    data-aether-bubble="true"
+    aria-label={`Message from ${message.username}`}
+    aria-describedby={tooltipId || undefined}
+    on:mouseenter={handleBubbleMouseEnter}
+    on:mousemove={onMove}
+    on:mouseleave={handleBubbleMouseLeave}
+    on:pointerup={onPointerUp}
+  >
     <div class="flex items-center gap-[var(--space-sm)]">
       <div
         class="h-[28px] w-[28px] rounded-[var(--radius-full)] bg-[var(--bg-elevated)] grid place-items-center text-[var(--font-size-xs)] text-[var(--text-secondary)]"
