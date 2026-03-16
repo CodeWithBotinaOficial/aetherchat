@@ -341,7 +341,8 @@ it('Lobby host broadcasts NEW_PEER to existing peers', async () => {
 
   await flushMicrotasks();
   expect(existingSend).toHaveBeenCalled();
-  const broadcast = existingSend.mock.calls[0][0];
+  const broadcast = existingSend.mock.calls.map((c) => c[0]).find((m) => m.type === 'NEW_PEER');
+  expect(broadcast).toBeTruthy();
   expect(broadcast.type).toBe('NEW_PEER');
   expect(broadcast.payload.newPeer.peerId).toBe('guest-main');
 });

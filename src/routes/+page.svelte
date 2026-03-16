@@ -1,9 +1,12 @@
 <script>
   import { onDestroy, onMount } from 'svelte';
   import AppShell from '$lib/components/AppShell.svelte';
+  import BootScreen from '$lib/components/BootScreen.svelte';
   import RegisterModal from '$lib/components/RegisterModal.svelte';
   import { cleanOldGlobalMessages } from '$lib/services/db.js';
   import { disconnectPeer, initPeer } from '$lib/services/peer.js';
+  import { globalMessages } from '$lib/stores/chatStore.js';
+  import { peer } from '$lib/stores/peerStore.js';
   import { isRegistered, user } from '$lib/stores/userStore.js';
 
   let cleanupTimer = null;
@@ -50,8 +53,10 @@
   $: if ($isRegistered && $user) void startPeerIfNeeded($user);
 </script>
 
-{#if $isRegistered}
-  <AppShell />
-{:else}
+{#if !$isRegistered}
   <RegisterModal />
+{:else if $peer.connectionState === 'connecting' || $peer.connectionState === 'syncing' || $peer.connectionState === 'reconnecting'}
+  <BootScreen state={$peer.connectionState} receivedCount={$globalMessages.length} />
+{:else}
+  <AppShell />
 {/if}

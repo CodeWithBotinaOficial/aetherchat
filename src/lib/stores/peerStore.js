@@ -18,6 +18,7 @@ import { writable } from 'svelte/store';
  * @property {boolean} isLobbyHost
  * @property {any|null} lobbyPeer
  * @property {string|null} currentLobbyHostId
+ * @property {number|null} lastSyncAt
  * @property {Map<string, ConnectedPeer>} connectedPeers
  */
 
@@ -31,5 +32,6 @@ export const peer = writable({
   isLobbyHost: false,
   lobbyPeer: null,
   currentLobbyHostId: null,
+  lastSyncAt: null,
   connectedPeers: new Map()
 });

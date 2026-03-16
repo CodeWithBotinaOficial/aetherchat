@@ -350,6 +350,22 @@ function removeConnectedPeer(peerId) {
   });
 }
 
+function electNewLobbyHost() {
+  // Called when the current lobby host is lost. Deterministic election:
+  // the lowest peerId (alphabetically) among all currently connected peers (including self)
+  // attempts to claim the lobby ID.
+  const state = get(peerStore);
+  const ourId = state.peerId;
+  if (!ourId) return;
+  if (!mainPeer || !cachedProfile) return;
+  if (state.isLobbyHost) return;
+
+  const allPeerIds = [ourId, ...state.connectedPeers.keys()].sort();
+  if (allPeerIds[0] !== ourId) return;
+
+  becomeLobbyHost(mainPeer, cachedProfile).catch((err) => console.error('electNewLobbyHost failed', err));
+}
+
 function safeSend(conn, msg) {
   try {
     conn?.send?.(msg);
@@ -540,6 +556,12 @@ export async function joinLobby(localPeer, profile, attempt = 0) {
       safeClose(conn);
       becomeLobbyHost(localPeer, profile, attempt).then(resolve);
     });
+
+    conn.on('close', () => {
+      if (lobbyConn === conn) lobbyConn = null;
+      // If the lobby peer disappears, elect a new host so newcomers can join.
+      setTimeout(electNewLobbyHost, 2000);
+    });
   });
 }
 
@@ -566,6 +588,15 @@ export async function becomeLobbyHost(localPeer, profile, attempt = 0) {
         currentLobbyHostId: get(peerStore).peerId
       }));
       void setupLobbyHostHandlers(hostPeer, localPeer, profile);
+
+      // Inform the mesh which main peer now holds the lobby ID.
+      broadcastToAll({
+        type: 'LOBBY_HOST_CHANGED',
+        from: buildFromProfile(profile),
+        payload: { newHostPeerId: get(peerStore).peerId },
+        timestamp: Date.now()
+      });
+
       resolve({ role: 'host', lobbyPeer: hostPeer });
     });
 
@@ -615,6 +646,10 @@ export function handleIncomingConnection(conn, profile) {
 
   conn.on('close', () => {
     removeConnectedPeer(remotePeerId);
+    // If we lost the current lobby host (main peer), attempt re-election.
+    if (remotePeerId && remotePeerId === get(peerStore).currentLobbyHostId) {
+      setTimeout(electNewLobbyHost, 2000);
+    }
   });
 
   conn.on('error', (err) => {
@@ -662,7 +697,7 @@ async function handleNetworkState(payload, profile) {
     connectToPeerIfUnknown(p, profile);
   }
 
-  setConnectionState('connected', { isConnected: true });
+  setConnectionState('connected', { isConnected: true, lastSyncAt: Date.now() });
 }
 
 function connectToPeerIfUnknown(peerInfo, profile) {
@@ -710,6 +745,14 @@ export async function handleMessage(msg, fromConn, profile) {
 
   if (msg.type === 'NEW_PEER') {
     await connectToPeerIfUnknown(msg.payload?.newPeer, profile);
+    return;
+  }
+
+  if (msg.type === 'LOBBY_HOST_CHANGED') {
+    const newHostPeerId = msg.payload?.newHostPeerId;
+    if (typeof newHostPeerId === 'string' && newHostPeerId.length > 0) {
+      peerStore.update((s) => ({ ...s, currentLobbyHostId: newHostPeerId }));
+    }
     return;
   }
 
@@ -802,6 +845,20 @@ export async function handleMessage(msg, fromConn, profile) {
       globalMessagesStore.set(allMessages);
     } catch (err) {
       console.error('SYNC_RESPONSE refresh store failed', err);
+    }
+    peerStore.update((s) => ({ ...s, lastSyncAt: Date.now() }));
+    return;
+  }
+
+  if (msg.type === 'PEER_DISCONNECT') {
+    const disconnectedPeerId = msg.from.peerId;
+    const wasLobbyHost = disconnectedPeerId && disconnectedPeerId === get(peerStore).currentLobbyHostId;
+
+    removeConnectedPeer(disconnectedPeerId);
+
+    if (wasLobbyHost) {
+      // Give the elected peer a moment to claim the lobby ID before we try.
+      setTimeout(electNewLobbyHost, 2000);
     }
     return;
   }
@@ -1126,5 +1183,11 @@ export function disconnectPeer() {
 export const __test = {
   setMainPeerForTest(p) {
     mainPeer = p;
+  },
+  setProfileForTest(p) {
+    cachedProfile = p;
+  },
+  electNewLobbyHostForTest() {
+    electNewLobbyHost();
   }
 };

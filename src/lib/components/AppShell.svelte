@@ -1,6 +1,7 @@
 <script>
   import { user } from '$lib/stores/userStore.js';
   import GlobalChat from '$lib/components/GlobalChat.svelte';
+  import P2PDebugPanel from '$lib/components/P2PDebugPanel.svelte';
 
   /** @type {'global'|'private'|'terms'} */
   let active = 'global';
@@ -144,3 +145,7 @@
     </main>
   </div>
 </div>
+
+{#if import.meta.env.DEV}
+  <P2PDebugPanel />
+{/if}
