@@ -36,6 +36,7 @@ export const PEERJS_CONFIG = {
 };
 
 const RECONNECT_DELAYS = [2000, 5000, 10000];
+const JOIN_LOBBY_TIMEOUT_MS = 3000;
 
 /**
  * @typedef {'HANDSHAKE'|'HANDSHAKE_ACK'|'PEER_LIST'|'GLOBAL_MSG'|'PRIVATE_MSG'|'PRIVATE_KEY_EXCHANGE'|'USER_LIST'|'PEER_DISCONNECT'} MessageType
@@ -104,6 +105,12 @@ const ALLOWED_TYPES = new Set([
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function isLobbyUnavailableError(err) {
+  const type = err?.type;
+  const msg = String(err?.message ?? '');
+  return type === 'peer-unavailable' && msg.includes(LOBBY_PEER_ID);
 }
 
 function randomPeerId() {
@@ -257,18 +264,14 @@ async function sendHandshakeAck(conn, profile) {
 }
 
 async function becomeLobbyHost(profile) {
-  if (!mainPeer) return;
-  if (lobbyPeer) return;
+  if (!mainPeer) return false;
+  if (lobbyPeer) return true;
 
   const Peer = await ensurePeerCtor();
 
   lobbyPeerList.set(mainPeer.id, { peerId: mainPeer.id, username: profile.username, color: profile.color, age: profile.age });
 
   lobbyPeer = new Peer(LOBBY_PEER_ID, PEERJS_CONFIG);
-
-  lobbyPeer.on('open', () => {
-    peerStore.update((s) => ({ ...s, isLobbyHost: true }));
-  });
 
   lobbyPeer.on('connection', (conn) => {
     const remotePeerId = conn?.peer;
@@ -308,23 +311,45 @@ async function becomeLobbyHost(profile) {
     });
   });
 
-  lobbyPeer.on('error', (err) => {
-    // If lobby ID is taken, someone else is host; we should join as client.
-    if (err?.type === 'unavailable-id') {
-      try {
-        lobbyPeer?.destroy?.();
-      } catch {
-        // ignore
+  const becameHost = await new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      resolve(ok);
+    };
+
+    const timer = setTimeout(() => finish(false), JOIN_LOBBY_TIMEOUT_MS);
+
+    lobbyPeer.on('open', () => {
+      clearTimeout(timer);
+      peerStore.update((s) => ({ ...s, isLobbyHost: true }));
+      finish(true);
+    });
+
+    lobbyPeer.on('error', (err) => {
+      clearTimeout(timer);
+      // If lobby ID is taken, someone else is host; we should join as client.
+      if (err?.type === 'unavailable-id') {
+        try {
+          lobbyPeer?.destroy?.();
+        } catch {
+          // ignore
+        }
+        lobbyPeer = null;
+        peerStore.update((s) => ({ ...s, isLobbyHost: false }));
+        finish(false);
+        return;
       }
-      lobbyPeer = null;
-      peerStore.update((s) => ({ ...s, isLobbyHost: false }));
-      return;
-    }
-    console.error('Lobby PeerJS error', err);
+      console.error('Lobby PeerJS error', err);
+      finish(false);
+    });
   });
+
+  return becameHost;
 }
 
-async function joinLobby(profile) {
+async function joinLobby(profile, attempt = 0) {
   if (!mainPeer) return;
 
   setConnectionState('connecting', { error: null });
@@ -343,7 +368,7 @@ async function joinLobby(profile) {
     const timer = setTimeout(() => {
       safeClose(conn);
       finish(false);
-    }, 1200);
+    }, JOIN_LOBBY_TIMEOUT_MS);
 
     conn.on('open', async () => {
       lobbyConn = conn;
@@ -359,8 +384,19 @@ async function joinLobby(profile) {
   });
 
   if (!joined) {
-    await becomeLobbyHost(profile);
-    setConnectionState('connected', { isConnected: true });
+    // Expected in the "first peer online" case: no lobby host exists yet.
+    const hosted = await becomeLobbyHost(profile);
+    if (!hosted) {
+      // Another peer won the race to host the lobby ID; retry joining as a client.
+      if (attempt >= 2) {
+        setConnectionState('failed', { isConnected: false, error: 'lobby-join-failed' });
+        return;
+      }
+      await sleep(400);
+      await joinLobby(profile, attempt + 1);
+      return;
+    }
+    setConnectionState('connected', { isConnected: true, error: null });
     return;
   }
 
@@ -533,6 +569,9 @@ export async function initPeer(profile) {
     });
 
     mainPeer.on('error', (err) => {
+      // When we're the first peer, connecting to the lobby ID is expected to fail.
+      // PeerJS reports that as a peer-level error; don't surface it as a failure.
+      if (isLobbyUnavailableError(err)) return;
       console.error('PeerJS error', err);
       peerStore.update((s) => ({ ...s, error: err?.type ?? 'peer-error' }));
     });
