@@ -1,15 +1,17 @@
 <script>
   import { createEventDispatcher, onMount } from 'svelte';
-  import { db } from '$lib/services/db.js';
   import { validateAvatarFile } from '$lib/utils/avatar.js';
   import { getUserColor } from '$lib/utils/colors.js';
   import { registerUser } from '$lib/stores/userStore.js';
+  import { checkUsernameAvailability } from '$lib/services/peer.js';
 
   const dispatch = createEventDispatcher();
 
   let username = '';
   let age = 18;
   let usernameError = '';
+  /** @type {'typing'|'checking'|'available'|'taken_local'|'taken_network'|'offline_warning'} */
+  let availabilityState = 'typing';
   let takenSuggestion = '';
 
   /** @type {string|null} */
@@ -27,17 +29,6 @@
     if (!value || value.trim().length === 0) return 'Username is required.';
     if (!USERNAME_RE.test(value)) return '3-20 chars, letters/numbers/underscore only.';
     return '';
-  }
-
-  async function checkUsernameTaken(value) {
-    try {
-      if (!value) return false;
-      const existing = await db.knownPeers.where('username').equals(value).first();
-      return Boolean(existing);
-    } catch (err) {
-      console.error('checkUsernameTaken failed', err);
-      return false;
-    }
   }
 
   async function refreshPreview() {
@@ -60,6 +51,7 @@
 
   function onUsernameInput() {
     usernameError = validateUsernameLocal(username);
+    availabilityState = 'typing';
     takenSuggestion = '';
 
     if (usernameCheckTimer) clearTimeout(usernameCheckTimer);
@@ -68,24 +60,47 @@
       const seq = ++usernameCheckSeq;
       usernameCheckTimer = setTimeout(async () => {
         try {
-          const taken = await checkUsernameTaken(username);
-          if (seq !== usernameCheckSeq) return;
-          if (taken) {
-            const suffix = String(Math.floor(Math.random() * 900) + 100);
-            takenSuggestion = `${username}_${suffix}`;
-            usernameError = `Username is taken. Try "${takenSuggestion}".`;
+          if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            availabilityState = 'offline_warning';
+            return;
           }
+
+          availabilityState = 'checking';
+          const res = await checkUsernameAvailability(username);
+          if (seq !== usernameCheckSeq) return;
+
+          if (res.available) {
+            availabilityState = 'available';
+            return;
+          }
+
+          takenSuggestion = res.suggestion;
+          availabilityState = res.takenBy === 'local' ? 'taken_local' : 'taken_network';
         } catch (err) {
           console.error('username taken check failed', err);
         }
-      }, 220);
+      }, 600);
     }
 
     if (!hasUploadedAvatar) void refreshPreview();
   }
 
   $: isTooYoung = Number(age) < 16;
-  $: canSubmit = !isSubmitting && !isTooYoung && !usernameError && Boolean(username) && Number(age) >= 16;
+  $: isTaken = availabilityState === 'taken_local' || availabilityState === 'taken_network';
+  $: canSubmit =
+    !isSubmitting &&
+    !isTooYoung &&
+    !usernameError &&
+    !isTaken &&
+    availabilityState !== 'checking' &&
+    Boolean(username) &&
+    Number(age) >= 16;
+
+  function applySuggestion() {
+    if (!takenSuggestion) return;
+    username = takenSuggestion;
+    onUsernameInput();
+  }
 
   async function handleFile(file) {
     avatarError = '';
@@ -183,6 +198,40 @@
         />
         {#if usernameError}
           <div class="text-[var(--font-size-xs)] text-[var(--danger)]">{usernameError}</div>
+        {:else if availabilityState === 'checking'}
+          <div class="text-[var(--font-size-xs)] text-[var(--text-muted)]">Checking availability...</div>
+        {:else if availabilityState === 'available'}
+          <div class="text-[var(--font-size-xs)] text-[var(--success)]">Available!</div>
+        {:else if availabilityState === 'taken_local'}
+          <div class="text-[var(--font-size-xs)] text-[var(--danger)]">
+            Already taken.
+            {#if takenSuggestion}
+              <button
+                type="button"
+                class="ml-[var(--space-xs)] rounded-[var(--radius-full)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[10px] py-[2px] text-[var(--text-primary)] hover:bg-[var(--accent-subtle)]"
+                on:click={applySuggestion}
+              >
+                {takenSuggestion}
+              </button>
+            {/if}
+          </div>
+        {:else if availabilityState === 'taken_network'}
+          <div class="text-[var(--font-size-xs)] text-[var(--danger)]">
+            Already taken on the network.
+            {#if takenSuggestion}
+              <button
+                type="button"
+                class="ml-[var(--space-xs)] rounded-[var(--radius-full)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[10px] py-[2px] text-[var(--text-primary)] hover:bg-[var(--accent-subtle)]"
+                on:click={applySuggestion}
+              >
+                {takenSuggestion}
+              </button>
+            {/if}
+          </div>
+        {:else if availabilityState === 'offline_warning'}
+          <div class="text-[var(--font-size-xs)] text-[var(--warning)]">
+            Can't verify right now: you're offline. Choose carefully.
+          </div>
         {:else}
           <div class="text-[var(--font-size-xs)] text-[var(--text-muted)]">
             Allowed: letters, numbers, underscore. 3-20 characters.

@@ -13,13 +13,15 @@ async function clearAllTables() {
     db.privateChats,
     db.privateMessages,
     db.knownPeers,
+    db.usernameRegistry,
     async () => {
       await Promise.all([
         db.users.clear(),
         db.globalMessages.clear(),
         db.privateChats.clear(),
         db.privateMessages.clear(),
-        db.knownPeers.clear()
+        db.knownPeers.clear(),
+        db.usernameRegistry.clear()
       ]);
     }
   );
@@ -30,7 +32,17 @@ beforeEach(async () => {
   document.body.innerHTML = '';
   user.set(null);
   globalMessages.set([]);
-  peer.set({ peerId: null, isConnected: false, connectedPeers: new Map() });
+  peer.set({
+    peerId: null,
+    isConnected: false,
+    connectionState: 'offline',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map()
+  });
 });
 
 afterEach(() => {

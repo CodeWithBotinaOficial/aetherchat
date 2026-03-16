@@ -38,8 +38,18 @@ function mergeMessages(dbMsgs, curMsgs) {
 export async function addGlobalMessage(msg) {
   try {
     globalMutation += 1;
-    globalMessages.update((arr) => [...arr, msg]);
-    await saveGlobalMessage(msg);
+    const id =
+      msg?.id ??
+      (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `m-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const withId = { ...msg, id };
+
+    globalMessages.update((arr) => {
+      // Avoid duplicate inserts when receiving the same message via multiple paths (sync + live).
+      if (arr.some((m) => m?.id && m.id === id)) return arr;
+      return [...arr, withId];
+    });
+
+    await saveGlobalMessage(withId);
   } catch (err) {
     console.error('addGlobalMessage failed', err);
     throw err;

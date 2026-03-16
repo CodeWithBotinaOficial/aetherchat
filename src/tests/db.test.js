@@ -18,13 +18,15 @@ async function clearAllTables() {
     db.privateChats,
     db.privateMessages,
     db.knownPeers,
+    db.usernameRegistry,
     async () => {
       await Promise.all([
         db.users.clear(),
         db.globalMessages.clear(),
         db.privateChats.clear(),
         db.privateMessages.clear(),
-        db.knownPeers.clear()
+        db.knownPeers.clear(),
+        db.usernameRegistry.clear()
       ]);
     }
   );
@@ -107,6 +109,7 @@ it('cleanOldPrivateMessages deletes chats inactive for 30 days', async () => {
   });
 
   await db.privateMessages.add({
+    id: 'pm-1',
     chatId,
     fromUsername: 'bob',
     text: 'old message',
@@ -133,4 +136,3 @@ it('Can save and retrieve known peers', async () => {
   expect(peers).toHaveLength(2);
   expect(peers[0].peerId).toBe('peer-2'); // latest first
 });
-

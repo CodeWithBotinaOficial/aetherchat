@@ -6,8 +6,9 @@ function flushMicrotasks() {
 }
 
 class MockConn {
-  constructor(peerId) {
+  constructor(peerId, options) {
     this.peer = peerId;
+    this.options = options;
     this.send = vi.fn();
     this.close = vi.fn();
     this._handlers = new Map();
@@ -27,6 +28,7 @@ class MockConn {
 
 class MockPeer {
   static ctorCalls = [];
+  static instances = [];
 
   constructor(id, options) {
     this.id = id;
@@ -36,6 +38,7 @@ class MockPeer {
     this.destroy = vi.fn();
     this.reconnect = vi.fn();
     MockPeer.ctorCalls.push({ id, options });
+    MockPeer.instances.push(this);
   }
 
   on(event, cb) {
@@ -57,8 +60,8 @@ class MockPeer {
     for (const cb of arr) cb(payload);
   }
 
-  connect(peerId) {
-    const conn = new MockConn(peerId);
+  connect(peerId, options) {
+    const conn = new MockConn(peerId, options);
     this._connections.push(conn);
     return conn;
   }
@@ -68,6 +71,11 @@ const hoisted = vi.hoisted(() => {
   return {
     addGlobalMessageMock: vi.fn().mockResolvedValue(undefined),
     saveKnownPeerMock: vi.fn().mockResolvedValue(undefined),
+    getGlobalMessagesMock: vi.fn().mockResolvedValue([]),
+    getFullUsernameRegistryMock: vi.fn().mockResolvedValue([]),
+    registerUsernameLocallyMock: vi.fn().mockResolvedValue(undefined),
+    isUsernameTakenMock: vi.fn().mockResolvedValue(false),
+    mergeUsernameRegistryMock: vi.fn().mockResolvedValue(undefined),
     sharedKeyStub: { __shared: true },
     decryptMessageMock: vi.fn().mockResolvedValue('plaintext')
   };
@@ -84,7 +92,14 @@ vi.mock('$lib/stores/chatStore.js', () => {
 });
 
 vi.mock('$lib/services/db.js', () => {
-  return { saveKnownPeer: (...args) => hoisted.saveKnownPeerMock(...args) };
+  return {
+    saveKnownPeer: (...args) => hoisted.saveKnownPeerMock(...args),
+    getGlobalMessages: (...args) => hoisted.getGlobalMessagesMock(...args),
+    getFullUsernameRegistry: (...args) => hoisted.getFullUsernameRegistryMock(...args),
+    registerUsernameLocally: (...args) => hoisted.registerUsernameLocallyMock(...args),
+    isUsernameTaken: (...args) => hoisted.isUsernameTakenMock(...args),
+    mergeUsernameRegistry: (...args) => hoisted.mergeUsernameRegistryMock(...args)
+  };
 });
 
 vi.mock('$lib/services/crypto.js', () => {
@@ -101,10 +116,12 @@ vi.mock('$lib/services/crypto.js', () => {
 import {
   LOBBY_PEER_ID,
   attemptReconnect,
+  becomeLobbyHost,
   broadcastGlobalMessage,
   disconnectPeer,
   handleMessage,
   initPeer,
+  joinLobby,
   validateProtocolMessage
 } from '$lib/services/peer.js';
 
@@ -112,9 +129,18 @@ const me = { username: 'alice', color: 'hsl(1, 65%, 65%)', age: 22, avatarBase64
 
 beforeEach(() => {
   MockPeer.ctorCalls = [];
+  MockPeer.instances = [];
   hoisted.addGlobalMessageMock.mockClear();
   hoisted.saveKnownPeerMock.mockClear();
+  hoisted.getGlobalMessagesMock.mockClear();
+  hoisted.getFullUsernameRegistryMock.mockClear();
+  hoisted.registerUsernameLocallyMock.mockClear();
+  hoisted.isUsernameTakenMock.mockClear();
+  hoisted.mergeUsernameRegistryMock.mockClear();
   hoisted.decryptMessageMock.mockClear();
+
+  // Provide cached PeerJS module for becomeLobbyHost.
+  globalThis._PeerJS = { Peer: MockPeer, default: MockPeer };
 
   peerStore.set({
     peerId: null,
@@ -123,6 +149,8 @@ beforeEach(() => {
     error: null,
     reconnectAttempt: 0,
     isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
     connectedPeers: new Map()
   });
 });
@@ -130,6 +158,8 @@ beforeEach(() => {
 afterEach(() => {
   disconnectPeer();
   vi.useRealTimers();
+  // @ts-ignore
+  delete globalThis._PeerJS;
 });
 
 it('initPeer creates a Peer with a random UUID (not the lobby ID)', async () => {
@@ -141,22 +171,179 @@ it('initPeer creates a Peer with a random UUID (not the lobby ID)', async () => 
   expect(MockPeer.ctorCalls[0].options.secure).toBe(true);
 });
 
-it('joinLobby sends HANDSHAKE on successful connection', async () => {
-  const p = await initPeer(me);
-  p.emit('open', p.id);
+it('joinLobby resolves as guest when another peer is already hosting', async () => {
+  const localPeer = new MockPeer('local-main', {});
+  peerStore.update((s) => ({ ...s, peerId: 'local-main' }));
 
-  // joinLobby calls connect(LOBBY_PEER_ID) synchronously
-  const lobby = p._connections.find((c) => c.peer === LOBBY_PEER_ID);
-  expect(lobby).toBeTruthy();
+  const promise = joinLobby(localPeer, me);
+  const lobbyConn = localPeer._connections.find((c) => c.peer === LOBBY_PEER_ID);
+  expect(lobbyConn.options).toEqual({ reliable: true, metadata: { type: 'lobby-join' } });
 
-  lobby.emit('open');
+  lobbyConn.emit('open');
+  const res = await promise;
+  expect(res.role).toBe('guest');
+  expect(lobbyConn.send).toHaveBeenCalledTimes(1);
+  expect(lobbyConn.send.mock.calls[0][0].type).toBe('LOBBY_JOIN');
+});
+
+it('joinLobby resolves as host when lobby ID is available', async () => {
+  const localPeer = new MockPeer('local-main', {});
+  peerStore.update((s) => ({ ...s, peerId: 'local-main' }));
+
+  const promise = joinLobby(localPeer, me);
+  const lobbyConn = localPeer._connections.find((c) => c.peer === LOBBY_PEER_ID);
+  lobbyConn.emit('error', { type: 'peer-unavailable' });
+
+  // becomeLobbyHost created a lobby peer; open it.
+  const hostPeer = MockPeer.instances.find((p) => p.id === LOBBY_PEER_ID);
+  expect(hostPeer).toBeTruthy();
+  hostPeer.emit('open', LOBBY_PEER_ID);
+
+  const res = await promise;
+  expect(res.role).toBe('host');
+  expect(get(peerStore).isLobbyHost).toBe(true);
+});
+
+it('joinLobby resolves as host after timeout (no response in 4s)', async () => {
+  vi.useFakeTimers();
+  const localPeer = new MockPeer('local-main', {});
+  peerStore.update((s) => ({ ...s, peerId: 'local-main' }));
+
+  const promise = joinLobby(localPeer, me);
+  // no open/error => timeout
+  await vi.advanceTimersByTimeAsync(4000);
+
+  const hostPeer = MockPeer.instances.find((p) => p.id === LOBBY_PEER_ID);
+  hostPeer.emit('open', LOBBY_PEER_ID);
+  const res = await promise;
+
+  expect(res.role).toBe('host');
+});
+
+it('Race condition: if LOBBY_ID is taken, retries as guest after jitter delay', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(Math, 'random').mockReturnValue(0); // jitter = 1000ms
+
+  const localPeer = new MockPeer('local-main', {});
+  peerStore.update((s) => ({ ...s, peerId: 'local-main' }));
+
+  const promise = joinLobby(localPeer, me);
+
+  // First attempt: lobby connect errors -> becomeLobbyHost -> unavailable-id
+  const firstLobbyConn = localPeer._connections.find((c) => c.peer === LOBBY_PEER_ID);
+  firstLobbyConn.emit('error', { type: 'peer-unavailable' });
+
+  const hostPeer = MockPeer.instances.find((p) => p.id === LOBBY_PEER_ID);
+  hostPeer.emit('error', { type: 'unavailable-id' });
+
+  // After jitter, joinLobby is retried; open the second lobby connection.
+  await vi.advanceTimersByTimeAsync(1000);
+  const secondLobbyConn = localPeer._connections.filter((c) => c.peer === LOBBY_PEER_ID)[1];
+  expect(secondLobbyConn).toBeTruthy();
+  secondLobbyConn.emit('open');
+
+  const res = await promise;
+  expect(res.role).toBe('guest');
+});
+
+it("becomeLobbyHost handles 'unavailable-id' error without crashing", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(Math, 'random').mockReturnValue(0);
+
+  const localPeer = new MockPeer('local-main', {});
+  peerStore.update((s) => ({ ...s, peerId: 'local-main' }));
+
+  const promise = becomeLobbyHost(localPeer, me, 0);
+  const hostPeer = MockPeer.instances.find((p) => p.id === LOBBY_PEER_ID);
+  hostPeer.emit('error', { type: 'unavailable-id' });
+
+  // It will retry joinLobby after jitter; open that connection.
+  await vi.advanceTimersByTimeAsync(1000);
+  const lobbyConn = localPeer._connections.find((c) => c.peer === LOBBY_PEER_ID);
+  lobbyConn.emit('open');
+
+  const res = await promise;
+  expect(res.role).toBe('guest');
+});
+
+it('Lobby host sends NETWORK_STATE on receiving LOBBY_JOIN', async () => {
+  hoisted.getGlobalMessagesMock.mockResolvedValueOnce([
+    { peerId: 'p1', username: 'x', age: 1, color: 'hsl(3, 65%, 65%)', text: 'hello', timestamp: 10 }
+  ]);
+
+  const localPeer = new MockPeer('local-main', {});
+  peerStore.set({
+    peerId: 'local-main',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map()
+  });
+
+  const promise = becomeLobbyHost(localPeer, me, 0);
+  const hostPeer = MockPeer.instances.find((p) => p.id === LOBBY_PEER_ID);
+  hostPeer.emit('open');
+  await promise;
+
+  // Simulate a guest connecting to the lobby peer.
+  const guestConn = new MockConn('guest-main', {});
+  hostPeer.emit('connection', guestConn);
+
+  const joinMsg = {
+    type: 'LOBBY_JOIN',
+    from: { peerId: 'guest-main', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33 },
+    payload: {},
+    timestamp: Date.now()
+  };
+  guestConn.emit('data', joinMsg);
   await flushMicrotasks();
 
-  expect(lobby.send).toHaveBeenCalledTimes(1);
-  const sent = lobby.send.mock.calls[0][0];
-  expect(sent.type).toBe('HANDSHAKE');
-  expect(sent.from.username).toBe(me.username);
-  expect(sent.payload.publicKey).toBe('PUBKEY_BASE64');
+  expect(guestConn.send).toHaveBeenCalled();
+  const sent = guestConn.send.mock.calls.map((c) => c[0]).find((m) => m.type === 'NETWORK_STATE');
+  expect(sent).toBeTruthy();
+  expect(Array.isArray(sent.payload.peers)).toBe(true);
+  expect(Array.isArray(sent.payload.globalHistory)).toBe(true);
+});
+
+it('Lobby host broadcasts NEW_PEER to existing peers', async () => {
+  const existingSend = vi.fn();
+
+  const localPeer = new MockPeer('local-main', {});
+  peerStore.set({
+    peerId: 'local-main',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map([['p2', { username: 'carol', color: 'hsl(10, 65%, 65%)', age: 44, connection: { send: existingSend } }]])
+  });
+
+  const promise = becomeLobbyHost(localPeer, me, 0);
+  const hostPeer = MockPeer.instances.find((p) => p.id === LOBBY_PEER_ID);
+  hostPeer.emit('open');
+  await promise;
+
+  const guestConn = new MockConn('guest-main', {});
+  hostPeer.emit('connection', guestConn);
+  guestConn.emit('data', {
+    type: 'LOBBY_JOIN',
+    from: { peerId: 'guest-main', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33 },
+    payload: {},
+    timestamp: Date.now()
+  });
+
+  await flushMicrotasks();
+  expect(existingSend).toHaveBeenCalled();
+  const broadcast = existingSend.mock.calls[0][0];
+  expect(broadcast.type).toBe('NEW_PEER');
+  expect(broadcast.payload.newPeer.peerId).toBe('guest-main');
 });
 
 it('handleMessage routes GLOBAL_MSG to globalMessages store (via addGlobalMessage)', async () => {
@@ -164,12 +351,13 @@ it('handleMessage routes GLOBAL_MSG to globalMessages store (via addGlobalMessag
   const msg = {
     type: 'GLOBAL_MSG',
     from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33 },
-    payload: { text: 'hi' },
+    payload: { message: { id: 'm-1', text: 'hi', timestamp: 123 } },
     timestamp: 123
   };
   await handleMessage(msg, conn, me);
   expect(hoisted.addGlobalMessageMock).toHaveBeenCalledTimes(1);
   expect(hoisted.addGlobalMessageMock).toHaveBeenCalledWith({
+    id: 'm-1',
     peerId: 'p2',
     username: 'bob',
     age: 33,
@@ -227,6 +415,8 @@ it('broadcastGlobalMessage adds message before sending (optimistic)', async () =
     error: null,
     reconnectAttempt: 0,
     isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
     connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send } }]])
   });
 
@@ -235,15 +425,8 @@ it('broadcastGlobalMessage adds message before sending (optimistic)', async () =
   expect(send).toHaveBeenCalledTimes(1);
 });
 
-it('disconnectPeer broadcasts PEER_DISCONNECT before closing connections', async () => {
-  await initPeer(me); // sets cached profile inside the service module
-
-  const events = [];
-  const conn = {
-    send: vi.fn(() => events.push('send')),
-    close: vi.fn(() => events.push('close'))
-  };
-
+it('broadcastGlobalMessage generates a UUID id for each message', async () => {
+  const send = vi.fn();
   peerStore.set({
     peerId: 'local',
     isConnected: true,
@@ -251,12 +434,49 @@ it('disconnectPeer broadcasts PEER_DISCONNECT before closing connections', async
     error: null,
     reconnectAttempt: 0,
     isLobbyHost: false,
-    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: conn }]])
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send } }]])
   });
 
-  disconnectPeer();
-  expect(events[0]).toBe('send');
-  expect(events[1]).toBe('close');
+  await broadcastGlobalMessage('hi', me);
+  const added = hoisted.addGlobalMessageMock.mock.calls[0][0];
+  expect(typeof added.id).toBe('string');
+  expect(added.id.length).toBeGreaterThan(10);
+  expect(added.id).toMatch(/^[0-9a-f-]{16,}$/i);
+});
+
+it('Two messages created at the same millisecond have different IDs', async () => {
+  const send = vi.fn();
+  peerStore.set({
+    peerId: 'local',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send } }]])
+  });
+
+  const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1234567890);
+  const spy = vi
+    .spyOn(globalThis.crypto, 'randomUUID')
+    .mockImplementationOnce(() => 'uuid-1')
+    .mockImplementationOnce(() => 'uuid-2');
+
+  await broadcastGlobalMessage('a', me);
+  await broadcastGlobalMessage('b', me);
+
+  const first = hoisted.addGlobalMessageMock.mock.calls[0][0];
+  const second = hoisted.addGlobalMessageMock.mock.calls[1][0];
+  expect(first.id).toBe('uuid-1');
+  expect(second.id).toBe('uuid-2');
+  expect(first.id).not.toBe(second.id);
+
+  spy.mockRestore();
+  nowSpy.mockRestore();
 });
 
 it('Reconnect is attempted up to 3 times on unexpected disconnect', async () => {

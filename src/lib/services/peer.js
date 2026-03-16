@@ -1,7 +1,15 @@
 import { get } from 'svelte/store';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
-import { addGlobalMessage } from '$lib/stores/chatStore.js';
-import { saveKnownPeer } from '$lib/services/db.js';
+import { addGlobalMessage, globalMessages as globalMessagesStore } from '$lib/stores/chatStore.js';
+import {
+  db,
+  getFullUsernameRegistry,
+  getGlobalMessages,
+  isUsernameTaken,
+  mergeUsernameRegistry,
+  registerUsernameLocally,
+  saveKnownPeer
+} from '$lib/services/db.js';
 import {
   decryptMessage,
   deriveSharedSecret,
@@ -36,10 +44,10 @@ export const PEERJS_CONFIG = {
 };
 
 const RECONNECT_DELAYS = [2000, 5000, 10000];
-const JOIN_LOBBY_TIMEOUT_MS = 3000;
+const JOIN_LOBBY_TIMEOUT_MS = 4000;
 
 /**
- * @typedef {'HANDSHAKE'|'HANDSHAKE_ACK'|'PEER_LIST'|'GLOBAL_MSG'|'PRIVATE_MSG'|'PRIVATE_KEY_EXCHANGE'|'USER_LIST'|'PEER_DISCONNECT'} MessageType
+ * @typedef {'HANDSHAKE'|'HANDSHAKE_ACK'|'GLOBAL_MSG'|'PRIVATE_MSG'|'PRIVATE_KEY_EXCHANGE'|'USER_LIST'|'PEER_DISCONNECT'|'LOBBY_JOIN'|'NETWORK_STATE'|'NEW_PEER'|'USERNAME_CHECK'|'USERNAME_TAKEN'|'STATE_DIGEST'|'SYNC_REQUEST'|'SYNC_RESPONSE'|'LOBBY_HOST_CHANGED'} MessageType
  */
 
 /**
@@ -48,6 +56,7 @@ const JOIN_LOBBY_TIMEOUT_MS = 3000;
  * @property {string} color
  * @property {number} age
  * @property {string} [avatarBase64]
+ * @property {number} [createdAt]
  */
 
 /**
@@ -92,25 +101,129 @@ const lobbyConnections = new Map(); // peerId -> DataConnection (to lobby peer)
 /** @type {Map<string, { peerId: string, username: string, color: string, age: number }>} */
 const lobbyPeerList = new Map(); // peerId -> peer info (main peer IDs)
 
+let gossipIntervalId = null;
+
 const ALLOWED_TYPES = new Set([
   'HANDSHAKE',
   'HANDSHAKE_ACK',
-  'PEER_LIST',
   'GLOBAL_MSG',
   'PRIVATE_MSG',
   'PRIVATE_KEY_EXCHANGE',
   'USER_LIST',
-  'PEER_DISCONNECT'
+  'PEER_DISCONNECT',
+  'LOBBY_JOIN',
+  'NETWORK_STATE',
+  'NEW_PEER',
+  'USERNAME_CHECK',
+  'USERNAME_TAKEN',
+  'STATE_DIGEST',
+  'SYNC_REQUEST',
+  'SYNC_RESPONSE',
+  'LOBBY_HOST_CHANGED'
 ]);
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// Simple pub/sub so callers can await specific messages without coupling to PeerJS.
+const listeners = new Map(); // type -> Set<(msg) => void>
+
+/**
+ * @param {MessageType} type
+ * @param {(msg: any) => void} cb
+ * @returns {() => void}
+ */
+export function onMessage(type, cb) {
+  if (!listeners.has(type)) listeners.set(type, new Set());
+  listeners.get(type).add(cb);
+  return () => listeners.get(type)?.delete(cb);
+}
+
+function emitMessage(msg) {
+  const set = listeners.get(msg.type);
+  if (!set) return;
+  for (const cb of set) {
+    try {
+      cb(msg);
+    } catch (err) {
+      console.error('onMessage callback failed', err);
+    }
+  }
+}
+
+/**
+ * Try a few suggestions; registry checks are local only.
+ * @param {string} username
+ * @returns {Promise<string>}
+ */
+export async function generateUsernameSuggestion(username) {
+  const base = String(username ?? '').trim();
+  if (!base) return `user${Math.floor(100 + Math.random() * 900)}`;
+
+	  for (let i = 0; i < 10; i += 1) {
+	    const suffix = Math.floor(100 + Math.random() * 900);
+	    const candidate = `${base}${suffix}`;
+	    // Best-effort: avoid suggestions already in the local registry.
+	    // Network uniqueness is enforced via the USERNAME_CHECK flow.
+	    const taken = await isUsernameTaken(candidate);
+	    if (!taken) return candidate;
+	  }
+
+  return `${base}${Math.floor(100 + Math.random() * 900)}`;
+}
+
+/**
+ * @param {string} desiredUsername
+ * @returns {Promise<{ available: true } | { available: false, takenBy: string, suggestion: string }>}
+ */
+export async function checkUsernameAvailability(desiredUsername) {
+  // Layer 1: local registry.
+  const takenLocally = await isUsernameTaken(desiredUsername);
+  if (takenLocally) {
+    return {
+      available: false,
+      takenBy: 'local',
+      suggestion: await generateUsernameSuggestion(desiredUsername)
+    };
+  }
+
+  // Layer 2: live network query (only if we have direct peers).
+  const connectedPeers = get(peerStore).connectedPeers;
+  if (connectedPeers.size === 0) return { available: true };
+
+  return await new Promise((resolve) => {
+    const checkId = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `chk-${Date.now()}-${Math.random()}`;
+    const timer = setTimeout(() => resolve({ available: true }), 2000);
+
+    const unsubscribe = onMessage('USERNAME_TAKEN', (msg) => {
+      if (msg?.payload?.checkId !== checkId) return;
+      clearTimeout(timer);
+      unsubscribe();
+      generateUsernameSuggestion(desiredUsername)
+        .then((suggestion) => resolve({ available: false, takenBy: msg.from.peerId, suggestion }))
+        .catch(() => resolve({ available: false, takenBy: msg.from.peerId, suggestion: `${desiredUsername}${Math.floor(100 + Math.random() * 900)}` }));
+    });
+
+    const from =
+      cachedProfile && cachedProfile.username
+        ? buildFromProfile(cachedProfile)
+        : { peerId: get(peerStore).peerId ?? 'pre-registration', username: 'pre-registration', color: 'hsl(0, 0%, 70%)', age: 0 };
+
+    broadcastToAll({
+      type: 'USERNAME_CHECK',
+      from,
+      payload: { username: desiredUsername, checkId },
+      timestamp: Date.now()
+    });
+  });
+}
+
 function isLobbyUnavailableError(err) {
   const type = err?.type;
   const msg = String(err?.message ?? '');
-  return type === 'peer-unavailable' && msg.includes(LOBBY_PEER_ID);
+  // Some PeerJS builds omit `type` but include a helpful message string.
+  return (type === 'peer-unavailable' || !type) && msg.includes(LOBBY_PEER_ID);
 }
 
 function randomPeerId() {
@@ -127,6 +240,12 @@ async function ensurePeerCtor() {
   // In Vitest, accessing a missing named export can throw (ESM proxy behavior),
   // so probe exports defensively.
   const mod = await import('peerjs');
+  try {
+    // Cache for becomeLobbyHost callbacks.
+    globalThis._PeerJS = mod;
+  } catch {
+    // ignore
+  }
   /** @type {any|null} */
   let ctor = null;
   try {
@@ -164,7 +283,7 @@ async function ensureLocalPublicKeyBase64() {
  * @param {any} payload
  * @returns {ProtocolEnvelope}
  */
-function buildMessage(type, peerId, profile, payload) {
+function buildMessage(type, peerId, profile, payload, timestamp = Date.now()) {
   return {
     type,
     from: {
@@ -174,8 +293,18 @@ function buildMessage(type, peerId, profile, payload) {
       age: profile.age
     },
     payload,
-    timestamp: Date.now()
+    timestamp
   };
+}
+
+/**
+ * @param {UserProfile} profile
+ * @param {string} [peerIdOverride]
+ * @returns {{peerId: string, username: string, color: string, age: number}}
+ */
+function buildFromProfile(profile, peerIdOverride) {
+  const peerId = peerIdOverride ?? get(peerStore).peerId ?? '';
+  return { peerId, username: profile.username, color: profile.color, age: profile.age };
 }
 
 /**
@@ -237,6 +366,31 @@ function safeClose(conn) {
   }
 }
 
+function startGossipInterval(profile) {
+  if (gossipIntervalId) clearInterval(gossipIntervalId);
+  gossipIntervalId = setInterval(() => {
+    (async () => {
+      const latest = await db.globalMessages.orderBy('timestamp').last();
+      const registryCount = await db.usernameRegistry.count();
+      broadcastToAll({
+        type: 'STATE_DIGEST',
+        from: buildFromProfile(profile),
+        payload: {
+          latestGlobalMsgTimestamp: latest?.timestamp ?? 0,
+          usernameRegistryCount: registryCount,
+          peerId: get(peerStore).peerId
+        },
+        timestamp: Date.now()
+      });
+    })().catch((err) => console.error('gossip tick failed', err));
+  }, 30_000);
+}
+
+async function getKnownUsernamesList() {
+  const entries = await getFullUsernameRegistry();
+  return entries.map((e) => e.username);
+}
+
 function connectToPeer(peerId, profile) {
   if (!mainPeer) return null;
   if (!peerId || peerId === mainPeer.id) return null;
@@ -263,163 +417,182 @@ async function sendHandshakeAck(conn, profile) {
   safeSend(conn, buildMessage('HANDSHAKE_ACK', id, profile, { publicKey, avatarBase64: profile.avatarBase64 }));
 }
 
-async function becomeLobbyHost(profile) {
-  if (!mainPeer) return false;
-  if (lobbyPeer) return true;
+function broadcastToAll(envelope) {
+  const state = get(peerStore);
+  for (const entry of state.connectedPeers.values()) safeSend(entry.connection, envelope);
+}
 
-  const Peer = await ensurePeerCtor();
+function sendToPeer(peerId, envelope) {
+  const state = get(peerStore);
+  const entry = state.connectedPeers.get(peerId);
+  if (!entry) return;
+  safeSend(entry.connection, envelope);
+}
 
-  lobbyPeerList.set(mainPeer.id, { peerId: mainPeer.id, username: profile.username, color: profile.color, age: profile.age });
+function getCurrentPeerList(profile) {
+  const state = get(peerStore);
+  const peers = [];
+  if (state.peerId) peers.push({ peerId: state.peerId, username: profile.username, color: profile.color, age: profile.age });
+  for (const [peerId, info] of state.connectedPeers.entries()) {
+    peers.push({ peerId, username: info.username, color: info.color, age: info.age });
+  }
+  return peers;
+}
 
-  lobbyPeer = new Peer(LOBBY_PEER_ID, PEERJS_CONFIG);
+async function setupLobbyHostHandlers(hostPeer, localPeer, profile) {
+  // Track ourselves in the lobby's peer list.
+  if (localPeer?.id) {
+    lobbyPeerList.set(localPeer.id, { peerId: localPeer.id, username: profile.username, color: profile.color, age: profile.age });
+  }
 
-  lobbyPeer.on('connection', (conn) => {
-    const remotePeerId = conn?.peer;
-    if (!remotePeerId) return;
+  hostPeer.on('connection', (conn) => {
+    conn.on('data', (msg) => {
+      (async () => {
+        if (!validateProtocolMessage(msg)) return;
+        if (msg.type !== 'LOBBY_JOIN') return;
 
-    lobbyConnections.set(remotePeerId, conn);
+        const newPeer = msg.from;
+        lobbyPeerList.set(newPeer.peerId, { peerId: newPeer.peerId, username: newPeer.username, color: newPeer.color, age: newPeer.age });
 
-    conn.on('data', (data) => {
-      if (!validateProtocolMessage(data)) return;
-      if (data.type !== 'HANDSHAKE') return;
+        const [peerList, usernameRegistry, globalHistory] = await Promise.all([
+          getCurrentPeerList(profile),
+          getFullUsernameRegistry(),
+          getGlobalMessages(100)
+        ]);
 
-      const p = data.from;
-      lobbyPeerList.set(p.peerId, { peerId: p.peerId, username: p.username, color: p.color, age: p.age });
+        safeSend(conn, {
+          type: 'NETWORK_STATE',
+          from: buildFromProfile(profile),
+          payload: { peers: peerList, usernameRegistry, globalHistory },
+          timestamp: Date.now()
+        });
 
-      // Reply with the current list.
-      safeSend(
-        conn,
-        buildMessage('PEER_LIST', LOBBY_PEER_ID, profile, {
-          peers: Array.from(lobbyPeerList.values()).map((x) => ({ peerId: x.peerId, username: x.username, color: x.color }))
-        })
-      );
-
-      // Broadcast updated list to all lobby connections.
-      for (const c of lobbyConnections.values()) {
-        safeSend(
-          c,
-          buildMessage('PEER_LIST', LOBBY_PEER_ID, profile, {
-            peers: Array.from(lobbyPeerList.values()).map((x) => ({ peerId: x.peerId, username: x.username, color: x.color }))
-          })
-        );
-      }
-    });
-
-    conn.on('close', () => {
-      lobbyConnections.delete(remotePeerId);
-      // Best-effort cleanup: keep peer list entry until it expires (phase 2 could add TTL).
+        broadcastToAll({
+          type: 'NEW_PEER',
+          from: buildFromProfile(profile),
+          payload: { newPeer },
+          timestamp: Date.now()
+        });
+      })().catch((err) => console.error('lobby host handler failed', err));
     });
   });
 
-  const becameHost = await new Promise((resolve) => {
-    let done = false;
-    const finish = (ok) => {
-      if (done) return;
-      done = true;
-      resolve(ok);
-    };
-
-    const timer = setTimeout(() => finish(false), JOIN_LOBBY_TIMEOUT_MS);
-
-    lobbyPeer.on('open', () => {
-      clearTimeout(timer);
-      peerStore.update((s) => ({ ...s, isLobbyHost: true }));
-      finish(true);
-    });
-
-    lobbyPeer.on('error', (err) => {
-      clearTimeout(timer);
-      // If lobby ID is taken, someone else is host; we should join as client.
-      if (err?.type === 'unavailable-id') {
+  // Ensure lobby peer is destroyed when we leave.
+  if (typeof window !== 'undefined') {
+    window.addEventListener(
+      'beforeunload',
+      () => {
         try {
-          lobbyPeer?.destroy?.();
+          hostPeer.destroy?.();
         } catch {
           // ignore
         }
-        lobbyPeer = null;
-        peerStore.update((s) => ({ ...s, isLobbyHost: false }));
-        finish(false);
-        return;
-      }
-      console.error('Lobby PeerJS error', err);
-      finish(false);
-    });
-  });
-
-  return becameHost;
+      },
+      { once: true }
+    );
+  }
 }
 
-async function joinLobby(profile, attempt = 0) {
-  if (!mainPeer) return;
+/**
+ * Attempt to connect to existing lobby; if missing, become the lobby host.
+ * @param {any} localPeer
+ * @param {UserProfile} profile
+ * @returns {Promise<{ role: 'guest', lobbyConn: any } | { role: 'host', lobbyPeer: any } | { role: 'standalone' }>}
+ */
+export async function joinLobby(localPeer, profile, attempt = 0) {
+  return await new Promise((resolve) => {
+    // Attempt to connect to the existing lobby host.
+    const conn = localPeer.connect(LOBBY_PEER_ID, {
+      reliable: true,
+      metadata: { type: 'lobby-join' }
+    });
 
-  setConnectionState('connecting', { error: null });
+    // IMPORTANT: this connection is not part of our direct-peer mesh, but it *must*
+    // receive NETWORK_STATE so guests can learn the peer list and sync history.
+    conn.on('data', (data) => {
+      (async () => {
+        await handleMessage(data, conn, profile);
+      })().catch((err) => console.error('lobbyConn handleMessage failed', err));
+    });
 
-  // Attempt to connect to lobby host first.
-  const conn = mainPeer.connect(LOBBY_PEER_ID);
-
-  const joined = await new Promise((resolve) => {
-    let done = false;
-    const finish = (ok) => {
-      if (done) return;
-      done = true;
-      resolve(ok);
-    };
-
-    const timer = setTimeout(() => {
+    const timeout = setTimeout(() => {
       safeClose(conn);
-      finish(false);
+      becomeLobbyHost(localPeer, profile, attempt).then(resolve);
     }, JOIN_LOBBY_TIMEOUT_MS);
 
-    conn.on('open', async () => {
+    conn.on('open', () => {
+      clearTimeout(timeout);
       lobbyConn = conn;
-      clearTimeout(timer);
-      await sendHandshake(conn, profile);
-      finish(true);
+
+      safeSend(conn, {
+        type: 'LOBBY_JOIN',
+        from: buildFromProfile(profile, get(peerStore).peerId ?? localPeer.id),
+        payload: {},
+        timestamp: Date.now()
+      });
+
+      peerStore.update((s) => ({ ...s, isLobbyHost: false }));
+      resolve({ role: 'guest', lobbyConn: conn });
     });
 
     conn.on('error', () => {
-      clearTimeout(timer);
-      finish(false);
+      clearTimeout(timeout);
+      safeClose(conn);
+      becomeLobbyHost(localPeer, profile, attempt).then(resolve);
     });
   });
+}
 
-  if (!joined) {
-    // Expected in the "first peer online" case: no lobby host exists yet.
-    const hosted = await becomeLobbyHost(profile);
-    if (!hosted) {
-      // Another peer won the race to host the lobby ID; retry joining as a client.
-      if (attempt >= 2) {
-        setConnectionState('failed', { isConnected: false, error: 'lobby-join-failed' });
+/**
+ * Try to claim the lobby ID by creating a second Peer. On race, retry join as guest (max 3 attempts).
+ * @param {any} localPeer
+ * @param {UserProfile} profile
+ * @param {number} [attempt=0]
+ * @returns {Promise<{ role: 'host', lobbyPeer: any } | { role: 'guest', lobbyConn: any } | { role: 'standalone' }>}
+ */
+export async function becomeLobbyHost(localPeer, profile, attempt = 0) {
+  return await new Promise((resolve) => {
+    /** @type {any} */
+    const mod = globalThis._PeerJS;
+    const Peer = mod?.Peer ?? mod?.default ?? PeerCtor;
+    const hostPeer = new Peer(LOBBY_PEER_ID, PEERJS_CONFIG);
+
+    hostPeer.on('open', () => {
+      lobbyPeer = hostPeer;
+      peerStore.update((s) => ({
+        ...s,
+        isLobbyHost: true,
+        lobbyPeer: hostPeer,
+        currentLobbyHostId: get(peerStore).peerId
+      }));
+      void setupLobbyHostHandlers(hostPeer, localPeer, profile);
+      resolve({ role: 'host', lobbyPeer: hostPeer });
+    });
+
+    hostPeer.on('error', (err) => {
+      if (err?.type === 'unavailable-id') {
+        try {
+          hostPeer.destroy?.();
+        } catch {
+          // ignore
+        }
+
+        if (attempt >= 2) {
+          resolve({ role: 'standalone' });
+          return;
+        }
+
+        const jitter = 1000 + Math.random() * 1000;
+        setTimeout(() => {
+          joinLobby(localPeer, profile, attempt + 1).then(resolve);
+        }, jitter);
         return;
       }
-      await sleep(400);
-      await joinLobby(profile, attempt + 1);
-      return;
-    }
-    setConnectionState('connected', { isConnected: true, error: null });
-    return;
-  }
 
-  // Listen for peer list updates (and any future lobby messages).
-  conn.on('data', (data) => {
-    if (!validateProtocolMessage(data)) return;
-    if (data.type === 'PEER_LIST') {
-      const peers = data.payload?.peers ?? [];
-      for (const p of peers) {
-        if (!p?.peerId || p.peerId === mainPeer.id) continue;
-        connectToPeer(p.peerId, profile);
-      }
-      return;
-    }
+      peerStore.update((s) => ({ ...s, connectionState: 'standalone' }));
+      resolve({ role: 'standalone' });
+    });
   });
-
-  conn.on('close', () => {
-    lobbyConn = null;
-    // Phase 2: host election. For now, try re-joining.
-    if (cachedProfile) void joinLobby(cachedProfile);
-  });
-
-  setConnectionState('connected', { isConnected: true });
 }
 
 export function handleIncomingConnection(conn, profile) {
@@ -428,16 +601,16 @@ export function handleIncomingConnection(conn, profile) {
 
   upsertConnectedPeer(remotePeerId, conn, null);
 
-  conn.on('open', async () => {
-    try {
+  conn.on('open', () => {
+    (async () => {
       await sendHandshake(conn, profile);
-    } catch (err) {
-      console.error('sendHandshake failed', err);
-    }
+    })().catch((err) => console.error('sendHandshake failed', err));
   });
 
   conn.on('data', (data) => {
-    handleMessage(data, conn, profile).catch((err) => console.error('handleMessage failed', err));
+    (async () => {
+      await handleMessage(data, conn, profile);
+    })().catch((err) => console.error('handleMessage failed', err));
   });
 
   conn.on('close', () => {
@@ -450,8 +623,59 @@ export function handleIncomingConnection(conn, profile) {
   });
 }
 
+async function handleNetworkState(payload, profile) {
+  const peers = payload?.peers ?? [];
+  const usernameRegistry = payload?.usernameRegistry ?? [];
+  const globalHistory = payload?.globalHistory ?? [];
+
+  // 1. Merge username registry.
+  await mergeUsernameRegistry(usernameRegistry);
+
+  // 2. Merge global message history (best-effort dedupe by `id`).
+  try {
+    await db.transaction('rw', db.globalMessages, async () => {
+      for (const msg of globalHistory) {
+        if (!msg || typeof msg !== 'object') continue;
+        // `put` acts as an upsert keyed by the table primary key (`id`).
+        await db.globalMessages.put(msg);
+      }
+    });
+  } catch (err) {
+    console.error('handleNetworkState merge messages failed', err);
+  }
+
+  // 3. Refresh store from DB.
+  try {
+    const allMessages = await getGlobalMessages(100);
+    globalMessagesStore.set(allMessages);
+  } catch (err) {
+    console.error('handleNetworkState refresh store failed', err);
+  }
+
+  // 4. Connect to all peers in the list.
+  const localPeerId = get(peerStore).peerId;
+  const connectedIds = new Set(get(peerStore).connectedPeers.keys());
+  for (const p of peers) {
+    if (!p?.peerId) continue;
+    if (p.peerId === localPeerId) continue;
+    if (connectedIds.has(p.peerId)) continue;
+    connectToPeerIfUnknown(p, profile);
+  }
+
+  setConnectionState('connected', { isConnected: true });
+}
+
+function connectToPeerIfUnknown(peerInfo, profile) {
+  const pid = peerInfo?.peerId;
+  if (!pid || pid === get(peerStore).peerId) return;
+  const state = get(peerStore);
+  if (state.connectedPeers.has(pid)) return;
+  connectToPeer(pid, profile);
+}
+
 export async function handleMessage(msg, fromConn, profile) {
   if (!validateProtocolMessage(msg)) return;
+  emitMessage(msg);
 
   const remotePeerId = msg.from.peerId;
 
@@ -478,25 +702,132 @@ export async function handleMessage(msg, fromConn, profile) {
     return;
   }
 
-  if (msg.type === 'PEER_LIST') {
-    const peers = msg.payload?.peers ?? [];
-    for (const p of peers) {
-      if (!p?.peerId || p.peerId === mainPeer?.id) continue;
-      connectToPeer(p.peerId, profile);
+  if (msg.type === 'NETWORK_STATE') {
+    peerStore.update((s) => ({ ...s, currentLobbyHostId: msg.from.peerId }));
+    await handleNetworkState(msg.payload, profile);
+    return;
+  }
+
+  if (msg.type === 'NEW_PEER') {
+    await connectToPeerIfUnknown(msg.payload?.newPeer, profile);
+    return;
+  }
+
+  if (msg.type === 'LOBBY_JOIN') {
+    // Only lobby host processes these; handled in setupLobbyHostHandlers.
+    return;
+  }
+
+  if (msg.type === 'USERNAME_CHECK') {
+    const username = msg.payload?.username;
+    const checkId = msg.payload?.checkId;
+    if (typeof username !== 'string' || typeof checkId !== 'string') return;
+    const taken = await isUsernameTaken(username);
+    if (!taken) return;
+    sendToPeer(msg.from.peerId, {
+      type: 'USERNAME_TAKEN',
+      from: buildFromProfile(profile),
+      payload: { checkId, username },
+      timestamp: Date.now()
+    });
+    return;
+  }
+
+  if (msg.type === 'USERNAME_TAKEN') {
+    // Handled by listeners (see checkUsernameAvailability).
+    return;
+  }
+
+  if (msg.type === 'STATE_DIGEST') {
+    const latestRemote = Number(msg.payload?.latestGlobalMsgTimestamp ?? 0);
+    const remoteRegistryCount = Number(msg.payload?.usernameRegistryCount ?? 0);
+
+    const myLatest = await db.globalMessages.orderBy('timestamp').last();
+    const myCount = await db.usernameRegistry.count();
+
+    if ((myLatest?.timestamp ?? 0) < latestRemote || myCount < remoteRegistryCount) {
+      const knownUsernames = await getKnownUsernamesList();
+      sendToPeer(msg.from.peerId, {
+        type: 'SYNC_REQUEST',
+        from: buildFromProfile(profile),
+        payload: {
+          sinceTimestamp: myLatest?.timestamp ?? 0,
+          knownUsernames
+        },
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+
+  if (msg.type === 'SYNC_REQUEST') {
+    const sinceTimestamp = Number(msg.payload?.sinceTimestamp ?? 0);
+    const knownUsernames = Array.isArray(msg.payload?.knownUsernames) ? msg.payload.knownUsernames : [];
+
+    const [newMessages, fullRegistry] = await Promise.all([
+      db.globalMessages.where('timestamp').above(sinceTimestamp).toArray(),
+      getFullUsernameRegistry()
+    ]);
+    const known = new Set(knownUsernames);
+    const registryEntries = fullRegistry.filter((e) => !known.has(e.username));
+
+    sendToPeer(msg.from.peerId, {
+      type: 'SYNC_RESPONSE',
+      from: buildFromProfile(profile),
+      payload: { newMessages, registryEntries },
+      timestamp: Date.now()
+    });
+    return;
+  }
+
+  if (msg.type === 'SYNC_RESPONSE') {
+    const newMessages = Array.isArray(msg.payload?.newMessages) ? msg.payload.newMessages : [];
+    const registryEntries = Array.isArray(msg.payload?.registryEntries) ? msg.payload.registryEntries : [];
+
+    try {
+      await db.transaction('rw', db.globalMessages, async () => {
+        for (const m of newMessages) {
+          if (!m || typeof m !== 'object') continue;
+          await db.globalMessages.put(m);
+        }
+      });
+    } catch (err) {
+      console.error('SYNC_RESPONSE merge messages failed', err);
+    }
+
+    await mergeUsernameRegistry(registryEntries);
+
+    try {
+      const allMessages = await getGlobalMessages(100);
+      globalMessagesStore.set(allMessages);
+    } catch (err) {
+      console.error('SYNC_RESPONSE refresh store failed', err);
     }
     return;
   }
 
   if (msg.type === 'GLOBAL_MSG') {
-    const text = msg.payload?.text;
+    // Back-compat: accept `{ text }`, but prefer `{ message }` so we can dedupe by UUID.
+    const incoming = msg.payload?.message;
+    const text = typeof incoming?.text === 'string' ? incoming.text : msg.payload?.text;
     if (typeof text !== 'string' || text.trim().length === 0) return;
+
+    const incomingId = incoming?.id;
+    const messageId =
+      typeof incomingId === 'string' && incomingId.length > 0
+        ? incomingId
+        : globalThis.crypto?.randomUUID
+          ? globalThis.crypto.randomUUID()
+          : `m-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
     await addGlobalMessage({
+      id: messageId,
       peerId: msg.from.peerId,
       username: msg.from.username,
       age: msg.from.age,
       color: msg.from.color,
-      text,
-      timestamp: msg.timestamp
+      text: text.trim(),
+      timestamp: typeof incoming?.timestamp === 'number' ? incoming.timestamp : msg.timestamp
     });
     return;
   }
@@ -548,7 +879,8 @@ export async function initPeer(profile) {
 
     const Peer = await ensurePeerCtor();
 
-    const debug = typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.DEV ? 2 : 0;
+    // Keep PeerJS internal logs quiet; use the in-app debug panel in dev instead (Phase 3).
+    const debug = 0;
 
     const peerId = randomPeerId();
     mainPeer = new Peer(peerId, { ...PEERJS_CONFIG, debug });
@@ -561,7 +893,27 @@ export async function initPeer(profile) {
         error: null,
         reconnectAttempt: 0
       }));
-      void joinLobby(profile);
+      // Register ourselves in the local username registry (for offline uniqueness checks).
+      if (profile?.username) {
+        registerUsernameLocally({
+          username: profile.username,
+          peerId: id,
+          registeredAt: profile.createdAt ?? Date.now(),
+          lastSeenAt: Date.now()
+        }).catch((err) => console.error('registerUsernameLocally failed', err));
+      }
+      (async () => {
+        const res = await joinLobby(mainPeer, profile);
+        if (res.role === 'guest') {
+          setConnectionState('syncing', { isConnected: true, isLobbyHost: false });
+        } else if (res.role === 'host') {
+          setConnectionState('connected', { isConnected: true, isLobbyHost: true, currentLobbyHostId: id });
+        } else {
+          setConnectionState('standalone', { isConnected: true, isLobbyHost: false });
+        }
+
+        startGossipInterval(profile);
+      })().catch((err) => console.error('joinLobby failed', err));
     });
 
     mainPeer.on('connection', (conn) => {
@@ -645,17 +997,23 @@ export async function broadcastGlobalMessage(text, profile) {
   const trimmed = String(text ?? '').trim();
   if (!trimmed) return;
 
-  const envelope = buildMessage('GLOBAL_MSG', id, profile, { text: trimmed });
+  const msgId = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `m-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const timestamp = Date.now();
 
-  // Optimistic update.
-  await addGlobalMessage({
+  const message = {
+    id: msgId,
     peerId: id,
     username: profile.username,
     age: profile.age,
     color: profile.color,
     text: trimmed,
-    timestamp: envelope.timestamp
-  });
+    timestamp
+  };
+
+  const envelope = buildMessage('GLOBAL_MSG', id, profile, { message }, timestamp);
+
+  // Optimistic update.
+  await addGlobalMessage(message);
 
   for (const entry of state.connectedPeers.values()) {
     safeSend(entry.connection, envelope);
@@ -713,6 +1071,11 @@ export function disconnectPeer() {
   const state = get(peerStore);
   const id = state.peerId;
 
+  if (gossipIntervalId) {
+    clearInterval(gossipIntervalId);
+    gossipIntervalId = null;
+  }
+
   if (id && cachedProfile) {
     const msg = buildMessage('PEER_DISCONNECT', id, cachedProfile, {});
     for (const entry of state.connectedPeers.values()) safeSend(entry.connection, msg);
@@ -753,6 +1116,15 @@ export function disconnectPeer() {
     error: null,
     reconnectAttempt: 0,
     isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
     connectedPeers: new Map()
   });
 }
+
+// Test-only hooks (not part of the public app API).
+export const __test = {
+  setMainPeerForTest(p) {
+    mainPeer = p;
+  }
+};

@@ -12,7 +12,7 @@ import Dexie from 'dexie';
 
 /**
  * @typedef {Object} GlobalMessage
- * @property {number} [id]
+ * @property {string} id
  * @property {string} peerId
  * @property {string} username
  * @property {number} age
@@ -32,7 +32,7 @@ import Dexie from 'dexie';
 
 /**
  * @typedef {Object} PrivateMessage
- * @property {number} [id]
+ * @property {string} id
  * @property {number} chatId
  * @property {string} fromUsername
  * @property {string} text
@@ -48,12 +48,22 @@ import Dexie from 'dexie';
  * @property {number} lastSeen
  */
 
+/**
+ * @typedef {Object} UsernameRegistryEntry
+ * @property {number} [id]
+ * @property {string} username
+ * @property {string} peerId
+ * @property {number} registeredAt
+ * @property {number} lastSeenAt
+ */
+
 class AetherChatDB extends Dexie {
   /** @type {Dexie.Table<User, number>} */ users;
-  /** @type {Dexie.Table<GlobalMessage, number>} */ globalMessages;
+  /** @type {Dexie.Table<GlobalMessage, string>} */ globalMessages;
   /** @type {Dexie.Table<PrivateChat, number>} */ privateChats;
-  /** @type {Dexie.Table<PrivateMessage, number>} */ privateMessages;
+  /** @type {Dexie.Table<PrivateMessage, string>} */ privateMessages;
   /** @type {Dexie.Table<KnownPeer, number>} */ knownPeers;
+  /** @type {Dexie.Table<UsernameRegistryEntry, number>} */ usernameRegistry;
 
   constructor() {
     super('AetherChatDB');
@@ -65,6 +75,31 @@ class AetherChatDB extends Dexie {
       privateMessages: '++id, chatId, timestamp, fromUsername',
       knownPeers: '++id, peerId, lastSeen, username'
     });
+
+    this.version(2).stores({
+      users: 'id, username, createdAt',
+      globalMessages: '++id, timestamp, peerId, username',
+      privateChats: '++id, lastActivity, peerUsername',
+      privateMessages: '++id, chatId, timestamp, fromUsername',
+      knownPeers: '++id, peerId, lastSeen, username',
+      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt'
+    });
+
+    // Phase 3: message IDs become UUIDs (primary key = `id`).
+    // These tables are caches, so it's acceptable to clear on upgrade.
+    this.version(3)
+      .stores({
+        users: 'id, username, createdAt',
+        globalMessages: 'id, timestamp, peerId, username',
+        privateChats: '++id, lastActivity, peerUsername',
+        privateMessages: 'id, chatId, timestamp, fromUsername',
+        knownPeers: '++id, peerId, lastSeen, username',
+        usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt'
+      })
+      .upgrade(async (tx) => {
+        await tx.table('globalMessages').clear();
+        await tx.table('privateMessages').clear();
+      });
   }
 }
 
@@ -72,6 +107,20 @@ export const db = new AetherChatDB();
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const THIRTY_DAYS_MS = 30 * ONE_DAY_MS;
+const ONE_YEAR_MS = 365 * ONE_DAY_MS;
+
+/**
+ * Normalize usernames for uniqueness checks (case-insensitive, accent-insensitive).
+ * @param {string} username
+ * @returns {string}
+ */
+function normalizeUsername(username) {
+  return String(username ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
 
 /**
  * Save the local user (there is only ever one local user).
@@ -105,7 +154,8 @@ export async function getUser() {
  */
 export async function saveGlobalMessage(msg) {
   try {
-    await db.globalMessages.add({ ...msg });
+    const id = msg.id || (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : String(Date.now()));
+    await db.globalMessages.put({ ...msg, id });
   } catch (err) {
     console.error('saveGlobalMessage failed', err);
     throw err;
@@ -147,7 +197,8 @@ export async function cleanOldGlobalMessages() {
 export async function savePrivateMessage(msg) {
   try {
     await db.transaction('rw', db.privateMessages, db.privateChats, async () => {
-      await db.privateMessages.add({ ...msg });
+      const id = msg.id || (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : String(Date.now()));
+      await db.privateMessages.put({ ...msg, id });
 
       // Best-effort metadata update if the chat exists.
       const chat = await db.privateChats.get(msg.chatId);
@@ -232,3 +283,126 @@ export async function getKnownPeers() {
   }
 }
 
+/**
+ * Upsert a username registry entry by normalized username.
+ * @param {UsernameRegistryEntry} entry
+ */
+export async function registerUsernameLocally(entry) {
+  try {
+    const norm = normalizeUsername(entry.username);
+    if (!norm) return;
+
+    await db.transaction('rw', db.usernameRegistry, async () => {
+      const existing = await db.usernameRegistry.where('username').equals(norm).first();
+      const record = {
+        username: norm,
+        peerId: entry.peerId,
+        registeredAt: entry.registeredAt,
+        lastSeenAt: entry.lastSeenAt
+      };
+      if (existing) {
+        await db.usernameRegistry.put({ ...existing, ...record, id: existing.id });
+      } else {
+        await db.usernameRegistry.add(record);
+      }
+    });
+  } catch (err) {
+    console.error('registerUsernameLocally failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} username
+ * @returns {Promise<boolean>}
+ */
+export async function isUsernameTaken(username) {
+  try {
+    const norm = normalizeUsername(username);
+    if (!norm) return false;
+    const existing = await db.usernameRegistry.where('username').equals(norm).first();
+    return Boolean(existing);
+  } catch (err) {
+    console.error('isUsernameTaken failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @returns {Promise<UsernameRegistryEntry[]>}
+ */
+export async function getFullUsernameRegistry() {
+  try {
+    return await db.usernameRegistry.orderBy('registeredAt').toArray();
+  } catch (err) {
+    console.error('getFullUsernameRegistry failed', err);
+    throw err;
+  }
+}
+
+/**
+ * Merge remote registry entries with local registry.
+ * Earlier registration always wins; lastSeenAt is merged as max().
+ * @param {UsernameRegistryEntry[]} remoteEntries
+ */
+export async function mergeUsernameRegistry(remoteEntries) {
+  try {
+    const list = Array.isArray(remoteEntries) ? remoteEntries : [];
+    if (list.length === 0) return;
+
+    await db.transaction('rw', db.usernameRegistry, async () => {
+      for (const entry of list) {
+        const norm = normalizeUsername(entry?.username);
+        if (!norm) continue;
+
+        const remote = {
+          username: norm,
+          peerId: entry.peerId,
+          registeredAt: entry.registeredAt,
+          lastSeenAt: entry.lastSeenAt
+        };
+
+        const local = await db.usernameRegistry.where('username').equals(norm).first();
+        if (!local) {
+          await db.usernameRegistry.add(remote);
+          continue;
+        }
+
+        const localWins = (local.registeredAt ?? Number.POSITIVE_INFINITY) <= (remote.registeredAt ?? Number.POSITIVE_INFINITY);
+        if (localWins) {
+          await db.usernameRegistry.put({
+            ...local,
+            lastSeenAt: Math.max(local.lastSeenAt ?? 0, remote.lastSeenAt ?? 0),
+            id: local.id
+          });
+        } else {
+          await db.usernameRegistry.put({
+            ...local,
+            ...remote,
+            lastSeenAt: Math.max(local.lastSeenAt ?? 0, remote.lastSeenAt ?? 0),
+            id: local.id
+          });
+        }
+      }
+    });
+  } catch (err) {
+    console.error('mergeUsernameRegistry failed', err);
+    throw err;
+  }
+}
+
+/**
+ * Remove username registry entries that haven't been seen in over 1 year.
+ * @returns {Promise<number>}
+ */
+export async function pruneStaleRegistryEntries() {
+  try {
+    const cutoff = Date.now() - ONE_YEAR_MS;
+    return await db.usernameRegistry.where('lastSeenAt').below(cutoff).delete();
+  } catch (err) {
+    console.error('pruneStaleRegistryEntries failed', err);
+    throw err;
+  }
+}
+
+export const __test = { normalizeUsername };
