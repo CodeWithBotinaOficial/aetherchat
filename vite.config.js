@@ -4,12 +4,47 @@ import { defineConfig } from 'vite';
 import presetUno from '@unocss/preset-uno';
 import presetWebFonts from '@unocss/preset-web-fonts';
 
+function forceBrowserConditionsForVitest() {
+  return {
+    name: 'force-browser-conditions-for-vitest',
+    config(config, env) {
+      const isVitest = env.mode === 'test' || process.env.VITEST;
+      if (!isVitest) return;
+
+      config.ssr ??= {};
+      config.ssr.target = 'webworker';
+      config.ssr.resolve ??= {};
+
+      const current = config.ssr.resolve.conditions ?? config.resolve?.conditions ?? [];
+      config.ssr.resolve.conditions = Array.from(new Set(['browser', ...current]));
+
+      const external = config.ssr.resolve.externalConditions ?? ['node', 'module-sync'];
+      config.ssr.resolve.externalConditions = Array.from(new Set(['browser', ...external]));
+
+      // Make sure Testing Library goes through Vite transform so its `svelte` import
+      // sees the same conditions as the test files.
+      const currentNoExternal = config.ssr.noExternal;
+      const add = ['@testing-library/svelte', '@testing-library/svelte-core'];
+      if (currentNoExternal === true) return;
+      if (!currentNoExternal) {
+        config.ssr.noExternal = add;
+      } else if (Array.isArray(currentNoExternal)) {
+        config.ssr.noExternal = Array.from(new Set([...currentNoExternal, ...add]));
+      } else {
+        // string | RegExp
+        config.ssr.noExternal = [currentNoExternal, ...add];
+      }
+    }
+  };
+}
+
 export default defineConfig({
   plugins: [
     UnoCSS({
       presets: [
         presetUno(),
         presetWebFonts({
+          provider: 'none',
           fonts: {
             sans: 'Inter',
             mono: 'JetBrains Mono'
@@ -17,6 +52,12 @@ export default defineConfig({
         })
       ]
     }),
-    sveltekit()
-  ]
+    sveltekit(),
+    forceBrowserConditionsForVitest()
+  ],
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/tests/setup.js']
+  }
 });

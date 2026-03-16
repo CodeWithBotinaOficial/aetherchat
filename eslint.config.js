@@ -36,6 +36,24 @@ export default [
     }
   },
   {
+    files: ['src/tests/**/*.{js,ts}'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        // Vitest globals (we run Vitest with `globals: true`)
+        describe: 'readonly',
+        it: 'readonly',
+        test: 'readonly',
+        expect: 'readonly',
+        vi: 'readonly',
+        beforeAll: 'readonly',
+        afterAll: 'readonly',
+        beforeEach: 'readonly',
+        afterEach: 'readonly'
+      }
+    }
+  },
+  {
     // Ignore build artifacts and dependencies
     ignores: [
       'build/**',
