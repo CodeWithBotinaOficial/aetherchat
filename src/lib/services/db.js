@@ -86,20 +86,26 @@ class AetherChatDB extends Dexie {
     });
 
     // Phase 3: message IDs become UUIDs (primary key = `id`).
-    // These tables are caches, so it's acceptable to clear on upgrade.
-    this.version(3)
-      .stores({
-        users: 'id, username, createdAt',
-        globalMessages: 'id, timestamp, peerId, username',
-        privateChats: '++id, lastActivity, peerUsername',
-        privateMessages: 'id, chatId, timestamp, fromUsername',
-        knownPeers: '++id, peerId, lastSeen, username',
-        usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt'
-      })
-      .upgrade(async (tx) => {
-        await tx.table('globalMessages').clear();
-        await tx.table('privateMessages').clear();
-      });
+    // Dexie/IndexedDB does not support changing a table's primary key in-place, so we:
+    // 1) delete the old message tables in v3 (cache tables, safe to drop)
+    // 2) recreate them with UUID primary keys in v4
+    this.version(3).stores({
+      users: 'id, username, createdAt',
+      globalMessages: null,
+      privateChats: '++id, lastActivity, peerUsername',
+      privateMessages: null,
+      knownPeers: '++id, peerId, lastSeen, username',
+      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt'
+    });
+
+    this.version(4).stores({
+      users: 'id, username, createdAt',
+      globalMessages: 'id, timestamp, peerId, username',
+      privateChats: '++id, lastActivity, peerUsername',
+      privateMessages: 'id, chatId, timestamp, fromUsername',
+      knownPeers: '++id, peerId, lastSeen, username',
+      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt'
+    });
   }
 }
 
