@@ -2,25 +2,15 @@
   import { onDestroy, onMount } from 'svelte';
   import AppShell from '$lib/components/AppShell.svelte';
   import RegisterModal from '$lib/components/RegisterModal.svelte';
-  import { cleanOldGlobalMessages, getUser as dbGetUser } from '$lib/services/db.js';
-  import { initPeer } from '$lib/services/peer.js';
+  import { cleanOldGlobalMessages } from '$lib/services/db.js';
+  import { disconnectPeer, initPeer } from '$lib/services/peer.js';
   import { isRegistered, user } from '$lib/stores/userStore.js';
 
   let cleanupTimer = null;
+  let peerStarted = false;
 
   async function boot() {
     try {
-      const existing = await dbGetUser();
-      if (existing) user.set(existing);
-
-      if (existing) {
-        try {
-          await initPeer(existing.username);
-        } catch (err) {
-          console.error('Peer init failed', err);
-        }
-      }
-
       // Cleanup interval: 1 hour
       cleanupTimer = setInterval(() => {
         cleanOldGlobalMessages().catch((err) => console.error('Global message cleanup failed', err));
@@ -30,13 +20,34 @@
     }
   }
 
+  async function startPeerIfNeeded(u) {
+    if (peerStarted) return;
+    if (!u) return;
+    peerStarted = true;
+    try {
+      await initPeer({
+        username: u.username,
+        color: u.color,
+        age: u.age,
+        avatarBase64: u.avatarBase64
+      });
+    } catch (err) {
+      console.error('Peer init failed', err);
+    }
+  }
+
   onMount(() => {
     void boot();
   });
 
   onDestroy(() => {
     if (cleanupTimer) clearInterval(cleanupTimer);
+    disconnectPeer();
   });
+
+  // When the user registers during this session (or when the DB-loaded user arrives),
+  // start the PeerJS stack exactly once.
+  $: if ($isRegistered && $user) void startPeerIfNeeded($user);
 </script>
 
 {#if $isRegistered}
@@ -44,4 +55,3 @@
 {:else}
   <RegisterModal />
 {/if}
-
