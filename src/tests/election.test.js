@@ -75,12 +75,26 @@ vi.mock('$lib/services/db.js', () => {
     getFullUsernameRegistry: (...args) => hoisted.getFullUsernameRegistryMock(...args),
     registerUsernameLocally: (...args) => hoisted.registerUsernameLocallyMock(...args),
     isUsernameTaken: (...args) => hoisted.isUsernameTakenMock(...args),
-    mergeUsernameRegistry: (...args) => hoisted.mergeUsernameRegistryMock(...args)
+    mergeUsernameRegistry: (...args) => hoisted.mergeUsernameRegistryMock(...args),
+
+    upsertPrivateChat: vi.fn().mockResolvedValue(undefined),
+    savePrivateMessage: vi.fn().mockResolvedValue(undefined),
+    updateChatLastActivity: vi.fn().mockResolvedValue(undefined),
+    markMessageDelivered: vi.fn().mockResolvedValue(undefined)
   };
 });
 
 vi.mock('$lib/services/crypto.js', () => {
+  const buildSessionId = (a, b) => [a, b].sort().join(':');
   return {
+    buildSessionId,
+    isSessionActive: vi.fn().mockReturnValue(false),
+    createSession: vi.fn().mockResolvedValue({ sessionId: buildSessionId('a', 'b'), publicKeyBase64: 'PUB' }),
+    completeSession: vi.fn().mockResolvedValue({ sessionId: buildSessionId('a', 'b'), publicKeyBase64: 'PUB2' }),
+    encryptForSession: vi.fn().mockResolvedValue({ ciphertext: 'C', iv: 'I' }),
+    decryptForSession: vi.fn().mockResolvedValue('x'),
+    closeSession: vi.fn(),
+    closeAllSessions: vi.fn(),
     generateKeyPair: vi.fn(),
     exportPublicKey: vi.fn(),
     importPublicKey: vi.fn(),

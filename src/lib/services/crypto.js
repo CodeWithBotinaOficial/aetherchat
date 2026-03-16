@@ -159,3 +159,134 @@ export async function decryptMessage(sharedKey, ciphertext, iv) {
     throw err;
   }
 }
+
+// ── Session Management (Phase 5) ─────────────────────────────────────────────
+//
+// In-memory only. Never persisted. Never logged.
+// Session keys provide forward secrecy: keys are ephemeral per session and discarded on tab close.
+
+// Key: sessionId (string) — `${peerId1}:${peerId2}` sorted alphabetically
+// Value: { sharedKey, myKeyPair, createdAt, state }
+const activeSessions = new Map();
+
+/**
+ * Always sort so both peers generate the same sessionId.
+ * @param {string} peerId1
+ * @param {string} peerId2
+ * @returns {string}
+ */
+export function buildSessionId(peerId1, peerId2) {
+  return [String(peerId1 ?? ''), String(peerId2 ?? '')].sort().join(':');
+}
+
+/**
+ * @param {string} myPeerId
+ * @param {string} theirPeerId
+ * @returns {Promise<{ sessionId: string, publicKeyBase64: string }>}
+ */
+export async function createSession(myPeerId, theirPeerId) {
+  const sessionId = buildSessionId(myPeerId, theirPeerId);
+  const keyPair = await generateKeyPair();
+  const publicKeyBase64 = await exportPublicKey(keyPair.publicKey);
+
+  activeSessions.set(sessionId, {
+    sharedKey: null,
+    myKeyPair: keyPair,
+    createdAt: Date.now(),
+    state: 'pending' // 'pending' | 'active' | 'closed'
+  });
+
+  return { sessionId, publicKeyBase64 };
+}
+
+/**
+ * Called when we receive the other peer's public key. Works for initiator and responder.
+ * @param {string} myPeerId
+ * @param {string} theirPeerId
+ * @param {string} theirPublicKeyBase64
+ * @returns {Promise<{ sessionId: string, publicKeyBase64: string }>}
+ */
+export async function completeSession(myPeerId, theirPeerId, theirPublicKeyBase64) {
+  const sessionId = buildSessionId(myPeerId, theirPeerId);
+  /** @type {any} */
+  let session = activeSessions.get(sessionId);
+
+  if (!session) {
+    // Responder: create our key pair now.
+    const keyPair = await generateKeyPair();
+    session = {
+      sharedKey: null,
+      myKeyPair: keyPair,
+      createdAt: Date.now(),
+      state: 'pending'
+    };
+    activeSessions.set(sessionId, session);
+  }
+
+  const theirPublicKey = await importPublicKey(theirPublicKeyBase64);
+  const sharedKey = await deriveSharedSecret(session.myKeyPair.privateKey, theirPublicKey);
+
+  session.sharedKey = sharedKey;
+  session.state = 'active';
+
+  // Explicitly discard the private key reference after derivation.
+  session.myKeyPair = {
+    publicKey: session.myKeyPair.publicKey,
+    privateKey: null
+  };
+
+  return {
+    sessionId,
+    publicKeyBase64: await exportPublicKey(session.myKeyPair.publicKey)
+  };
+}
+
+/**
+ * @param {string} sessionId
+ * @returns {any|null}
+ */
+export function getSession(sessionId) {
+  return activeSessions.get(sessionId) ?? null;
+}
+
+/**
+ * @param {string} sessionId
+ * @returns {boolean}
+ */
+export function isSessionActive(sessionId) {
+  return activeSessions.get(sessionId)?.state === 'active';
+}
+
+/**
+ * @param {string} sessionId
+ */
+export function closeSession(sessionId) {
+  activeSessions.delete(sessionId);
+}
+
+export function closeAllSessions() {
+  activeSessions.clear();
+}
+
+/**
+ * @param {string} sessionId
+ * @param {string} plaintext
+ * @returns {Promise<{ciphertext: string, iv: string}>}
+ */
+export async function encryptForSession(sessionId, plaintext) {
+  const session = activeSessions.get(sessionId);
+  if (!session || session.state !== 'active') throw new Error(`No active session for ${sessionId}`);
+  return await encryptMessage(session.sharedKey, plaintext);
+}
+
+/**
+ * @param {string} sessionId
+ * @param {string} ciphertext
+ * @param {string} iv
+ * @returns {Promise<string>}
+ */
+export async function decryptForSession(sessionId, ciphertext, iv) {
+  const session = activeSessions.get(sessionId);
+  if (!session || session.state !== 'active') throw new Error(`No active session for ${sessionId}`);
+  return await decryptMessage(session.sharedKey, ciphertext, iv);
+}

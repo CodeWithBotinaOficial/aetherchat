@@ -76,8 +76,17 @@ const hoisted = vi.hoisted(() => {
     registerUsernameLocallyMock: vi.fn().mockResolvedValue(undefined),
     isUsernameTakenMock: vi.fn().mockResolvedValue(false),
     mergeUsernameRegistryMock: vi.fn().mockResolvedValue(undefined),
-    sharedKeyStub: { __shared: true },
-    decryptMessageMock: vi.fn().mockResolvedValue('plaintext')
+    upsertPrivateChatMock: vi.fn().mockResolvedValue(undefined),
+    savePrivateMessageMock: vi.fn().mockResolvedValue(undefined),
+    updateChatLastActivityMock: vi.fn().mockResolvedValue(undefined),
+    markMessageDeliveredMock: vi.fn().mockResolvedValue(undefined),
+    openChatMock: vi.fn(),
+    upsertChatEntryMock: vi.fn(),
+    setKeyExchangeStateMock: vi.fn(),
+    addOutgoingMessageMock: vi.fn(),
+    addIncomingMessageMock: vi.fn(),
+    deleteChatFromStoreMock: vi.fn().mockResolvedValue(undefined),
+    markDeliveredMock: vi.fn()
   };
 });
 
@@ -110,18 +119,44 @@ vi.mock('$lib/services/db.js', () => {
     getFullUsernameRegistry: (...args) => hoisted.getFullUsernameRegistryMock(...args),
     registerUsernameLocally: (...args) => hoisted.registerUsernameLocallyMock(...args),
     isUsernameTaken: (...args) => hoisted.isUsernameTakenMock(...args),
-    mergeUsernameRegistry: (...args) => hoisted.mergeUsernameRegistryMock(...args)
+    mergeUsernameRegistry: (...args) => hoisted.mergeUsernameRegistryMock(...args),
+
+    upsertPrivateChat: (...args) => hoisted.upsertPrivateChatMock(...args),
+    savePrivateMessage: (...args) => hoisted.savePrivateMessageMock(...args),
+    updateChatLastActivity: (...args) => hoisted.updateChatLastActivityMock(...args),
+    markMessageDelivered: (...args) => hoisted.markMessageDeliveredMock(...args)
   };
 });
 
 vi.mock('$lib/services/crypto.js', () => {
+  const buildSessionId = (a, b) => [a, b].sort().join(':');
   return {
+    buildSessionId,
+    isSessionActive: vi.fn().mockReturnValue(false),
+    createSession: vi.fn().mockResolvedValue({ sessionId: buildSessionId('local', 'p2'), publicKeyBase64: 'OUR_PUB_EX' }),
+    completeSession: vi.fn().mockResolvedValue({ sessionId: buildSessionId('local', 'p2'), publicKeyBase64: 'OUR_PUB_EX_ACK' }),
+    encryptForSession: vi.fn().mockResolvedValue({ ciphertext: 'CIPH', iv: 'IV' }),
+    decryptForSession: vi.fn().mockResolvedValue('hello'),
+    closeSession: vi.fn(),
+    closeAllSessions: vi.fn(),
+
     generateKeyPair: vi.fn().mockResolvedValue({ publicKey: { __pk: true }, privateKey: { __sk: true } }),
     exportPublicKey: vi.fn().mockResolvedValue('PUBKEY_BASE64'),
-    importPublicKey: vi.fn().mockResolvedValue({ __remotePk: true }),
-    deriveSharedSecret: vi.fn().mockResolvedValue(hoisted.sharedKeyStub),
-    encryptMessage: vi.fn().mockResolvedValue({ ciphertext: 'CIPH', iv: 'IV' }),
-    decryptMessage: (...args) => hoisted.decryptMessageMock(...args)
+    // legacy exports that peer.js no longer uses but may be imported in older tests.
+    importPublicKey: vi.fn().mockResolvedValue({ __remotePk: true })
+  };
+});
+
+vi.mock('$lib/stores/privateChatStore.js', () => {
+  return {
+    openChat: (...args) => hoisted.openChatMock(...args),
+    upsertChatEntry: (...args) => hoisted.upsertChatEntryMock(...args),
+    setKeyExchangeState: (...args) => hoisted.setKeyExchangeStateMock(...args),
+    addOutgoingMessage: (...args) => hoisted.addOutgoingMessageMock(...args),
+    addIncomingMessage: (...args) => hoisted.addIncomingMessageMock(...args),
+    deleteChatFromStore: (...args) => hoisted.deleteChatFromStoreMock(...args),
+    markDelivered: (...args) => hoisted.markDeliveredMock(...args),
+    setChatOnlineStatus: vi.fn()
   };
 });
 
@@ -131,7 +166,11 @@ import {
   attemptReconnect,
   becomeLobbyHost,
   broadcastGlobalMessage,
+  flushQueueForPeer,
   registrySyncReady,
+  initiatePrivateChat,
+  sendPrivateMessage,
+  closePrivateChat,
   disconnectPeer,
   handleMessage,
   initPeer,
@@ -141,7 +180,7 @@ import {
 
 const me = { username: 'alice', color: 'hsl(1, 65%, 65%)', age: 22, avatarBase64: 'data:image/png;base64,AAAA' };
 
-beforeEach(() => {
+beforeEach(async () => {
   MockPeer.ctorCalls = [];
   MockPeer.instances = [];
   hoisted.addGlobalMessageMock.mockClear();
@@ -151,7 +190,27 @@ beforeEach(() => {
   hoisted.registerUsernameLocallyMock.mockClear();
   hoisted.isUsernameTakenMock.mockClear();
   hoisted.mergeUsernameRegistryMock.mockClear();
-  hoisted.decryptMessageMock.mockClear();
+  hoisted.upsertPrivateChatMock.mockClear();
+  hoisted.savePrivateMessageMock.mockClear();
+  hoisted.updateChatLastActivityMock.mockClear();
+  hoisted.markMessageDeliveredMock.mockClear();
+  hoisted.openChatMock.mockClear();
+  hoisted.upsertChatEntryMock.mockClear();
+  hoisted.setKeyExchangeStateMock.mockClear();
+  hoisted.addOutgoingMessageMock.mockClear();
+  hoisted.addIncomingMessageMock.mockClear();
+  hoisted.deleteChatFromStoreMock.mockClear();
+  hoisted.markDeliveredMock.mockClear();
+
+  const cryptoMod = await import('$lib/services/crypto.js');
+  const sid = cryptoMod.buildSessionId('local', 'p2');
+  cryptoMod.isSessionActive.mockReset().mockReturnValue(false);
+  cryptoMod.createSession.mockReset().mockResolvedValue({ sessionId: sid, publicKeyBase64: 'OUR_PUB_EX' });
+  cryptoMod.completeSession.mockReset().mockResolvedValue({ sessionId: sid, publicKeyBase64: 'OUR_PUB_EX_ACK' });
+  cryptoMod.encryptForSession.mockReset().mockResolvedValue({ ciphertext: 'CIPH', iv: 'IV' });
+  cryptoMod.decryptForSession.mockReset().mockResolvedValue('hello');
+  cryptoMod.closeSession.mockClear();
+  cryptoMod.closeAllSessions.mockClear();
 
   // Provide cached PeerJS module for becomeLobbyHost.
   globalThis._PeerJS = { Peer: MockPeer, default: MockPeer };
@@ -435,35 +494,329 @@ it('handleMessage routes GLOBAL_MSG to globalMessages store (via addGlobalMessag
   });
 });
 
-it('handleMessage routes PRIVATE_MSG through decryption', async () => {
-  // Need a local peerId so PRIVATE_KEY_EXCHANGE replies back with our key.
-  peerStore.update((s) => ({ ...s, peerId: 'local', isConnected: true, connectionState: 'connected' }));
+it('initiatePrivateChat calls createSession and sends PRIVATE_KEY_EXCHANGE', async () => {
+  const send = vi.fn();
+  peerStore.set({
+    peerId: 'local',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send } }]])
+  });
 
-  const conn = new MockConn('p2');
+  peerTest.setProfileForTest(me);
+  const cryptoMod = await import('$lib/services/crypto.js');
+  cryptoMod.isSessionActive.mockReturnValue(false);
+
+  await initiatePrivateChat('p2', 'bob', 'hsl(2, 65%, 65%)', null);
+
+  expect(cryptoMod.createSession).toHaveBeenCalledTimes(1);
+  expect(send).toHaveBeenCalledTimes(1);
+  const env = send.mock.calls[0][0];
+  expect(env.type).toBe('PRIVATE_KEY_EXCHANGE');
+  expect(env.to).toBe('p2');
+  expect(env.payload.publicKeyBase64).toBe('OUR_PUB_EX');
+  expect(hoisted.openChatMock).toHaveBeenCalled();
+});
+
+it('initiatePrivateChat opens existing chat if session is already active', async () => {
+  const send = vi.fn();
+  peerStore.set({
+    peerId: 'local',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send } }]])
+  });
+
+  peerTest.setProfileForTest(me);
+  const cryptoMod = await import('$lib/services/crypto.js');
+  cryptoMod.isSessionActive.mockReturnValue(true);
+
+  await initiatePrivateChat('p2', 'bob', 'hsl(2, 65%, 65%)', null);
+  expect(send).not.toHaveBeenCalled();
+  expect(cryptoMod.createSession).not.toHaveBeenCalled();
+  expect(hoisted.openChatMock).toHaveBeenCalled();
+});
+
+it('sendPrivateMessage throws if session is not active', async () => {
+  peerStore.set({
+    peerId: 'local',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map()
+  });
+  peerTest.setProfileForTest(me);
+  const cryptoMod = await import('$lib/services/crypto.js');
+  cryptoMod.isSessionActive.mockReturnValue(false);
+  await expect(sendPrivateMessage('p2', 'hi')).rejects.toThrow(/not active/i);
+});
+
+it('sendPrivateMessage encrypts before calling sendToPeer and stores ciphertext (not plaintext) in DB', async () => {
+  let encrypted = false;
+  const send = vi.fn(() => {
+    expect(encrypted).toBe(true);
+  });
+
+  peerStore.set({
+    peerId: 'local',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send } }]])
+  });
+  peerTest.setProfileForTest(me);
+
+  const cryptoMod = await import('$lib/services/crypto.js');
+  cryptoMod.isSessionActive.mockReturnValue(true);
+  cryptoMod.encryptForSession.mockImplementationOnce(async () => {
+    encrypted = true;
+    return { ciphertext: 'CIPH', iv: 'IV' };
+  });
+
+  await sendPrivateMessage('p2', 'hello');
+
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(hoisted.savePrivateMessageMock).toHaveBeenCalledTimes(1);
+  const row = hoisted.savePrivateMessageMock.mock.calls[0][0];
+  expect(row.ciphertext).toBe('CIPH');
+  expect(row.iv).toBe('IV');
+  expect(row.text).toBeUndefined();
+});
+
+it('sendPrivateMessage queues message if peer is offline and flushQueueForPeer sends queued messages on reconnect', async () => {
+  const send = vi.fn();
+  peerStore.set({
+    peerId: 'local',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map() // offline
+  });
+  peerTest.setProfileForTest(me);
+  const cryptoMod = await import('$lib/services/crypto.js');
+  cryptoMod.isSessionActive.mockReturnValue(true);
+  cryptoMod.encryptForSession.mockResolvedValueOnce({ ciphertext: 'CIPH', iv: 'IV' });
+
+  await sendPrivateMessage('p2', 'hello');
+  expect(send).not.toHaveBeenCalled();
+
+  // Peer reconnects.
+  peerStore.update((s) => ({
+    ...s,
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send } }]])
+  }));
+  flushQueueForPeer('p2');
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(send.mock.calls[0][0].type).toBe('PRIVATE_MSG');
+});
+
+it('PRIVATE_KEY_EXCHANGE handler calls completeSession and sends ACK', async () => {
+  const send = vi.fn();
+  peerStore.set({
+    peerId: 'local',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send } }]])
+  });
+  peerTest.setProfileForTest(me);
+
+  const cryptoMod = await import('$lib/services/crypto.js');
+  cryptoMod.completeSession.mockResolvedValueOnce({ sessionId: 'local:p2', publicKeyBase64: 'ACK_PUB' });
+
   await handleMessage(
     {
       type: 'PRIVATE_KEY_EXCHANGE',
       from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33 },
-      payload: { publicKey: 'REMOTE_PUBKEY' },
+      to: 'local',
+      payload: { publicKeyBase64: 'REMOTE_PUB' },
       timestamp: 1
     },
-    conn,
+    new MockConn('p2'),
     me
   );
+
+  expect(cryptoMod.completeSession).toHaveBeenCalled();
+  const env = send.mock.calls.map((c) => c[0]).find((m) => m.type === 'PRIVATE_KEY_EXCHANGE_ACK');
+  expect(env).toBeTruthy();
+  expect(env.payload.publicKeyBase64).toBe('ACK_PUB');
+});
+
+it('PRIVATE_MSG handler decrypts and calls addIncomingMessage (and sends ACK)', async () => {
+  const send = vi.fn();
+  peerStore.set({
+    peerId: 'local',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send } }]])
+  });
+  peerTest.setProfileForTest(me);
+  const cryptoMod = await import('$lib/services/crypto.js');
+  cryptoMod.isSessionActive.mockReturnValue(true);
+  cryptoMod.decryptForSession.mockResolvedValueOnce('hello');
 
   await handleMessage(
     {
       type: 'PRIVATE_MSG',
       from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33 },
-      payload: { ciphertext: 'CIPH', iv: 'IV' },
+      to: 'local',
+      payload: { ciphertext: 'CIPH', iv: 'IV', messageId: 'm1' },
       timestamp: 2
     },
-    conn,
+    new MockConn('p2'),
     me
   );
 
-  expect(hoisted.decryptMessageMock).toHaveBeenCalledTimes(1);
-  expect(hoisted.decryptMessageMock).toHaveBeenCalledWith(hoisted.sharedKeyStub, 'CIPH', 'IV');
+  expect(cryptoMod.decryptForSession).toHaveBeenCalled();
+  expect(hoisted.addIncomingMessageMock).toHaveBeenCalledWith('local:p2', { id: 'm1', text: 'hello', timestamp: 2 });
+  const ack = send.mock.calls.map((c) => c[0]).find((m) => m.type === 'PRIVATE_MSG_ACK');
+  expect(ack).toBeTruthy();
+  expect(ack.payload.messageId).toBe('m1');
+});
+
+it('PRIVATE_MSG handler stores as unreadable if session not active', async () => {
+  const send = vi.fn();
+  peerStore.set({
+    peerId: 'local',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send } }]])
+  });
+  peerTest.setProfileForTest(me);
+  const cryptoMod = await import('$lib/services/crypto.js');
+  cryptoMod.isSessionActive.mockReturnValue(false);
+
+  await handleMessage(
+    {
+      type: 'PRIVATE_MSG',
+      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33 },
+      to: 'local',
+      payload: { ciphertext: 'CIPH', iv: 'IV', messageId: 'm2' },
+      timestamp: 2
+    },
+    new MockConn('p2'),
+    me
+  );
+
+  expect(cryptoMod.decryptForSession).not.toHaveBeenCalled();
+  expect(hoisted.addIncomingMessageMock).toHaveBeenCalledWith('local:p2', { id: 'm2', text: '🔒 Encrypted message', timestamp: 2 });
+});
+
+it('PRIVATE_MSG_ACK handler calls markDelivered and markMessageDelivered', async () => {
+  peerStore.set({
+    peerId: 'local',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map()
+  });
+  peerTest.setProfileForTest(me);
+
+  await handleMessage(
+    {
+      type: 'PRIVATE_MSG_ACK',
+      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33 },
+      to: 'local',
+      payload: { messageId: 'm1' },
+      timestamp: 3
+    },
+    new MockConn('p2'),
+    me
+  );
+
+  expect(hoisted.markDeliveredMock).toHaveBeenCalledWith('local:p2', 'm1');
+  expect(hoisted.markMessageDeliveredMock).toHaveBeenCalledWith('m1');
+});
+
+it('PRIVATE_CHAT_CLOSED does NOT delete local messages', async () => {
+  peerStore.set({
+    peerId: 'local',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map()
+  });
+  peerTest.setProfileForTest(me);
+
+  await handleMessage(
+    {
+      type: 'PRIVATE_CHAT_CLOSED',
+      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33 },
+      to: 'local',
+      payload: { chatId: 'local:p2' },
+      timestamp: 4
+    },
+    new MockConn('p2'),
+    me
+  );
+
+  expect(hoisted.deleteChatFromStoreMock).not.toHaveBeenCalled();
+  expect(hoisted.addIncomingMessageMock).toHaveBeenCalled();
+});
+
+it('closePrivateChat clears session, deletes chat locally, and notifies peer when connected', async () => {
+  const send = vi.fn();
+  peerStore.set({
+    peerId: 'local',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send } }]])
+  });
+  peerTest.setProfileForTest(me);
+
+  await closePrivateChat('p2');
+  expect(hoisted.deleteChatFromStoreMock).toHaveBeenCalledWith('local:p2');
+  const env = send.mock.calls.map((c) => c[0]).find((m) => m.type === 'PRIVATE_CHAT_CLOSED');
+  expect(env).toBeTruthy();
 });
 
 it('broadcastGlobalMessage adds message before sending (optimistic)', async () => {
@@ -576,7 +929,8 @@ it('handleMessage ignores malformed messages (missing required envelope fields)'
   await handleMessage({ not: 'a valid envelope' }, conn, me);
   expect(hoisted.addGlobalMessageMock).not.toHaveBeenCalled();
   expect(hoisted.saveKnownPeerMock).not.toHaveBeenCalled();
-  expect(hoisted.decryptMessageMock).not.toHaveBeenCalled();
+  const cryptoMod = await import('$lib/services/crypto.js');
+  expect(cryptoMod.decryptForSession).not.toHaveBeenCalled();
 });
 
 it('Message protocol shape is validated correctly', () => {

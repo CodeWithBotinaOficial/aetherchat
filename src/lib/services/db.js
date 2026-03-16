@@ -23,21 +23,25 @@ import Dexie from 'dexie';
 
 /**
  * @typedef {Object} PrivateChat
- * @property {number} [id]
- * @property {string} peerUsername
- * @property {string} lastMessage
+ * @property {string} id
+ * @property {string} myPeerId
+ * @property {string} theirPeerId
+ * @property {string} theirUsername
+ * @property {string} theirColor
+ * @property {string|null} theirAvatarBase64
+ * @property {number} createdAt
  * @property {number} lastActivity
- * @property {number} unreadCount
  */
 
 /**
  * @typedef {Object} PrivateMessage
  * @property {string} id
- * @property {number} chatId
- * @property {string} fromUsername
- * @property {string} text
+ * @property {string} chatId
+ * @property {'sent'|'received'} direction
+ * @property {string} ciphertext
+ * @property {string} iv
  * @property {number} timestamp
- * @property {boolean} encrypted
+ * @property {boolean} delivered
  */
 
 /**
@@ -60,7 +64,7 @@ import Dexie from 'dexie';
 class AetherChatDB extends Dexie {
   /** @type {Dexie.Table<User, number>} */ users;
   /** @type {Dexie.Table<GlobalMessage, string>} */ globalMessages;
-  /** @type {Dexie.Table<PrivateChat, number>} */ privateChats;
+  /** @type {Dexie.Table<PrivateChat, string>} */ privateChats;
   /** @type {Dexie.Table<PrivateMessage, string>} */ privateMessages;
   /** @type {Dexie.Table<KnownPeer, number>} */ knownPeers;
   /** @type {Dexie.Table<UsernameRegistryEntry, number>} */ usernameRegistry;
@@ -103,6 +107,26 @@ class AetherChatDB extends Dexie {
       globalMessages: 'id, timestamp, peerId, username',
       privateChats: '++id, lastActivity, peerUsername',
       privateMessages: 'id, chatId, timestamp, fromUsername',
+      knownPeers: '++id, peerId, lastSeen, username',
+      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt'
+    });
+
+    // Phase 5: replace legacy private chat tables with E2EE private chat tables.
+    // Dexie/IndexedDB cannot change primary keys in-place; private chats are per-user caches, safe to drop.
+    this.version(5).stores({
+      users: 'id, username, createdAt',
+      globalMessages: 'id, timestamp, peerId, username',
+      privateChats: null,
+      privateMessages: null,
+      knownPeers: '++id, peerId, lastSeen, username',
+      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt'
+    });
+
+    this.version(6).stores({
+      users: 'id, username, createdAt',
+      globalMessages: 'id, timestamp, peerId, username',
+      privateChats: 'id, myPeerId, theirPeerId, theirUsername, createdAt, lastActivity',
+      privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
       knownPeers: '++id, peerId, lastSeen, username',
       usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt'
     });
@@ -197,25 +221,93 @@ export async function cleanOldGlobalMessages() {
   }
 }
 
+// ── Private Chats (Phase 5) ─────────────────────────────────────────────────
+
 /**
+ * Upsert a private chat entry by id.
+ * @param {PrivateChat} chat
+ */
+export async function upsertPrivateChat(chat) {
+  try {
+    if (!chat || typeof chat !== 'object') throw new Error('Missing chat');
+    if (typeof chat.id !== 'string' || chat.id.length === 0) throw new Error('Missing chat.id');
+    await db.privateChats.put(chat);
+  } catch (err) {
+    console.error('upsertPrivateChat failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} myPeerId
+ * @returns {Promise<PrivateChat[]>}
+ */
+export async function getPrivateChats(myPeerId) {
+  try {
+    const list = await db.privateChats.where('myPeerId').equals(myPeerId).toArray();
+    return list.sort((a, b) => (b.lastActivity ?? 0) - (a.lastActivity ?? 0));
+  } catch (err) {
+    console.error('getPrivateChats failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} chatId
+ * @returns {Promise<PrivateChat|null>}
+ */
+export async function getPrivateChat(chatId) {
+  try {
+    return (await db.privateChats.get(chatId)) ?? null;
+  } catch (err) {
+    console.error('getPrivateChat failed', err);
+    throw err;
+  }
+}
+
+/**
+ * Deletes the chat AND all its messages atomically.
+ * @param {string} chatId
+ */
+export async function deletePrivateChat(chatId) {
+  try {
+    await db.transaction('rw', db.privateChats, db.privateMessages, async () => {
+      await db.privateMessages.where('chatId').equals(chatId).delete();
+      await db.privateChats.delete(chatId);
+    });
+  } catch (err) {
+    console.error('deletePrivateChat failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} chatId
+ * @param {number} timestamp
+ */
+export async function updateChatLastActivity(chatId, timestamp) {
+  try {
+    await db.privateChats.update(chatId, { lastActivity: timestamp });
+  } catch (err) {
+    console.error('updateChatLastActivity failed', err);
+    throw err;
+  }
+}
+
+// ── Private Messages (Phase 5) ───────────────────────────────────────────────
+
+/**
+ * Stores ciphertext + iv only. Plaintext MUST NOT be stored.
  * @param {PrivateMessage} msg
  */
 export async function savePrivateMessage(msg) {
   try {
-    await db.transaction('rw', db.privateMessages, db.privateChats, async () => {
-      const id = msg.id || (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : String(Date.now()));
-      await db.privateMessages.put({ ...msg, id });
-
-      // Best-effort metadata update if the chat exists.
-      const chat = await db.privateChats.get(msg.chatId);
-      if (chat) {
-        await db.privateChats.put({
-          ...chat,
-          lastActivity: msg.timestamp,
-          lastMessage: msg.text
-        });
-      }
-    });
+    if (!msg || typeof msg !== 'object') throw new Error('Missing message');
+    if (typeof msg.id !== 'string' || msg.id.length === 0) throw new Error('Missing msg.id');
+    if (typeof msg.chatId !== 'string' || msg.chatId.length === 0) throw new Error('Missing msg.chatId');
+    if (typeof msg.ciphertext !== 'string' || msg.ciphertext.length === 0) throw new Error('Missing ciphertext');
+    if (typeof msg.iv !== 'string' || msg.iv.length === 0) throw new Error('Missing iv');
+    await db.privateMessages.put(msg);
   } catch (err) {
     console.error('savePrivateMessage failed', err);
     throw err;
@@ -223,12 +315,16 @@ export async function savePrivateMessage(msg) {
 }
 
 /**
- * @param {number} chatId
+ * @param {string} chatId
+ * @param {number} [limit=100]
  * @returns {Promise<PrivateMessage[]>}
  */
-export async function getPrivateMessages(chatId) {
+export async function getPrivateMessages(chatId, limit = 100) {
   try {
-    return await db.privateMessages.where('chatId').equals(chatId).sortBy('timestamp');
+    const list = await db.privateMessages.where('chatId').equals(chatId).toArray();
+    list.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+    if (list.length <= limit) return list;
+    return list.slice(list.length - limit);
   } catch (err) {
     console.error('getPrivateMessages failed', err);
     throw err;
@@ -236,26 +332,72 @@ export async function getPrivateMessages(chatId) {
 }
 
 /**
- * Delete private chats with no activity for 30 days, and their messages.
+ * @param {string} chatId
+ * @param {number} beforeTimestamp
+ * @param {number} [limit=50]
+ * @returns {Promise<PrivateMessage[]>}
+ */
+export async function getPrivateMessagesPage(chatId, beforeTimestamp, limit = 50) {
+  try {
+    const list = await db.privateMessages.where('chatId').equals(chatId).toArray();
+    const filtered = list.filter((m) => (m.timestamp ?? 0) < beforeTimestamp);
+    filtered.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+    const page = filtered.slice(0, limit);
+    page.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+    return page;
+  } catch (err) {
+    console.error('getPrivateMessagesPage failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} messageId
+ */
+export async function markMessageDelivered(messageId) {
+  try {
+    await db.privateMessages.update(messageId, { delivered: true });
+  } catch (err) {
+    console.error('markMessageDelivered failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} chatId
+ */
+export async function deletePrivateMessages(chatId) {
+  try {
+    await db.privateMessages.where('chatId').equals(chatId).delete();
+  } catch (err) {
+    console.error('deletePrivateMessages failed', err);
+    throw err;
+  }
+}
+
+/**
+ * Deletes chats where lastActivity is older than 30 days, cascading to messages.
  * @returns {Promise<number>} count of chats deleted
  */
-export async function cleanOldPrivateMessages() {
+export async function cleanOldPrivateChats() {
   try {
     const cutoff = Date.now() - THIRTY_DAYS_MS;
-
     return await db.transaction('rw', db.privateChats, db.privateMessages, async () => {
       const oldChatIds = await db.privateChats.where('lastActivity').below(cutoff).primaryKeys();
       if (oldChatIds.length === 0) return 0;
-
-      // Delete messages for those chats.
       await db.privateMessages.where('chatId').anyOf(oldChatIds).delete();
       await db.privateChats.bulkDelete(oldChatIds);
       return oldChatIds.length;
     });
   } catch (err) {
-    console.error('cleanOldPrivateMessages failed', err);
+    console.error('cleanOldPrivateChats failed', err);
     throw err;
   }
+}
+
+// Back-compat alias (Phase 1/3 name).
+export async function cleanOldPrivateMessages() {
+  return await cleanOldPrivateChats();
 }
 
 /**

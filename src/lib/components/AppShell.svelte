@@ -1,11 +1,13 @@
 <script>
+  import { onDestroy, onMount } from 'svelte';
   import { user } from '$lib/stores/userStore.js';
+  import { activeTab } from '$lib/stores/navigationStore.js';
   import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
   import GlobalChat from '$lib/components/GlobalChat.svelte';
+  import PrivateChatPanel from '$lib/components/PrivateChatPanel.svelte';
   import P2PDebugPanel from '$lib/components/P2PDebugPanel.svelte';
-
-  /** @type {'global'|'private'|'terms'} */
-  let active = 'global';
+  import { totalUnread, setChatOnlineStatus } from '$lib/stores/privateChatStore.js';
+  import { flushQueueForPeer, onMessage } from '$lib/services/peer.js';
 
   const tabs = [
     { key: 'global', label: 'Global Chat', icon: 'globe' },
@@ -41,6 +43,30 @@
   function mobileIconClass(isActive) {
     return isActive ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]';
   }
+
+  let stopNetworkHooks = () => {};
+
+  onMount(() => {
+    const unsub = [
+      onMessage('HANDSHAKE', (msg) => {
+        setChatOnlineStatus(msg.from.peerId, true);
+        flushQueueForPeer(msg.from.peerId);
+      }),
+      onMessage('HANDSHAKE_ACK', (msg) => {
+        setChatOnlineStatus(msg.from.peerId, true);
+        flushQueueForPeer(msg.from.peerId);
+      }),
+      onMessage('PEER_DISCONNECT', (msg) => {
+        setChatOnlineStatus(msg.from.peerId, false);
+      })
+    ];
+
+    stopNetworkHooks = () => unsub.forEach((u) => u());
+  });
+
+  onDestroy(() => {
+    stopNetworkHooks();
+  });
 </script>
 
 <div class="min-h-screen bg-[var(--bg-base)] text-[var(--text-primary)] min-[1920px]:text-[18px]">
@@ -59,15 +85,25 @@
       <div class="flex-1 py-[var(--space-md)]">
         {#each tabs as t (t.key)}
           <button
-            class={tabButtonClass(active === t.key)}
-            style={tabButtonStyle(active === t.key)}
-            on:click={() => (active = t.key)}
+            class={tabButtonClass($activeTab === t.key)}
+            style={tabButtonStyle($activeTab === t.key)}
+            on:click={() => activeTab.set(t.key)}
             title={t.label}
           >
             <svg class="h-[18px] w-[18px] flex-none" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d={iconPath(t.icon)} />
             </svg>
-            <span class="hidden lg:inline text-[var(--font-size-sm)]">{t.label}</span>
+            <span class="hidden lg:inline text-[var(--font-size-sm)]">
+              {t.label}
+              {#if t.key === 'private' && $totalUnread > 0}
+                <span
+                  class="ml-[var(--space-sm)] inline-flex items-center rounded-[var(--radius-full)] bg-[var(--accent-subtle)] px-[var(--space-sm)] py-[2px] text-[var(--font-size-xs)] text-[var(--text-primary)] border border-[var(--border)]"
+                  aria-label="Unread private messages"
+                >
+                  {$totalUnread > 99 ? '99+' : $totalUnread}
+                </span>
+              {/if}
+            </span>
           </button>
         {/each}
       </div>
@@ -86,17 +122,10 @@
     <!-- Main -->
     <main class="flex-1 min-w-0 flex flex-col">
       <div class="flex-1 min-h-0">
-        {#if active === 'global'}
+        {#if $activeTab === 'global'}
           <GlobalChat />
-        {:else if active === 'private'}
-          <div class="h-full grid place-items-center px-[var(--space-lg)]">
-            <div class="text-center">
-              <div class="text-[var(--font-size-lg)] font-700">Private chats</div>
-              <div class="mt-[var(--space-xs)] text-[var(--text-secondary)] text-[var(--font-size-sm)]">
-                Coming in Phase 2.
-              </div>
-            </div>
-          </div>
+        {:else if $activeTab === 'private'}
+          <PrivateChatPanel />
         {:else}
           <div class="h-full overflow-y-auto px-[var(--space-lg)] py-[var(--space-lg)]">
             <div class="max-w-[760px]">
@@ -119,19 +148,27 @@
         <div class="grid grid-cols-3 gap-[var(--space-sm)]">
           {#each tabs as t (t.key)}
             <button
-              class={mobileTabClass(active === t.key)}
-              on:click={() => (active = t.key)}
+              class={mobileTabClass($activeTab === t.key)}
+              on:click={() => activeTab.set(t.key)}
               aria-label={t.label}
               title={t.label}
             >
-              <svg
-                class={`h-[18px] w-[18px] ${mobileIconClass(active === t.key)}`}
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                aria-hidden="true"
-              >
-                <path d={iconPath(t.icon)} />
-              </svg>
+              <div class="relative">
+                <svg
+                  class={`h-[18px] w-[18px] ${mobileIconClass($activeTab === t.key)}`}
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <path d={iconPath(t.icon)} />
+                </svg>
+                {#if t.key === 'private' && $totalUnread > 0}
+                  <span
+                    class="absolute -right-[6px] -top-[6px] h-[10px] w-[10px] rounded-[var(--radius-full)] bg-[var(--accent)] border border-[var(--border)]"
+                    aria-hidden="true"
+                  ></span>
+                {/if}
+              </div>
             </button>
           {/each}
         </div>

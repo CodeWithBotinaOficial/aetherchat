@@ -3,13 +3,16 @@
   import AppShell from '$lib/components/AppShell.svelte';
   import BootScreen from '$lib/components/BootScreen.svelte';
   import RegisterModal from '$lib/components/RegisterModal.svelte';
-  import { cleanOldGlobalMessages } from '$lib/services/db.js';
+  import { cleanOldGlobalMessages, cleanOldPrivateChats } from '$lib/services/db.js';
   import { disconnectPeer, initPeer, registrySyncReady } from '$lib/services/peer.js';
+  import { peer } from '$lib/stores/peerStore.js';
+  import { loadPrivateChats } from '$lib/stores/privateChatStore.js';
   import { isRegistered, user } from '$lib/stores/userStore.js';
 
   let cleanupTimer = null;
   let peerStarted = false;
   let registryReady = false;
+  let privateBootedPeerId = null;
 
   async function boot() {
     try {
@@ -70,6 +73,20 @@
       avatarBase64: $user.avatarBase64 ?? null,
       createdAt: $user.createdAt
     });
+  }
+
+  // Private chat initialization: load chat list and run cleanup once we have a local peerId.
+  $: if ($isRegistered && $peer.peerId && privateBootedPeerId !== $peer.peerId) {
+    // eslint-disable-next-line no-useless-assignment
+    privateBootedPeerId = $peer.peerId;
+    (async () => {
+      try {
+        await loadPrivateChats($peer.peerId);
+        await cleanOldPrivateChats();
+      } catch (err) {
+        console.error('Private chat boot failed', err);
+      }
+    })();
   }
 </script>
 

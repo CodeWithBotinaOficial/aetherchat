@@ -22,7 +22,8 @@ vi.mock('$lib/services/peer.js', () => {
 
 vi.mock('$lib/services/db.js', () => {
   return {
-    cleanOldGlobalMessages: vi.fn().mockResolvedValue(0)
+    cleanOldGlobalMessages: vi.fn().mockResolvedValue(0),
+    cleanOldPrivateChats: vi.fn().mockResolvedValue(0)
   };
 });
 
