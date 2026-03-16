@@ -4,13 +4,12 @@
   import BootScreen from '$lib/components/BootScreen.svelte';
   import RegisterModal from '$lib/components/RegisterModal.svelte';
   import { cleanOldGlobalMessages } from '$lib/services/db.js';
-  import { disconnectPeer, initPeer } from '$lib/services/peer.js';
-  import { globalMessages } from '$lib/stores/chatStore.js';
-  import { peer } from '$lib/stores/peerStore.js';
+  import { disconnectPeer, initPeer, registrySyncReady } from '$lib/services/peer.js';
   import { isRegistered, user } from '$lib/stores/userStore.js';
 
   let cleanupTimer = null;
   let peerStarted = false;
+  let registryReady = false;
 
   async function boot() {
     try {
@@ -23,17 +22,9 @@
     }
   }
 
-  async function startPeerIfNeeded(u) {
-    if (peerStarted) return;
-    if (!u) return;
-    peerStarted = true;
+  async function startPeer(profile) {
     try {
-      await initPeer({
-        username: u.username,
-        color: u.color,
-        age: u.age,
-        avatarBase64: u.avatarBase64
-      });
+      await initPeer(profile);
     } catch (err) {
       console.error('Peer init failed', err);
     }
@@ -41,6 +32,27 @@
 
   onMount(() => {
     void boot();
+    if (peerStarted) return;
+    peerStarted = true;
+
+    // Start P2P immediately so new users can sync the username registry before registering.
+    void startPeer({ username: 'pre-registration', color: 'hsl(0, 0%, 70%)', age: 0 });
+
+    (async () => {
+      // Returning users should not be blocked by the sync gate.
+      if ($isRegistered) {
+        registryReady = true;
+        return;
+      }
+
+      // New users: wait for the registry sync (or its timeout/standalone fallback).
+      try {
+        await registrySyncReady;
+      } catch {
+        // ignore
+      }
+      registryReady = true;
+    })();
   });
 
   onDestroy(() => {
@@ -50,13 +62,21 @@
 
   // When the user registers during this session (or when the DB-loaded user arrives),
   // start the PeerJS stack exactly once.
-  $: if ($isRegistered && $user) void startPeerIfNeeded($user);
+  $: if ($isRegistered && $user) {
+    void startPeer({
+      username: $user.username,
+      color: $user.color,
+      age: $user.age,
+      avatarBase64: $user.avatarBase64 ?? null,
+      createdAt: $user.createdAt
+    });
+  }
 </script>
 
-{#if !$isRegistered}
+{#if !$isRegistered && !registryReady}
+  <BootScreen state="syncing" variant="registry" />
+{:else if !$isRegistered}
   <RegisterModal />
-{:else if $peer.connectionState === 'connecting' || $peer.connectionState === 'syncing' || $peer.connectionState === 'reconnecting'}
-  <BootScreen state={$peer.connectionState} receivedCount={$globalMessages.length} />
 {:else}
   <AppShell />
 {/if}

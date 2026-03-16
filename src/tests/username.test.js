@@ -178,3 +178,20 @@ it('pruneStaleRegistryEntries removes entries older than 1 year', async () => {
   expect(await isUsernameTaken('old')).toBe(false);
   expect(await isUsernameTaken('fresh')).toBe(true);
 });
+
+it('USERNAME_REGISTERED message updates local registry immediately', async () => {
+  expect(await isUsernameTaken('alice')).toBe(false);
+
+  await handleMessage(
+    {
+      type: 'USERNAME_REGISTERED',
+      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 1 },
+      payload: { username: 'Alice', peerId: 'p2', registeredAt: 123 },
+      timestamp: 999
+    },
+    null,
+    { username: 'local', color: 'hsl(1, 65%, 65%)', age: 1 }
+  );
+
+  expect(await isUsernameTaken('alice')).toBe(true);
+});

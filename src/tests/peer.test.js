@@ -87,12 +87,24 @@ vi.mock('peerjs', () => {
 
 vi.mock('$lib/stores/chatStore.js', () => {
   return {
-    addGlobalMessage: (...args) => hoisted.addGlobalMessageMock(...args)
+    addGlobalMessage: (...args) => hoisted.addGlobalMessageMock(...args),
+    globalMessages: { set: vi.fn() }
   };
 });
 
 vi.mock('$lib/services/db.js', () => {
+  const globalMessages = {
+    put: vi.fn().mockResolvedValue(undefined),
+    orderBy: vi.fn(() => ({ last: vi.fn().mockResolvedValue(null) }))
+  };
+  const usernameRegistry = { count: vi.fn().mockResolvedValue(0) };
+
   return {
+    db: {
+      globalMessages,
+      usernameRegistry,
+      transaction: vi.fn(async (_mode, _table, fn) => fn())
+    },
     saveKnownPeer: (...args) => hoisted.saveKnownPeerMock(...args),
     getGlobalMessages: (...args) => hoisted.getGlobalMessagesMock(...args),
     getFullUsernameRegistry: (...args) => hoisted.getFullUsernameRegistryMock(...args),
@@ -115,9 +127,11 @@ vi.mock('$lib/services/crypto.js', () => {
 
 import {
   LOBBY_PEER_ID,
+  __test as peerTest,
   attemptReconnect,
   becomeLobbyHost,
   broadcastGlobalMessage,
+  registrySyncReady,
   disconnectPeer,
   handleMessage,
   initPeer,
@@ -204,14 +218,14 @@ it('joinLobby resolves as host when lobby ID is available', async () => {
   expect(get(peerStore).isLobbyHost).toBe(true);
 });
 
-it('joinLobby resolves as host after timeout (no response in 4s)', async () => {
+it('joinLobby resolves as host after timeout (no response in 6s)', async () => {
   vi.useFakeTimers();
   const localPeer = new MockPeer('local-main', {});
   peerStore.update((s) => ({ ...s, peerId: 'local-main' }));
 
   const promise = joinLobby(localPeer, me);
   // no open/error => timeout
-  await vi.advanceTimersByTimeAsync(4000);
+  await vi.advanceTimersByTimeAsync(6000);
 
   const hostPeer = MockPeer.instances.find((p) => p.id === LOBBY_PEER_ID);
   hostPeer.emit('open', LOBBY_PEER_ID);
@@ -244,6 +258,58 @@ it('Race condition: if LOBBY_ID is taken, retries as guest after jitter delay', 
 
   const res = await promise;
   expect(res.role).toBe('guest');
+});
+
+it('registrySyncReady resolves after handleNetworkState completes', async () => {
+  peerTest.resetRegistrySyncReadyForTest();
+  const ready = registrySyncReady;
+
+  await handleMessage(
+    {
+      type: 'NETWORK_STATE',
+      from: { peerId: 'host', username: 'host', color: 'hsl(3, 65%, 65%)', age: 1 },
+      payload: { peers: [], usernameRegistry: [{ username: 'alice', peerId: 'p1', registeredAt: 1, lastSeenAt: 2 }], globalHistory: [] },
+      timestamp: 1
+    },
+    null,
+    me
+  );
+
+  await expect(ready).resolves.toBe('network');
+});
+
+it('registrySyncReady resolves after 6s timeout with no peers', async () => {
+  vi.useFakeTimers();
+  peerTest.resetRegistrySyncReadyForTest();
+  const ready = registrySyncReady;
+
+  const localPeer = new MockPeer('local-main', {});
+  peerStore.update((s) => ({ ...s, peerId: 'local-main' }));
+
+  const promise = joinLobby(localPeer, me);
+  await vi.advanceTimersByTimeAsync(6000);
+
+  await expect(ready).resolves.toBe('timeout');
+
+  // Resolve joinLobby as host so timers/handles don't leak.
+  const hostPeer = MockPeer.instances.find((p) => p.id === LOBBY_PEER_ID);
+  hostPeer.emit('open');
+  await promise;
+});
+
+it('registrySyncReady resolves immediately when peer becomes lobby host (first peer)', async () => {
+  peerTest.resetRegistrySyncReadyForTest();
+  const ready = registrySyncReady;
+
+  const localPeer = new MockPeer('local-main', {});
+  peerStore.update((s) => ({ ...s, peerId: 'local-main' }));
+
+  const promise = becomeLobbyHost(localPeer, me, 0);
+  const hostPeer = MockPeer.instances.find((p) => p.id === LOBBY_PEER_ID);
+  hostPeer.emit('open');
+  await promise;
+
+  await expect(ready).resolves.toBe('first-peer');
 });
 
 it("becomeLobbyHost handles 'unavailable-id' error without crashing", async () => {
@@ -363,6 +429,7 @@ it('handleMessage routes GLOBAL_MSG to globalMessages store (via addGlobalMessag
     username: 'bob',
     age: 33,
     color: 'hsl(2, 65%, 65%)',
+    avatarBase64: null,
     text: 'hi',
     timestamp: 123
   });

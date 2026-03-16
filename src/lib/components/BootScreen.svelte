@@ -4,17 +4,27 @@
    */
   export let state = 'connecting';
 
+  /** @type {'network'|'registry'} */
+  export let variant = 'network';
+
   /** @type {number} */
   export let receivedCount = 0;
 
   $: title =
-    state === 'syncing'
-      ? 'Syncing messages...'
-      : state === 'reconnecting'
-        ? 'Reconnecting...'
-        : state === 'standalone'
-          ? 'Running in offline mode.'
-          : 'Connecting to the network...';
+    variant === 'registry'
+      ? 'Checking username registry...'
+      : state === 'syncing'
+        ? 'Syncing messages...'
+        : state === 'reconnecting'
+          ? 'Reconnecting...'
+          : state === 'standalone'
+            ? 'Running in offline mode.'
+            : 'Connecting to the network...';
+
+  $: subtitle =
+    variant === 'registry'
+      ? 'Making sure your username will be unique across the network.'
+      : 'Peer-to-peer. No servers. No tracking.';
 </script>
 
 <div
@@ -25,7 +35,7 @@
     <div class="text-[28px] font-800 tracking-tight">AetherChat</div>
     <div class="mt-[var(--space-sm)] text-[var(--text-secondary)]">{title}</div>
 
-    {#if state === 'syncing'}
+    {#if variant !== 'registry' && state === 'syncing'}
       <div class="mt-[var(--space-xs)] text-[var(--text-muted)] text-[var(--font-size-sm)]">
         Received {receivedCount} message{receivedCount === 1 ? '' : 's'}.
       </div>
@@ -41,9 +51,7 @@
       <span class="dot" style="animation-delay: 300ms"></span>
     </div>
 
-    <div class="mt-[var(--space-xl)] text-[var(--text-secondary)] text-[var(--font-size-sm)]">
-      Peer-to-peer. No servers. No tracking.
-    </div>
+    <div class="mt-[var(--space-xl)] text-[var(--text-secondary)] text-[var(--font-size-sm)]">{subtitle}</div>
   </div>
 </div>
 

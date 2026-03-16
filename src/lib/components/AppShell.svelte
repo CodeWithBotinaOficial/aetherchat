@@ -1,5 +1,6 @@
 <script>
   import { user } from '$lib/stores/userStore.js';
+  import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
   import GlobalChat from '$lib/components/GlobalChat.svelte';
   import P2PDebugPanel from '$lib/components/P2PDebugPanel.svelte';
 
@@ -73,14 +74,7 @@
 
       <div class="border-t border-[var(--border)] p-[var(--space-md)]">
         <div class="flex items-center gap-[var(--space-sm)]">
-          <div
-            class="h-[34px] w-[34px] rounded-[var(--radius-full)] overflow-hidden border border-[var(--border)] bg-[var(--bg-elevated)] flex-none"
-            style={`outline: 2px solid ${$user?.color ?? 'transparent'}; outline-offset: 2px;`}
-          >
-            {#if $user?.avatarBase64}
-              <img class="h-full w-full object-cover" alt="Your avatar" src={$user.avatarBase64} />
-            {/if}
-          </div>
+          <AvatarDisplay username={$user?.username ?? ''} avatarBase64={$user?.avatarBase64 ?? null} size={36} showRing={true} />
           <div class="min-w-0 hidden lg:block">
             <div class="truncate font-700 text-[var(--text-primary)]">{$user?.username ?? '...'}</div>
             <div class="text-[var(--font-size-xs)] text-[var(--text-muted)] font-mono">local</div>

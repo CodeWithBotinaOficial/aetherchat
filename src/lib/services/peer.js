@@ -1,4 +1,4 @@
-import { get } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
 import { addGlobalMessage, globalMessages as globalMessagesStore } from '$lib/stores/chatStore.js';
 import {
@@ -44,10 +44,38 @@ export const PEERJS_CONFIG = {
 };
 
 const RECONNECT_DELAYS = [2000, 5000, 10000];
-const JOIN_LOBBY_TIMEOUT_MS = 4000;
+const JOIN_LOBBY_TIMEOUT_MS = 6000;
+
+let registrySyncResolve = null;
+export let registrySyncReady = new Promise((resolve) => {
+  registrySyncResolve = resolve;
+});
+
+function resolveRegistrySync(reason) {
+  if (!registrySyncResolve) return;
+  try {
+    registrySyncResolve(reason);
+  } finally {
+    registrySyncResolve = null;
+  }
+}
+
+// Peer avatar cache (peerId -> avatarBase64). Used for rendering; avatars are only exchanged via handshake messages.
+export const avatarCache = writable(new Map());
+
+function setCachedAvatar(peerId, avatarBase64) {
+  if (!peerId || typeof avatarBase64 !== 'string' || avatarBase64.length === 0) return;
+  // Base64 strings can be large; keep a hard cap to avoid blowing up memory from malformed payloads.
+  if (avatarBase64.length > 750_000) return;
+  avatarCache.update((cache) => {
+    const next = new Map(cache);
+    next.set(peerId, avatarBase64);
+    return next;
+  });
+}
 
 /**
- * @typedef {'HANDSHAKE'|'HANDSHAKE_ACK'|'GLOBAL_MSG'|'PRIVATE_MSG'|'PRIVATE_KEY_EXCHANGE'|'USER_LIST'|'PEER_DISCONNECT'|'LOBBY_JOIN'|'NETWORK_STATE'|'NEW_PEER'|'USERNAME_CHECK'|'USERNAME_TAKEN'|'STATE_DIGEST'|'SYNC_REQUEST'|'SYNC_RESPONSE'|'LOBBY_HOST_CHANGED'} MessageType
+ * @typedef {'HANDSHAKE'|'HANDSHAKE_ACK'|'GLOBAL_MSG'|'PRIVATE_MSG'|'PRIVATE_KEY_EXCHANGE'|'USER_LIST'|'PEER_DISCONNECT'|'LOBBY_JOIN'|'NETWORK_STATE'|'NEW_PEER'|'USERNAME_CHECK'|'USERNAME_TAKEN'|'USERNAME_REGISTERED'|'STATE_DIGEST'|'SYNC_REQUEST'|'SYNC_RESPONSE'|'LOBBY_HOST_CHANGED'} MessageType
  */
 
 /**
@@ -116,6 +144,7 @@ const ALLOWED_TYPES = new Set([
   'NEW_PEER',
   'USERNAME_CHECK',
   'USERNAME_TAKEN',
+  'USERNAME_REGISTERED',
   'STATE_DIGEST',
   'SYNC_REQUEST',
   'SYNC_RESPONSE',
@@ -336,6 +365,7 @@ function upsertConnectedPeer(peerId, conn, info) {
       username: info?.username ?? prev?.username ?? 'unknown',
       color: info?.color ?? prev?.color ?? '',
       age: info?.age ?? prev?.age ?? 0,
+      avatarBase64: info?.avatarBase64 ?? prev?.avatarBase64 ?? null,
       connection: conn ?? prev?.connection
     });
     return { ...s, connectedPeers: next };
@@ -532,6 +562,7 @@ export async function joinLobby(localPeer, profile, attempt = 0) {
     });
 
     const timeout = setTimeout(() => {
+      resolveRegistrySync('timeout');
       safeClose(conn);
       becomeLobbyHost(localPeer, profile, attempt).then(resolve);
     }, JOIN_LOBBY_TIMEOUT_MS);
@@ -581,6 +612,7 @@ export async function becomeLobbyHost(localPeer, profile, attempt = 0) {
 
     hostPeer.on('open', () => {
       lobbyPeer = hostPeer;
+      resolveRegistrySync('first-peer');
       peerStore.update((s) => ({
         ...s,
         isLobbyHost: true,
@@ -621,6 +653,7 @@ export async function becomeLobbyHost(localPeer, profile, attempt = 0) {
       }
 
       peerStore.update((s) => ({ ...s, connectionState: 'standalone' }));
+      resolveRegistrySync('standalone');
       resolve({ role: 'standalone' });
     });
   });
@@ -664,7 +697,13 @@ async function handleNetworkState(payload, profile) {
   const globalHistory = payload?.globalHistory ?? [];
 
   // 1. Merge username registry.
-  await mergeUsernameRegistry(usernameRegistry);
+  try {
+    await mergeUsernameRegistry(usernameRegistry);
+  } catch (err) {
+    console.error('handleNetworkState mergeUsernameRegistry failed', err);
+  } finally {
+    resolveRegistrySync('network');
+  }
 
   // 2. Merge global message history (best-effort dedupe by `id`).
   try {
@@ -716,10 +755,14 @@ export async function handleMessage(msg, fromConn, profile) {
 
   if (msg.type === 'HANDSHAKE') {
     remoteIdentityKeys.set(remotePeerId, msg.payload?.publicKey ?? '');
+    if (typeof msg.payload?.avatarBase64 === 'string' && msg.payload.avatarBase64.length > 0) {
+      setCachedAvatar(remotePeerId, msg.payload.avatarBase64);
+    }
     upsertConnectedPeer(remotePeerId, fromConn, {
       username: msg.from.username,
       color: msg.from.color,
-      age: msg.from.age
+      age: msg.from.age,
+      avatarBase64: typeof msg.payload?.avatarBase64 === 'string' ? msg.payload.avatarBase64 : null
     });
     await saveKnownPeer({ username: msg.from.username, peerId: remotePeerId, lastSeen: Date.now() });
     await sendHandshakeAck(fromConn, profile);
@@ -728,10 +771,14 @@ export async function handleMessage(msg, fromConn, profile) {
 
   if (msg.type === 'HANDSHAKE_ACK') {
     remoteIdentityKeys.set(remotePeerId, msg.payload?.publicKey ?? '');
+    if (typeof msg.payload?.avatarBase64 === 'string' && msg.payload.avatarBase64.length > 0) {
+      setCachedAvatar(remotePeerId, msg.payload.avatarBase64);
+    }
     upsertConnectedPeer(remotePeerId, fromConn, {
       username: msg.from.username,
       color: msg.from.color,
-      age: msg.from.age
+      age: msg.from.age,
+      avatarBase64: typeof msg.payload?.avatarBase64 === 'string' ? msg.payload.avatarBase64 : null
     });
     await saveKnownPeer({ username: msg.from.username, peerId: remotePeerId, lastSeen: Date.now() });
     return;
@@ -778,6 +825,23 @@ export async function handleMessage(msg, fromConn, profile) {
 
   if (msg.type === 'USERNAME_TAKEN') {
     // Handled by listeners (see checkUsernameAvailability).
+    return;
+  }
+
+  if (msg.type === 'USERNAME_REGISTERED') {
+    const username = msg.payload?.username;
+    const peerId = msg.payload?.peerId;
+    const registeredAt = msg.payload?.registeredAt;
+    if (typeof username !== 'string' || username.trim().length === 0) return;
+    if (typeof peerId !== 'string' || peerId.length === 0) return;
+    if (typeof registeredAt !== 'number') return;
+
+    await registerUsernameLocally({
+      username,
+      peerId,
+      registeredAt,
+      lastSeenAt: Date.now()
+    });
     return;
   }
 
@@ -883,6 +947,7 @@ export async function handleMessage(msg, fromConn, profile) {
       username: msg.from.username,
       age: msg.from.age,
       color: msg.from.color,
+      avatarBase64: get(avatarCache).get(msg.from.peerId) ?? null,
       text: text.trim(),
       timestamp: typeof incoming?.timestamp === 'number' ? incoming.timestamp : msg.timestamp
     });
@@ -932,7 +997,18 @@ export async function initPeer(profile) {
     cachedProfile = profile;
     setConnectionState('connecting', { error: null, reconnectAttempt: 0 });
 
-    if (mainPeer) return mainPeer;
+    // If the peer already exists (e.g. we connected pre-registration), update cached profile
+    // and refresh our handshake so remote peers learn our final username/avatar.
+    if (mainPeer) {
+      const shouldRefresh = Boolean(profile?.createdAt) && profile?.username && profile.username !== 'pre-registration';
+      if (shouldRefresh) {
+        const state = get(peerStore);
+        for (const entry of state.connectedPeers.values()) {
+          sendHandshake(entry.connection, profile).catch((err) => console.error('refresh handshake failed', err));
+        }
+      }
+      return mainPeer;
+    }
 
     const Peer = await ensurePeerCtor();
 
@@ -951,11 +1027,12 @@ export async function initPeer(profile) {
         reconnectAttempt: 0
       }));
       // Register ourselves in the local username registry (for offline uniqueness checks).
-      if (profile?.username) {
+      const shouldRegisterLocally = Boolean(profile?.createdAt) && Boolean(profile?.username) && profile.username !== 'pre-registration';
+      if (shouldRegisterLocally) {
         registerUsernameLocally({
           username: profile.username,
           peerId: id,
-          registeredAt: profile.createdAt ?? Date.now(),
+          registeredAt: profile.createdAt,
           lastSeenAt: Date.now()
         }).catch((err) => console.error('registerUsernameLocally failed', err));
       }
@@ -1067,14 +1144,38 @@ export async function broadcastGlobalMessage(text, profile) {
     timestamp
   };
 
+  const localMessage = { ...message, avatarBase64: profile.avatarBase64 ?? null };
   const envelope = buildMessage('GLOBAL_MSG', id, profile, { message }, timestamp);
 
   // Optimistic update.
-  await addGlobalMessage(message);
+  await addGlobalMessage(localMessage);
 
   for (const entry of state.connectedPeers.values()) {
     safeSend(entry.connection, envelope);
   }
+}
+
+/**
+ * Broadcast a one-time username registration event so all peers can update their local registry.
+ * Note: in a fully decentralized system, simultaneous registrations can still conflict in rare races.
+ * @param {UserProfile} profile
+ */
+export function broadcastUsernameRegistered(profile) {
+  const state = get(peerStore);
+  const id = state.peerId;
+  if (!id) return;
+  if (!profile?.username) return;
+
+  broadcastToAll({
+    type: 'USERNAME_REGISTERED',
+    from: buildFromProfile(profile),
+    payload: {
+      username: profile.username,
+      peerId: id,
+      registeredAt: profile.createdAt ?? Date.now()
+    },
+    timestamp: Date.now()
+  });
 }
 
 export async function sendPrivateMessage(targetPeerId, text, sharedKey) {
@@ -1175,6 +1276,7 @@ export function disconnectPeer() {
     isLobbyHost: false,
     lobbyPeer: null,
     currentLobbyHostId: null,
+    lastSyncAt: null,
     connectedPeers: new Map()
   });
 }
@@ -1189,5 +1291,13 @@ export const __test = {
   },
   electNewLobbyHostForTest() {
     electNewLobbyHost();
+  },
+  resetRegistrySyncReadyForTest() {
+    registrySyncReady = new Promise((resolve) => {
+      registrySyncResolve = resolve;
+    });
+  },
+  resolveRegistrySyncForTest(reason = 'test') {
+    resolveRegistrySync(reason);
   }
 };

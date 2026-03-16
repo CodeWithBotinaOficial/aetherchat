@@ -1,8 +1,9 @@
 <script>
   import { createEventDispatcher, tick } from 'svelte';
   import { fade, scale } from 'svelte/transition';
+  import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
 
-  /** @type {{ username: string, age: number, color: string, avatarBase64: string } | null} */
+  /** @type {{ username: string, age: number, color: string, avatarBase64: string | null } | null} */
   export let user = null;
   /** @type {{ x: number, y: number } | null} */
   export let position = null;
@@ -79,12 +80,7 @@
       in:scale={{ duration: 120, start: 0.95 }}
     >
       <div class="flex items-center gap-[var(--space-md)]">
-      <div
-        class="h-[44px] w-[44px] rounded-[var(--radius-full)] overflow-hidden border border-[var(--border)]"
-        style={`outline: 2px solid ${user.color}; outline-offset: 2px;`}
-      >
-        <img class="h-full w-full object-cover" alt={`${user.username} avatar`} src={user.avatarBase64} />
-      </div>
+      <AvatarDisplay username={user.username} avatarBase64={user.avatarBase64 ?? null} size={56} showRing={true} />
 
       <div class="min-w-0">
         <div class="flex items-center gap-[var(--space-sm)]">

@@ -3,8 +3,7 @@
   import { addGlobalMessage, globalMessages, loadGlobalMessages } from '$lib/stores/chatStore.js';
   import { peer } from '$lib/stores/peerStore.js';
   import { user } from '$lib/stores/userStore.js';
-  import { broadcastGlobalMessage } from '$lib/services/peer.js';
-  import { generateInitialsAvatar } from '$lib/utils/avatar.js';
+  import { avatarCache, broadcastGlobalMessage } from '$lib/services/peer.js';
 
   import ChatInput from '$lib/components/ChatInput.svelte';
   import MessageBubble from '$lib/components/MessageBubble.svelte';
@@ -23,8 +22,6 @@
   const bubbleRefs = Object.create(null);
   let isTouch = false;
   let outsideListenerAttached = false;
-  /** @type {Record<string, string>} */
-  const avatarCache = Object.create(null);
 
   // Simple windowed list for large histories.
   const EST_ITEM_H = 84;
@@ -66,22 +63,13 @@
     listEl.scrollTop = listEl.scrollHeight;
   }
 
-  async function ensureAvatar(username, color) {
-    const key = `${username}::${color}`;
-    if (avatarCache[key]) return avatarCache[key];
-    try {
-      const avatar = await generateInitialsAvatar(username, color);
-      avatarCache[key] = avatar;
-      return avatar;
-    } catch (err) {
-      console.error('ensureAvatar failed', err);
-      return '';
-    }
-  }
-
   async function onHoverEnter(e) {
     const { message, messageKey, position } = e.detail;
-    const avatarBase64 = await ensureAvatar(message.username, message.color);
+    const cache = $avatarCache;
+    const isOwnMsg = $user?.username === message.username;
+    const avatarBase64 = isOwnMsg
+      ? ($user?.avatarBase64 ?? null)
+      : (message.avatarBase64 ?? cache?.get?.(message.peerId) ?? null);
     tooltipUser = {
       username: message.username,
       age: message.age,
@@ -130,6 +118,7 @@
         username: u.username,
         age: u.age,
         color: u.color,
+        avatarBase64: u.avatarBase64 ?? null,
         text: e.detail.text,
         timestamp: Date.now()
       });

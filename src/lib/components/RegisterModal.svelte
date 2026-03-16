@@ -1,9 +1,12 @@
 <script>
   import { createEventDispatcher, onMount } from 'svelte';
+  import { get } from 'svelte/store';
+  import { peer as peerStore } from '$lib/stores/peerStore.js';
+  import { registerUsernameLocally } from '$lib/services/db.js';
   import { validateAvatarFile } from '$lib/utils/avatar.js';
   import { getUserColor } from '$lib/utils/colors.js';
   import { registerUser } from '$lib/stores/userStore.js';
-  import { checkUsernameAvailability } from '$lib/services/peer.js';
+  import { broadcastUsernameRegistered, checkUsernameAvailability } from '$lib/services/peer.js';
 
   const dispatch = createEventDispatcher();
 
@@ -139,7 +142,39 @@
     if (!canSubmit) return;
     isSubmitting = true;
     try {
-      await registerUser(username.trim(), Number(age), avatarBase64 ?? undefined);
+      // Final guard: re-check on submit (network can change while the modal is open).
+      const final = await checkUsernameAvailability(username);
+      if (!final.available) {
+        takenSuggestion = final.suggestion;
+        availabilityState = final.takenBy === 'local' ? 'taken_local' : 'taken_network';
+        usernameError = `"${username}" was just taken. Try: ${final.suggestion}`;
+        return;
+      }
+
+      const uname = username.trim();
+      const now = Date.now();
+
+      await registerUser(uname, Number(age), avatarBase64 ?? undefined);
+
+      // Update our local registry immediately for offline uniqueness checks.
+      const peerId = get(peerStore).peerId ?? 'pending';
+      await registerUsernameLocally({
+        username: uname,
+        peerId,
+        registeredAt: now,
+        lastSeenAt: now
+      });
+
+      // Broadcast a registration event so online peers update instantly.
+      // Note: simultaneous same-username registrations can still race in rare edge cases in decentralized systems.
+      broadcastUsernameRegistered({
+        username: uname,
+        color: getUserColor(uname),
+        age: Number(age),
+        avatarBase64: avatarBase64 ?? null,
+        createdAt: now
+      });
+
       dispatch('registered');
     } catch (err) {
       console.error('register submit failed', err);

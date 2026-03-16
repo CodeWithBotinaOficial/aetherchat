@@ -1,13 +1,17 @@
 <script>
   import { createEventDispatcher } from 'svelte';
+  import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
 
   /**
    * @typedef {Object} Message
+   * @property {string} [id]
+   * @property {string} [peerId]
    * @property {string} username
    * @property {number} age
    * @property {string} color
    * @property {string} text
    * @property {number} timestamp
+   * @property {string|null} [avatarBase64]
    */
 
   /** @type {{ message: Message, isOwn: boolean }} */
@@ -35,7 +39,6 @@
   }
 
   $: relativeTime = formatRelative(message.timestamp);
-  $: initials = (message.username?.trim()?.[0] ?? '?').toUpperCase();
 
   function getPositionFromEvent(e) {
     if (typeof e?.clientX === 'number' && typeof e?.clientY === 'number') {
@@ -107,13 +110,7 @@
     on:pointerup={onPointerUp}
   >
     <div class="flex items-center gap-[var(--space-sm)]">
-      <div
-        class="h-[28px] w-[28px] rounded-[var(--radius-full)] bg-[var(--bg-elevated)] grid place-items-center text-[var(--font-size-xs)] text-[var(--text-secondary)]"
-        style={`outline: 2px solid ${message.color}; outline-offset: 1px;`}
-        aria-hidden="true"
-      >
-        {initials}
-      </div>
+      <AvatarDisplay username={message.username} avatarBase64={message.avatarBase64 ?? null} size={28} showRing={true} />
 
       <div class="min-w-0 flex items-baseline gap-[var(--space-sm)]">
         <div class="truncate font-600 text-[var(--text-primary)]">{message.username}</div>
