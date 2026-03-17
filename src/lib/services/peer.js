@@ -748,11 +748,38 @@ async function setupLobbyHostHandlers(hostPeer, localPeer, profile) {
  */
 export async function joinLobby(localPeer, profile, attempt = 0) {
   return await new Promise((resolve) => {
-    // Attempt to connect to the existing lobby host.
-    const conn = localPeer.connect(LOBBY_PEER_ID, {
-      reliable: true,
-      metadata: { type: 'lobby-join' }
-    });
+    // If the peer is disconnected/destroyed we cannot open new DataConnections.
+    if (!localPeer || localPeer.destroyed || localPeer.disconnected) {
+      resolveRegistrySync('timeout');
+      void handlePeerDisconnect();
+      resolve({ role: 'standalone' });
+      return;
+    }
+
+    /** @type {any} */
+    let conn;
+    try {
+      // Attempt to connect to the existing lobby host.
+      conn = localPeer.connect(LOBBY_PEER_ID, {
+        reliable: true,
+        metadata: { type: 'lobby-join' }
+      });
+    } catch (err) {
+      // PeerJS throws when trying to connect while the peer is in a disconnected state.
+      console.error('joinLobby: connect failed', err);
+      resolveRegistrySync('timeout');
+      void handlePeerDisconnect();
+      resolve({ role: 'standalone' });
+      return;
+    }
+
+    if (!conn || typeof conn.on !== 'function') {
+      // Defensive: some PeerJS failure modes return undefined instead of throwing.
+      resolveRegistrySync('timeout');
+      void handlePeerDisconnect();
+      resolve({ role: 'standalone' });
+      return;
+    }
 
     // IMPORTANT: this connection is not part of our direct-peer mesh, but it *must*
     // receive NETWORK_STATE so guests can learn the peer list and sync history.
@@ -783,9 +810,16 @@ export async function joinLobby(localPeer, profile, attempt = 0) {
       resolve({ role: 'guest', lobbyConn: conn });
     });
 
-    conn.on('error', () => {
+    conn.on('error', (err) => {
       clearTimeout(timeout);
       safeClose(conn);
+      // If we're disconnected from the PeerJS server, don't try to claim the lobby yet.
+      if (err?.type === 'disconnected') {
+        resolveRegistrySync('timeout');
+        void handlePeerDisconnect();
+        resolve({ role: 'standalone' });
+        return;
+      }
       becomeLobbyHost(localPeer, profile, attempt).then(resolve);
     });
 
@@ -1479,19 +1513,24 @@ export async function initPeer(profile) {
       handleIncomingConnection(conn, profile);
     });
 
-    mainPeer.on('error', (err) => {
-      switch (err?.type) {
-        case 'peer-unavailable':
-          // Expected: lobby not found -> host election logic handles this on the connection error path.
-          return;
-        case 'unavailable-id':
-          // Expected: lobby ID race condition handled in becomeLobbyHost.
-          return;
-        case 'network':
-        case 'server-error':
-        case 'socket-error':
-        case 'socket-closed':
-          console.error('PeerJS error:', err?.type, err?.message);
+	    mainPeer.on('error', (err) => {
+	      switch (err?.type) {
+	        case 'peer-unavailable':
+	          // Expected: lobby not found -> host election logic handles this on the connection error path.
+	          return;
+	        case 'unavailable-id':
+	          // Expected: lobby ID race condition handled in becomeLobbyHost.
+	          return;
+	        case 'disconnected':
+	          // Peer cannot open new connections while disconnected from the PeerJS server.
+	          console.error('PeerJS error:', err?.type, err?.message);
+	          void handlePeerDisconnect();
+	          return;
+	        case 'network':
+	        case 'server-error':
+	        case 'socket-error':
+	        case 'socket-closed':
+	          console.error('PeerJS error:', err?.type, err?.message);
           void handlePeerDisconnect();
           return;
         case 'browser-incompatible':
