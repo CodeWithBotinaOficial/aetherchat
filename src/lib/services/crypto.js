@@ -155,7 +155,11 @@ export async function decryptMessage(sharedKey, ciphertext, iv) {
     );
     return textDecoder.decode(plaintextBuf);
   } catch (err) {
-    console.error('decryptMessage failed', err);
+    // Wrong-key / wrong-session decrypt failures are expected in this app (forward secrecy).
+    // Avoid spamming the console for OperationError, but still throw so callers can handle it.
+    if (err?.name !== 'OperationError') {
+      console.error('decryptMessage failed', err);
+    }
     throw err;
   }
 }
@@ -211,6 +215,14 @@ export async function completeSession(myPeerId, theirPeerId, theirPublicKeyBase6
   /** @type {any} */
   let session = activeSessions.get(sessionId);
 
+  if (session?.state === 'active' && session?.sharedKey) {
+    // Idempotency: duplicate key exchange messages can happen during reconnects.
+    return {
+      sessionId,
+      publicKeyBase64: await exportPublicKey(session.myKeyPair.publicKey)
+    };
+  }
+
   if (!session) {
     // Responder: create our key pair now.
     const keyPair = await generateKeyPair();
@@ -221,6 +233,14 @@ export async function completeSession(myPeerId, theirPeerId, theirPublicKeyBase6
       state: 'pending'
     };
     activeSessions.set(sessionId, session);
+  }
+
+  // If we lost the private key reference (e.g. from a previous session), rekey.
+  if (!session?.myKeyPair?.privateKey) {
+    const keyPair = await generateKeyPair();
+    session.myKeyPair = keyPair;
+    session.sharedKey = null;
+    session.state = 'pending';
   }
 
   const theirPublicKey = await importPublicKey(theirPublicKeyBase64);
