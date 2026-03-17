@@ -94,11 +94,11 @@
     return 'bg-[color-mix(in_srgb,var(--warning)_18%,transparent)] border-[color-mix(in_srgb,var(--warning)_35%,var(--border))] text-[var(--text-primary)]';
   }
 
-  async function onSend(e) {
-    const chat = $activeChat;
-    if (!chat) return;
-    await sendPrivateMessage(chat.theirPeerId, e.detail.text);
-  }
+	  async function onSend(e) {
+	    const chat = $activeChat;
+	    if (!chat) return;
+	    await sendPrivateMessage(chat.id, chat.theirPeerId, e.detail.text);
+	  }
 
   async function loadOlder() {
     const chat = $activeChat;

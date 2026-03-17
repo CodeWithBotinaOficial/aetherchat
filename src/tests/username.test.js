@@ -70,13 +70,14 @@ it('mergeUsernameRegistry keeps earlier registeredAt on conflict', async () => {
   await registerUsernameLocally({ username: 'alice', peerId: 'p_local', registeredAt: 100, lastSeenAt: 1000 });
   await mergeUsernameRegistry([{ username: 'Alice', peerId: 'p_remote', registeredAt: 200, lastSeenAt: 2000 }]);
 
-  const entries = await getFullUsernameRegistry();
-  expect(entries).toHaveLength(1);
-  expect(entries[0].username).toBe(dbTest.normalizeUsername('alice'));
-  expect(entries[0].peerId).toBe('p_local');
-  expect(entries[0].registeredAt).toBe(100);
-  expect(entries[0].lastSeenAt).toBe(2000);
-});
+	  const entries = await getFullUsernameRegistry();
+	  expect(entries).toHaveLength(1);
+	  expect(entries[0].username).toBe(dbTest.normalizeUsername('alice'));
+	  // Registration ownership stays local, but peerId can change as the user reconnects.
+	  expect(entries[0].peerId).toBe('p_remote');
+	  expect(entries[0].registeredAt).toBe(100);
+	  expect(entries[0].lastSeenAt).toBe(2000);
+	});
 
 it('mergeUsernameRegistry inserts new entries not in local DB', async () => {
   await mergeUsernameRegistry([{ username: 'bob', peerId: 'p2', registeredAt: 10, lastSeenAt: 11 }]);

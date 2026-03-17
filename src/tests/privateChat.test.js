@@ -312,7 +312,7 @@ it('setChatOnlineStatus updates isOnline by peerId', () => {
 it('deleteChatFromStore clears activeChatId before removing from Map, deletes DB rows, clears queue, and closes session', async () => {
   const dbMod = await import('$lib/services/db.js');
   const deleteSpy = vi.spyOn(dbMod, 'deletePrivateChat');
-  const clearQueueSpy = vi.spyOn(dbMod, 'clearQueuedMessagesForPeer');
+  const clearQueueSpy = vi.spyOn(dbMod, 'clearQueuedMessagesForChat');
 
   privateChatStore.set({
     chats: new Map([
@@ -354,7 +354,7 @@ it('deleteChatFromStore clears activeChatId before removing from Map, deletes DB
   expect(get(privateChatStore).chats.has('a:b')).toBe(false);
   expect(get(privateChatStore).activeChatId).toBeNull();
   expect(deleteSpy).toHaveBeenCalledWith('a:b');
-  expect(clearQueueSpy).toHaveBeenCalledWith('b');
+  expect(clearQueueSpy).toHaveBeenCalledWith('a:b');
   expect(hoisted.closeSessionMock).toHaveBeenCalledWith('a:b');
 
   // Ensure we had an intermediate state where the chat existed but activeChatId was already null.

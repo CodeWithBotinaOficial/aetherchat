@@ -4,7 +4,7 @@
   import AppShell from '$lib/components/AppShell.svelte';
   import BootScreen from '$lib/components/BootScreen.svelte';
   import RegisterModal from '$lib/components/RegisterModal.svelte';
-  import { cleanOldGlobalMessages, cleanOldPrivateChats, getStoredPeerId, getUser } from '$lib/services/db.js';
+	  import { cleanOldGlobalMessages, cleanOldPrivateChats, getUser } from '$lib/services/db.js';
   import { disconnectPeer, initPeer, registrySyncReady } from '$lib/services/peer.js';
   import { loadPrivateChats } from '$lib/stores/privateChatStore.js';
   import { isRegistered, user } from '$lib/stores/userStore.js';
@@ -26,13 +26,12 @@
     }
   }
 
-  async function hydrateLocalData(u) {
-    const username = u?.username ?? '';
-    const storedPeerId = username ? await getStoredPeerId(username) : null;
-    await loadPrivateChats(storedPeerId ?? '');
-    await cleanOldGlobalMessages();
-    await cleanOldPrivateChats();
-  }
+	  async function hydrateLocalData(_u) {
+	    // Private chats are local-only; do not rely on PeerJS IDs (which may change per session).
+	    await loadPrivateChats('');
+	    await cleanOldGlobalMessages();
+	    await cleanOldPrivateChats();
+	  }
 
   onMount(() => {
     void boot();

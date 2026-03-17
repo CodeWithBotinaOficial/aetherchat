@@ -25,6 +25,7 @@ import Dexie from 'dexie';
  * @typedef {Object} PrivateChat
  * @property {string} id
  * @property {string} myPeerId
+ * @property {string} [myUsername]
  * @property {string} theirPeerId
  * @property {string} theirUsername
  * @property {string} theirColor
@@ -209,20 +210,99 @@ class AetherChatDB extends Dexie {
 
 			    // Phase 9: persist private chat session keys (local-only) so received messages
 			    // stay decryptable across browser restarts and session re-keys.
-			    this.version(10).stores({
-			      users: 'id, username, createdAt',
-			      globalMessages: 'id, timestamp, peerId, username',
-			      privateChats: 'id, myPeerId, theirPeerId, theirUsername, createdAt, lastActivity',
-			      privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
-			      knownPeers: '++id, peerId, lastSeen, username',
-			      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
-			      peerIds: 'username, peerId',
-			      queuedMessages: 'id, chatId, theirPeerId, timestamp',
-			      sentMessagesPlaintext: 'id, chatId, timestamp',
-			      sessionKeys: 'id, updatedAt'
-			    });
-			  }
-			}
+				    this.version(10).stores({
+				      users: 'id, username, createdAt',
+				      globalMessages: 'id, timestamp, peerId, username',
+				      privateChats: 'id, myPeerId, theirPeerId, theirUsername, createdAt, lastActivity',
+				      privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+				      knownPeers: '++id, peerId, lastSeen, username',
+				      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+				      peerIds: 'username, peerId',
+				      queuedMessages: 'id, chatId, theirPeerId, timestamp',
+				      sentMessagesPlaintext: 'id, chatId, timestamp',
+				      sessionKeys: 'id, updatedAt'
+				    });
+
+				    // Phase 10: private chat IDs are username-based (not PeerJS ID based).
+				    // PeerJS IDs are transient across refreshes; chat history must not depend on them.
+				    this.version(11)
+				      .stores({
+				        users: 'id, username, createdAt',
+				        globalMessages: 'id, timestamp, peerId, username',
+				        privateChats: 'id, myPeerId, myUsername, theirPeerId, theirUsername, createdAt, lastActivity',
+				        privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+				        knownPeers: '++id, peerId, lastSeen, username',
+				        usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+				        peerIds: 'username, peerId',
+				        queuedMessages: 'id, chatId, theirPeerId, timestamp',
+				        sentMessagesPlaintext: 'id, chatId, timestamp',
+				        sessionKeys: 'id, updatedAt'
+				      })
+				      .upgrade(async (tx) => {
+				        const user = await tx.table('users').get(1);
+				        const myUsername = user?.username;
+				        if (typeof myUsername !== 'string' || myUsername.trim().length === 0) return;
+
+				        const chatsTable = tx.table('privateChats');
+				        const messagesTable = tx.table('privateMessages');
+				        const sentPlainTable = tx.table('sentMessagesPlaintext');
+				        const queuedTable = tx.table('queuedMessages');
+				        const keysTable = tx.table('sessionKeys');
+
+				        const chats = await chatsTable.toArray();
+				        for (const chat of chats) {
+				          const theirUsername = chat?.theirUsername;
+				          if (typeof theirUsername !== 'string' || theirUsername.trim().length === 0) continue;
+
+				          const newId = [myUsername, theirUsername].sort().join(':');
+
+				          // Backfill myUsername even when ID is already stable.
+				          if (chat.id === newId) {
+				            await chatsTable.put({ ...chat, myUsername, id: newId });
+				            continue;
+				          }
+
+				          const existingNew = await chatsTable.get(newId);
+				          if (existingNew) {
+				            await chatsTable.put({
+				              ...existingNew,
+				              myPeerId: chat.myPeerId ?? existingNew.myPeerId,
+				              myUsername,
+				              theirPeerId: chat.theirPeerId ?? existingNew.theirPeerId,
+				              theirUsername: theirUsername ?? existingNew.theirUsername,
+				              theirColor: chat.theirColor ?? existingNew.theirColor,
+				              theirAvatarBase64: chat.theirAvatarBase64 ?? existingNew.theirAvatarBase64 ?? null,
+				              theirAge: chat.theirAge ?? existingNew.theirAge,
+				              createdAt: Math.min(existingNew.createdAt ?? Date.now(), chat.createdAt ?? Date.now()),
+				              lastActivity: Math.max(existingNew.lastActivity ?? 0, chat.lastActivity ?? 0),
+				              lastMessagePreview: existingNew.lastMessagePreview ?? chat.lastMessagePreview ?? null,
+				              unreadCount:
+				                typeof existingNew.unreadCount === 'number'
+				                  ? existingNew.unreadCount
+				                  : typeof chat.unreadCount === 'number'
+				                    ? chat.unreadCount
+				                    : 0,
+				              id: newId
+				            });
+				          } else {
+				            await chatsTable.put({ ...chat, id: newId, myUsername });
+				          }
+
+				          await messagesTable.where('chatId').equals(chat.id).modify({ chatId: newId });
+				          await sentPlainTable.where('chatId').equals(chat.id).modify({ chatId: newId });
+				          await queuedTable.where('chatId').equals(chat.id).modify({ chatId: newId });
+
+				          const ring = await keysTable.get(chat.id);
+				          if (ring) {
+				            await keysTable.put({ ...ring, id: newId });
+				            await keysTable.delete(chat.id);
+				          }
+
+				          await chatsTable.delete(chat.id);
+				        }
+				      });
+				  }
+				}
 
 export const db = new AetherChatDB();
 
@@ -358,6 +438,23 @@ export async function getQueuedMessagesForPeer(theirPeerId) {
 }
 
 /**
+ * Preferred: queued messages are associated with a private chatId, not a transient PeerJS ID.
+ * @param {string} chatId
+ * @returns {Promise<QueuedMessage[]>}
+ */
+export async function getQueuedMessagesForChat(chatId) {
+  try {
+    const key = String(chatId ?? '').trim();
+    if (!key) return [];
+    const rows = await db.queuedMessages.where('chatId').equals(key).toArray();
+    return rows.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+  } catch (err) {
+    console.error('getQueuedMessagesForChat failed', err);
+    throw err;
+  }
+}
+
+/**
  * @param {string} id
  */
 export async function deleteQueuedMessage(id) {
@@ -381,6 +478,20 @@ export async function clearQueuedMessagesForPeer(theirPeerId) {
     await db.queuedMessages.where('theirPeerId').equals(key).delete();
   } catch (err) {
     console.error('clearQueuedMessagesForPeer failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} chatId
+ */
+export async function clearQueuedMessagesForChat(chatId) {
+  try {
+    const key = String(chatId ?? '').trim();
+    if (!key) return;
+    await db.queuedMessages.where('chatId').equals(key).delete();
+  } catch (err) {
+    console.error('clearQueuedMessagesForChat failed', err);
     throw err;
   }
 }
@@ -516,9 +627,10 @@ export async function getPrivateChat(chatId) {
  */
 export async function deletePrivateChat(chatId) {
   try {
-    await db.transaction('rw', db.privateChats, db.privateMessages, db.sentMessagesPlaintext, db.sessionKeys, async () => {
+    await db.transaction('rw', db.privateChats, db.privateMessages, db.sentMessagesPlaintext, db.sessionKeys, db.queuedMessages, async () => {
       await db.privateMessages.where('chatId').equals(chatId).delete();
       await db.sentMessagesPlaintext.where('chatId').equals(chatId).delete();
+      await db.queuedMessages.where('chatId').equals(chatId).delete();
       await db.sessionKeys.delete(chatId);
       await db.privateChats.delete(chatId);
     });
@@ -693,11 +805,13 @@ export async function deletePrivateMessages(chatId) {
 export async function cleanOldPrivateChats() {
   try {
     const cutoff = Date.now() - THIRTY_DAYS_MS;
-    return await db.transaction('rw', db.privateChats, db.privateMessages, db.sentMessagesPlaintext, async () => {
+    return await db.transaction('rw', db.privateChats, db.privateMessages, db.sentMessagesPlaintext, db.queuedMessages, db.sessionKeys, async () => {
       const oldChatIds = await db.privateChats.where('lastActivity').below(cutoff).primaryKeys();
       if (oldChatIds.length === 0) return 0;
       await db.privateMessages.where('chatId').anyOf(oldChatIds).delete();
       await db.sentMessagesPlaintext.where('chatId').anyOf(oldChatIds).delete();
+      await db.queuedMessages.where('chatId').anyOf(oldChatIds).delete();
+      await db.sessionKeys.where('id').anyOf(oldChatIds).delete();
       await db.privateChats.bulkDelete(oldChatIds);
       return oldChatIds.length;
     });
@@ -718,7 +832,9 @@ export async function cleanOldPrivateMessages() {
 export async function saveKnownPeer(peer) {
   try {
     await db.transaction('rw', db.knownPeers, async () => {
-      const existing = await db.knownPeers.where('peerId').equals(peer.peerId).first();
+      // PeerJS IDs are ephemeral; de-duplicate by username so reconnection can update peerId.
+      const uname = String(peer?.username ?? '').trim();
+      const existing = uname ? await db.knownPeers.where('username').equals(uname).first() : null;
       if (existing) {
         await db.knownPeers.put({ ...existing, ...peer, id: existing.id });
         return;
@@ -828,14 +944,17 @@ export async function mergeUsernameRegistry(remoteEntries) {
           continue;
         }
 
-        const localWins = (local.registeredAt ?? Number.POSITIVE_INFINITY) <= (remote.registeredAt ?? Number.POSITIVE_INFINITY);
-        if (localWins) {
-          await db.usernameRegistry.put({
-            ...local,
-            lastSeenAt: Math.max(local.lastSeenAt ?? 0, remote.lastSeenAt ?? 0),
-            id: local.id
-          });
-        } else {
+	        const localWins = (local.registeredAt ?? Number.POSITIVE_INFINITY) <= (remote.registeredAt ?? Number.POSITIVE_INFINITY);
+	        if (localWins) {
+	          const remoteIsNewer = (remote.lastSeenAt ?? 0) >= (local.lastSeenAt ?? 0);
+	          await db.usernameRegistry.put({
+	            ...local,
+	            // Registration ownership stays with the earliest registrant, but contact peerId can change.
+	            peerId: remoteIsNewer && remote.peerId ? remote.peerId : local.peerId,
+	            lastSeenAt: Math.max(local.lastSeenAt ?? 0, remote.lastSeenAt ?? 0),
+	            id: local.id
+	          });
+	        } else {
           await db.usernameRegistry.put({
             ...local,
             ...remote,

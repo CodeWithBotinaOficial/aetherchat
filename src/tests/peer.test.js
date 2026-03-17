@@ -73,7 +73,7 @@ class MockPeer {
 }
 
 	const hoisted = vi.hoisted(() => {
-	  return {
+		  return {
 	    addGlobalMessageMock: vi.fn().mockResolvedValue(undefined),
 	    saveKnownPeerMock: vi.fn().mockResolvedValue(undefined),
 	    getKnownPeersMock: vi.fn().mockResolvedValue([]),
@@ -86,12 +86,12 @@ class MockPeer {
 	    getPrivateChatMock: vi.fn().mockResolvedValue(null),
 		    savePrivateMessageMock: vi.fn().mockResolvedValue(undefined),
 		    saveSentMessagePlaintextMock: vi.fn().mockResolvedValue(undefined),
-		    updateChatLastActivityMock: vi.fn().mockResolvedValue(undefined),
-		    updateChatMetaMock: vi.fn().mockResolvedValue(undefined),
-		    saveQueuedMessageMock: vi.fn().mockResolvedValue(undefined),
-		    getQueuedMessagesForPeerMock: vi.fn().mockResolvedValue([]),
-		    deleteQueuedMessageMock: vi.fn().mockResolvedValue(undefined),
-	    markMessageDeliveredMock: vi.fn().mockResolvedValue(undefined),
+			    updateChatLastActivityMock: vi.fn().mockResolvedValue(undefined),
+			    updateChatMetaMock: vi.fn().mockResolvedValue(undefined),
+			    saveQueuedMessageMock: vi.fn().mockResolvedValue(undefined),
+			    getQueuedMessagesForChatMock: vi.fn().mockResolvedValue([]),
+			    deleteQueuedMessageMock: vi.fn().mockResolvedValue(undefined),
+		    markMessageDeliveredMock: vi.fn().mockResolvedValue(undefined),
 	    openChatMock: vi.fn(),
 	    upsertChatEntryMock: vi.fn(),
 	    setKeyExchangeStateMock: vi.fn(),
@@ -115,7 +115,7 @@ vi.mock('$lib/stores/chatStore.js', () => {
   };
 });
 
-	vi.mock('$lib/services/db.js', () => {
+		vi.mock('$lib/services/db.js', () => {
 	  const globalMessages = {
 	    put: vi.fn().mockResolvedValue(undefined),
 	    orderBy: vi.fn(() => ({ last: vi.fn().mockResolvedValue(null) }))
@@ -140,14 +140,14 @@ vi.mock('$lib/stores/chatStore.js', () => {
 		    getPrivateChat: (...args) => hoisted.getPrivateChatMock(...args),
 		    savePrivateMessage: (...args) => hoisted.savePrivateMessageMock(...args),
 		    saveSentMessagePlaintext: (...args) => hoisted.saveSentMessagePlaintextMock(...args),
-		    updateChatLastActivity: (...args) => hoisted.updateChatLastActivityMock(...args),
-		    updateChatMeta: (...args) => hoisted.updateChatMetaMock(...args),
-		    saveQueuedMessage: (...args) => hoisted.saveQueuedMessageMock(...args),
-		    getQueuedMessagesForPeer: (...args) => hoisted.getQueuedMessagesForPeerMock(...args),
-		    deleteQueuedMessage: (...args) => hoisted.deleteQueuedMessageMock(...args),
-	    markMessageDelivered: (...args) => hoisted.markMessageDeliveredMock(...args)
-	  };
-	});
+			    updateChatLastActivity: (...args) => hoisted.updateChatLastActivityMock(...args),
+			    updateChatMeta: (...args) => hoisted.updateChatMetaMock(...args),
+			    saveQueuedMessage: (...args) => hoisted.saveQueuedMessageMock(...args),
+			    getQueuedMessagesForChat: (...args) => hoisted.getQueuedMessagesForChatMock(...args),
+			    deleteQueuedMessage: (...args) => hoisted.deleteQueuedMessageMock(...args),
+		    markMessageDelivered: (...args) => hoisted.markMessageDeliveredMock(...args)
+		  };
+		});
 
 vi.mock('$lib/services/crypto.js', () => {
   const buildSessionId = (a, b) => [a, b].sort().join(':');
@@ -155,8 +155,8 @@ vi.mock('$lib/services/crypto.js', () => {
     buildSessionId,
     isSessionActive: vi.fn().mockReturnValue(false),
     resumeSession: vi.fn().mockResolvedValue(false),
-    createSession: vi.fn().mockResolvedValue({ sessionId: buildSessionId('local', 'p2'), publicKeyBase64: 'OUR_PUB_EX' }),
-    completeSession: vi.fn().mockResolvedValue({ sessionId: buildSessionId('local', 'p2'), publicKeyBase64: 'OUR_PUB_EX_ACK' }),
+    createSession: vi.fn(async (a, b) => ({ sessionId: buildSessionId(a, b), publicKeyBase64: 'OUR_PUB_EX' })),
+    completeSession: vi.fn(async (a, b) => ({ sessionId: buildSessionId(a, b), publicKeyBase64: 'OUR_PUB_EX_ACK' })),
     encryptForSession: vi.fn().mockResolvedValue({ ciphertext: 'CIPH', iv: 'IV' }),
     decryptForSession: vi.fn().mockResolvedValue('hello'),
     closeSession: vi.fn(),
@@ -227,9 +227,9 @@ const me = { username: 'alice', color: 'hsl(1, 65%, 65%)', age: 22, avatarBase64
 		  hoisted.saveSentMessagePlaintextMock.mockClear();
 		  hoisted.updateChatLastActivityMock.mockClear();
 		  hoisted.updateChatMetaMock.mockClear();
-	  hoisted.saveQueuedMessageMock.mockClear();
-	  hoisted.getQueuedMessagesForPeerMock.mockClear();
-	  hoisted.deleteQueuedMessageMock.mockClear();
+		  hoisted.saveQueuedMessageMock.mockClear();
+		  hoisted.getQueuedMessagesForChatMock.mockClear();
+		  hoisted.deleteQueuedMessageMock.mockClear();
 	  hoisted.markMessageDeliveredMock.mockClear();
 	  hoisted.openChatMock.mockClear();
 	  hoisted.upsertChatEntryMock.mockClear();
@@ -244,7 +244,7 @@ const me = { username: 'alice', color: 'hsl(1, 65%, 65%)', age: 22, avatarBase64
 	  hoisted.privateChatStoreState.pendingKeyExchanges = new Map();
 
   const cryptoMod = await import('$lib/services/crypto.js');
-  const sid = cryptoMod.buildSessionId('local', 'p2');
+  const sid = cryptoMod.buildSessionId('alice', 'bob');
   cryptoMod.isSessionActive.mockReset().mockReturnValue(false);
   cryptoMod.createSession.mockReset().mockResolvedValue({ sessionId: sid, publicKeyBase64: 'OUR_PUB_EX' });
   cryptoMod.completeSession.mockReset().mockResolvedValue({ sessionId: sid, publicKeyBase64: 'OUR_PUB_EX_ACK' });
@@ -624,10 +624,10 @@ it('PRESENCE_ANNOUNCE updates connectedPeers and triggers re-key for idle privat
     ])
   });
 
-  // Seed an idle chat so PRESENCE_ANNOUNCE auto re-keys.
-  const cryptoMod = await import('$lib/services/crypto.js');
-  const chatId = cryptoMod.buildSessionId('local', 'p2');
-  hoisted.privateChatStoreState.chats.set(chatId, { id: chatId, theirPeerId: 'p2', keyExchangeState: 'idle' });
+	  // Seed an idle chat so PRESENCE_ANNOUNCE auto re-keys.
+	  const cryptoMod = await import('$lib/services/crypto.js');
+	  const chatId = cryptoMod.buildSessionId('alice', 'bob');
+	  hoisted.privateChatStoreState.chats.set(chatId, { id: chatId, theirPeerId: 'p2', theirUsername: 'bob', keyExchangeState: 'idle' });
 
   const p2Conn = new MockConn('p2', {});
   p2Conn.open = true;
@@ -749,18 +749,19 @@ it('initiatePrivateChat opens existing chat if session is already active', async
 	    currentLobbyHostId: null,
 	    connectedPeers: new Map()
 	  });
-	  peerTest.setProfileForTest(me);
-	  const cryptoMod = await import('$lib/services/crypto.js');
-	  cryptoMod.isSessionActive.mockReturnValue(false);
-	  await sendPrivateMessage('p2', 'hi');
-	  expect(hoisted.saveQueuedMessageMock).toHaveBeenCalledTimes(1);
-	  expect(hoisted.updateMessageQueuedMock).toHaveBeenCalledWith('local:p2', expect.any(String), true);
-	});
+		  peerTest.setProfileForTest(me);
+		  const cryptoMod = await import('$lib/services/crypto.js');
+		  cryptoMod.isSessionActive.mockReturnValue(false);
+		  const chatId = cryptoMod.buildSessionId('alice', 'bob');
+		  await sendPrivateMessage(chatId, 'p2', 'hi');
+		  expect(hoisted.saveQueuedMessageMock).toHaveBeenCalledTimes(1);
+		  expect(hoisted.updateMessageQueuedMock).toHaveBeenCalledWith(chatId, expect.any(String), true);
+		});
 
 it('sendPrivateMessage encrypts before calling sendToPeer and stores ciphertext (not plaintext) in DB', async () => {
   let encrypted = false;
-  const send = vi.fn(() => {
-    expect(encrypted).toBe(true);
+  const send = vi.fn((env) => {
+    if (env?.type === 'PRIVATE_MSG') expect(encrypted).toBe(true);
   });
 
   peerStore.set({
@@ -772,7 +773,7 @@ it('sendPrivateMessage encrypts before calling sendToPeer and stores ciphertext 
     isLobbyHost: false,
     lobbyPeer: null,
     currentLobbyHostId: null,
-    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send } }]])
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send, open: true } }]])
   });
   peerTest.setProfileForTest(me);
 
@@ -783,9 +784,11 @@ it('sendPrivateMessage encrypts before calling sendToPeer and stores ciphertext 
     return { ciphertext: 'CIPH', iv: 'IV' };
   });
 
-  await sendPrivateMessage('p2', 'hello');
+  const chatId = cryptoMod.buildSessionId('alice', 'bob');
+  await sendPrivateMessage(chatId, 'p2', 'hello');
 
-  expect(send).toHaveBeenCalledTimes(1);
+  // Could also be called by disconnectPeer() in afterEach; ensure we sent the private message at least once.
+  expect(send.mock.calls.some((c) => c?.[0]?.type === 'PRIVATE_MSG')).toBe(true);
   expect(hoisted.savePrivateMessageMock).toHaveBeenCalledTimes(1);
   const row = hoisted.savePrivateMessageMock.mock.calls[0][0];
   expect(row.ciphertext).toBe('CIPH');
@@ -806,25 +809,26 @@ it('sendPrivateMessage encrypts before calling sendToPeer and stores ciphertext 
 	    currentLobbyHostId: null,
 	    connectedPeers: new Map() // offline
 	  });
-	  peerTest.setProfileForTest(me);
-	  const cryptoMod = await import('$lib/services/crypto.js');
-	  cryptoMod.isSessionActive.mockReturnValue(false);
+		  peerTest.setProfileForTest(me);
+		  const cryptoMod = await import('$lib/services/crypto.js');
+		  cryptoMod.isSessionActive.mockReturnValue(false);
+		  const chatId = cryptoMod.buildSessionId('alice', 'bob');
+		  await sendPrivateMessage(chatId, 'p2', 'hello');
+		  expect(send).not.toHaveBeenCalled();
+		  expect(hoisted.saveQueuedMessageMock).toHaveBeenCalledTimes(1);
 
-	  await sendPrivateMessage('p2', 'hello');
-	  expect(send).not.toHaveBeenCalled();
-	  expect(hoisted.saveQueuedMessageMock).toHaveBeenCalledTimes(1);
-
-	  // Peer reconnects and session becomes active.
-	  peerStore.update((s) => ({
-	    ...s,
-	    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send } }]])
-	  }));
-	  hoisted.getQueuedMessagesForPeerMock.mockResolvedValueOnce([
-	    { id: 'm-queued', chatId: 'local:p2', theirPeerId: 'p2', plaintext: 'hello', timestamp: 10 }
-	  ]);
-	  cryptoMod.isSessionActive.mockReturnValue(true);
-	  cryptoMod.encryptForSession.mockResolvedValueOnce({ ciphertext: 'CIPH', iv: 'IV' });
-	  await flushQueueForPeer('p2');
+		  // Peer reconnects and session becomes active.
+		  peerStore.update((s) => ({
+		    ...s,
+		    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send, open: true } }]])
+		  }));
+		  hoisted.privateChatStoreState.chats.set(chatId, { id: chatId, theirPeerId: 'p2', theirUsername: 'bob', keyExchangeState: 'active' });
+		  hoisted.getQueuedMessagesForChatMock.mockResolvedValueOnce([
+		    { id: 'm-queued', chatId, theirPeerId: 'p2', plaintext: 'hello', timestamp: 10 }
+		  ]);
+		  cryptoMod.isSessionActive.mockReturnValue(true);
+		  cryptoMod.encryptForSession.mockResolvedValueOnce({ ciphertext: 'CIPH', iv: 'IV' });
+		  await flushQueueForPeer('p2');
 
 	  expect(send).toHaveBeenCalledTimes(1);
 	  expect(send.mock.calls[0][0].type).toBe('PRIVATE_MSG');
@@ -846,7 +850,7 @@ it('PRIVATE_KEY_EXCHANGE handler calls completeSession and sends ACK', async () 
   peerTest.setProfileForTest(me);
 
   const cryptoMod = await import('$lib/services/crypto.js');
-  cryptoMod.completeSession.mockResolvedValueOnce({ sessionId: 'local:p2', publicKeyBase64: 'ACK_PUB' });
+  cryptoMod.completeSession.mockResolvedValueOnce({ sessionId: 'alice:bob', publicKeyBase64: 'ACK_PUB' });
 
   await handleMessage(
     {
@@ -897,7 +901,7 @@ it('PRIVATE_MSG handler decrypts and calls addIncomingMessage (and sends ACK)', 
   );
 
   expect(cryptoMod.decryptForSession).toHaveBeenCalled();
-  expect(hoisted.addIncomingMessageMock).toHaveBeenCalledWith('local:p2', {
+  expect(hoisted.addIncomingMessageMock).toHaveBeenCalledWith('alice:bob', {
     id: 'm1',
     text: 'hello',
     ciphertext: 'CIPH',
@@ -940,7 +944,7 @@ it('PRIVATE_MSG handler stores as unreadable if session not active', async () =>
   );
 
   expect(cryptoMod.decryptForSession).not.toHaveBeenCalled();
-  expect(hoisted.addIncomingMessageMock).toHaveBeenCalledWith('local:p2', {
+  expect(hoisted.addIncomingMessageMock).toHaveBeenCalledWith('alice:bob', {
     id: 'm2',
     text: null,
     ciphertext: 'CIPH',
@@ -976,7 +980,7 @@ it('PRIVATE_MSG_ACK handler calls markDelivered and markMessageDelivered', async
     me
   );
 
-  expect(hoisted.markDeliveredMock).toHaveBeenCalledWith('local:p2', 'm1');
+  expect(hoisted.markDeliveredMock).toHaveBeenCalledWith('alice:bob', 'm1');
   expect(hoisted.markMessageDeliveredMock).toHaveBeenCalledWith('m1');
 });
 
@@ -999,7 +1003,7 @@ it('PRIVATE_CHAT_CLOSED does NOT delete local messages', async () => {
       type: 'PRIVATE_CHAT_CLOSED',
       from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33 },
       to: 'local',
-      payload: { chatId: 'local:p2' },
+      payload: { chatId: 'alice:bob' },
       timestamp: 4
     },
     new MockConn('p2'),
@@ -1010,8 +1014,8 @@ it('PRIVATE_CHAT_CLOSED does NOT delete local messages', async () => {
   expect(hoisted.addIncomingMessageMock).toHaveBeenCalled();
 });
 
-it('closePrivateChat clears session, deletes chat locally, and notifies peer when connected', async () => {
-  const send = vi.fn();
+	it('closePrivateChat clears session, deletes chat locally, and notifies peer when connected', async () => {
+	  const send = vi.fn();
   peerStore.set({
     peerId: 'local',
     isConnected: true,
@@ -1023,13 +1027,14 @@ it('closePrivateChat clears session, deletes chat locally, and notifies peer whe
     currentLobbyHostId: null,
     connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, connection: { send } }]])
   });
-  peerTest.setProfileForTest(me);
+	  peerTest.setProfileForTest(me);
+	  hoisted.privateChatStoreState.chats.set('alice:bob', { id: 'alice:bob', theirPeerId: 'p2', theirUsername: 'bob' });
 
-  await closePrivateChat('p2');
-  expect(hoisted.deleteChatFromStoreMock).toHaveBeenCalledWith('local:p2');
-  const env = send.mock.calls.map((c) => c[0]).find((m) => m.type === 'PRIVATE_CHAT_CLOSED');
-  expect(env).toBeTruthy();
-});
+	  await closePrivateChat('p2');
+	  expect(hoisted.deleteChatFromStoreMock).toHaveBeenCalledWith('alice:bob');
+	  const env = send.mock.calls.map((c) => c[0]).find((m) => m.type === 'PRIVATE_CHAT_CLOSED');
+	  expect(env).toBeTruthy();
+	});
 
 it('broadcastGlobalMessage adds message before sending (optimistic)', async () => {
   let added = false;

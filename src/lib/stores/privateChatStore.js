@@ -2,12 +2,12 @@ import { derived, get, writable } from 'svelte/store';
 import { tick } from 'svelte';
 import { closeSession, decryptForSession, isSessionActive, resumeSession } from '$lib/services/crypto.js';
 import {
-  clearQueuedMessagesForPeer,
+  clearQueuedMessagesForChat,
   deletePrivateChat,
   getSentMessagesPlaintext,
   getPrivateChats,
   getPrivateMessages,
-  getQueuedMessagesForPeer,
+  getQueuedMessagesForChat,
   updateChatMeta
 } from '$lib/services/db.js';
 
@@ -85,7 +85,7 @@ export async function loadPrivateChats(myPeerId) {
       };
     });
 
-    const queuedMsgs = await getQueuedMessagesForPeer(c.theirPeerId);
+    const queuedMsgs = await getQueuedMessagesForChat(c.id);
     const queuedInMemory = queuedMsgs.map((m) => ({
       id: m.id,
       direction: 'sent',
@@ -317,10 +317,6 @@ export function upsertChatEntry(entry) {
 }
 
 export async function deleteChatFromStore(chatId) {
-  // Capture peerId BEFORE removing the chat from memory so we can clean its queue.
-  const chatEntry = get(privateChatStore).chats.get(chatId);
-  const theirPeerId = chatEntry?.theirPeerId ?? null;
-
   // STEP 1: close the active chat first so derived stores compute null cleanly.
   update((s) => ({ ...s, activeChatId: s.activeChatId === chatId ? null : s.activeChatId }));
 
@@ -337,7 +333,7 @@ export async function deleteChatFromStore(chatId) {
   // STEP 4: delete persisted data (best effort; never crash the UI on failure).
   try {
     await deletePrivateChat(chatId);
-    if (theirPeerId) await clearQueuedMessagesForPeer(theirPeerId);
+    await clearQueuedMessagesForChat(chatId);
   } catch (err) {
     console.error('Failed to delete private chat from DB', err);
   }

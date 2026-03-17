@@ -40,7 +40,7 @@ import { activeTab } from '$lib/stores/navigationStore.js';
 import {
   getPrivateChat,
   deleteQueuedMessage,
-  getQueuedMessagesForPeer,
+  getQueuedMessagesForChat,
   saveSentMessagePlaintext,
   markMessageDelivered,
   saveQueuedMessage,
@@ -408,35 +408,6 @@ function randomPeerId() {
   return `peer-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-async function getOrCreatePeerId(username) {
-  const key = String(username ?? '').trim();
-  if (!key) return randomPeerId();
-  try {
-    const existing = await db.peerIds.get(key);
-    if (existing?.peerId) return existing.peerId;
-  } catch {
-    // ignore
-  }
-  const newId = randomPeerId();
-  try {
-    await db.peerIds.put({ username: key, peerId: newId });
-  } catch {
-    // ignore
-  }
-  return newId;
-}
-
-async function persistPeerIdForUsername(username, peerId) {
-  const key = String(username ?? '').trim();
-  const id = String(peerId ?? '').trim();
-  if (!key || !id) return;
-  try {
-    await db.peerIds.put({ username: key, peerId: id });
-  } catch {
-    // ignore
-  }
-}
-
 async function ensurePeerCtor() {
   if (PeerCtor) return PeerCtor;
   // In Vitest, accessing a missing named export can throw (ESM proxy behavior),
@@ -730,59 +701,76 @@ export async function flushQueueForPeer(theirPeerId) {
   if (!theirPeerId || !entry || entry.connection?.open === false) return;
   const myPeerId = state.peerId;
   const profile = userProfileRef ?? cachedProfile;
-  if (!myPeerId || !profile) return;
+  if (!myPeerId || !profile || !profile.username || profile.username === 'pre-registration') return;
 
-  /** @type {import('$lib/services/db.js').QueuedMessage[] | undefined} */
-  let queued;
+  // PeerJS IDs are transient; queues are keyed by stable chatId (username-based).
+  const chatsForPeer = [];
   try {
-    queued = await getQueuedMessagesForPeer(theirPeerId);
-  } catch (err) {
-    console.error('getQueuedMessagesForPeer failed', err);
-    return;
-  }
-  if (!queued || queued.length === 0) return;
-
-  const chatId = buildSessionId(myPeerId, theirPeerId);
-  const sessionActive = isSessionActive(chatId);
-
-  if (!sessionActive) {
-    // Need a session before we can encrypt and send.
-    try {
-      const { publicKeyBase64 } = await createSession(myPeerId, theirPeerId);
-      setKeyExchangeState(chatId, 'initiated');
-      startKeyExchangeTimeout(chatId);
-      sendToPeer(theirPeerId, buildDirectMessage('PRIVATE_KEY_EXCHANGE', myPeerId, profile, theirPeerId, { publicKeyBase64 }, Date.now()));
-    } catch (err) {
-      console.error('flushQueueForPeer key exchange init failed', err);
-      clearKeyExchangeTimeout(chatId);
-      setKeyExchangeState(chatId, 'failed');
+    for (const chat of get(privateChatStore).chats.values()) {
+      if (chat?.theirPeerId === theirPeerId) chatsForPeer.push(chat);
     }
-    return;
+  } catch {
+    // ignore
   }
+  if (chatsForPeer.length === 0) return;
 
-  // Session is active: encrypt and send each queued message, then remove it from the queue.
-  for (const msg of queued) {
+  for (const chat of chatsForPeer) {
+    const chatId = chat?.id;
+    if (!chatId) continue;
+
+    /** @type {import('$lib/services/db.js').QueuedMessage[] | undefined} */
+    let queued;
     try {
-      const { ciphertext, iv } = await encryptForSession(chatId, msg.plaintext);
-      await deleteQueuedMessage(msg.id);
-      await saveEncryptedPrivateMessage({
-        id: msg.id,
-        chatId,
-        direction: 'sent',
-        ciphertext,
-        iv,
-        timestamp: msg.timestamp,
-        delivered: false
-      });
-      // Keep a local plaintext copy for sender readability across re-keys.
-      await saveSentMessagePlaintext({ id: msg.id, chatId, plaintext: msg.plaintext, timestamp: msg.timestamp });
-      updateMessageQueued(chatId, msg.id, false);
-      sendToPeer(
-        theirPeerId,
-        buildDirectMessage('PRIVATE_MSG', myPeerId, profile, theirPeerId, { ciphertext, iv, messageId: msg.id }, msg.timestamp)
-      );
+      queued = await getQueuedMessagesForChat(chatId);
     } catch (err) {
-      console.error('Failed to flush queued message', err);
+      console.error('getQueuedMessagesForChat failed', err);
+      continue;
+    }
+    if (!queued || queued.length === 0) continue;
+
+    const sessionActive = isSessionActive(chatId);
+    if (!sessionActive) {
+      // Need a session before we can encrypt and send.
+      try {
+        const { publicKeyBase64 } = await createSession(profile.username, chat.theirUsername);
+        setKeyExchangeState(chatId, 'initiated');
+        startKeyExchangeTimeout(chatId);
+        sendToPeer(
+          theirPeerId,
+          buildDirectMessage('PRIVATE_KEY_EXCHANGE', myPeerId, profile, theirPeerId, { publicKeyBase64 }, Date.now())
+        );
+      } catch (err) {
+        console.error('flushQueueForPeer key exchange init failed', err);
+        clearKeyExchangeTimeout(chatId);
+        setKeyExchangeState(chatId, 'failed');
+      }
+      continue;
+    }
+
+    // Session is active: encrypt and send each queued message, then remove it from the queue.
+    for (const msg of queued) {
+      try {
+        const { ciphertext, iv } = await encryptForSession(chatId, msg.plaintext);
+        await deleteQueuedMessage(msg.id);
+        await saveEncryptedPrivateMessage({
+          id: msg.id,
+          chatId,
+          direction: 'sent',
+          ciphertext,
+          iv,
+          timestamp: msg.timestamp,
+          delivered: false
+        });
+        // Keep a local plaintext copy for sender readability across re-keys.
+        await saveSentMessagePlaintext({ id: msg.id, chatId, plaintext: msg.plaintext, timestamp: msg.timestamp });
+        updateMessageQueued(chatId, msg.id, false);
+        sendToPeer(
+          theirPeerId,
+          buildDirectMessage('PRIVATE_MSG', myPeerId, profile, theirPeerId, { ciphertext, iv, messageId: msg.id }, msg.timestamp)
+        );
+      } catch (err) {
+        console.error('Failed to flush queued message', err);
+      }
     }
   }
 }
@@ -1073,51 +1061,11 @@ export function handleIncomingConnection(conn, profile) {
       void flushQueueForPeer(remotePeerId);
       flushGlobalOutbox();
       setChatOnlineStatus(remotePeerId, true);
-      // Trigger an immediate digest after a peer link comes up so refreshed peers
-      // can sync without waiting for the 30s gossip interval.
-      void broadcastStateDigest(effectiveProfile);
-
-      // Auto-initiate key exchange for existing chats after reconnect (no UI side effects).
-      const myPeerId = get(peerStore).peerId;
-      if (!myPeerId) return;
-      const chatId = buildSessionId(myPeerId, remotePeerId);
-      const existingChat = get(privateChatStore).chats.get(chatId);
-      if (!existingChat) return;
-      if (existingChat.keyExchangeState !== 'idle') return;
-
-      // Phase 9: If we have a persisted key ring for this chat, resume it and decrypt
-      // sealed history immediately (no need to re-key just to read old messages).
-      if (!isSessionActive(chatId)) {
-        try {
-          await resumeSession(chatId);
-        } catch {
-          // ignore
-        }
-      }
-      if (isSessionActive(chatId)) {
-        setKeyExchangeState(chatId, 'active');
-        await decryptSealedMessages(chatId, chatId);
-        void flushQueueForPeer(remotePeerId);
-        return;
-      }
-
-      if (!userProfileRef) return;
-
-      try {
-        const { publicKeyBase64 } = await createSession(myPeerId, remotePeerId);
-        setKeyExchangeState(chatId, 'initiated');
-        startKeyExchangeTimeout(chatId);
-        sendToPeer(
-          remotePeerId,
-          buildDirectMessage('PRIVATE_KEY_EXCHANGE', myPeerId, userProfileRef, remotePeerId, { publicKeyBase64 }, Date.now())
-        );
-      } catch (err) {
-        console.error('auto key exchange failed', err);
-        clearKeyExchangeTimeout(chatId);
-        setKeyExchangeState(chatId, 'failed');
-      }
-    })().catch((err) => console.error('sendHandshake failed', err));
-  });
+	      // Trigger an immediate digest after a peer link comes up so refreshed peers
+	      // can sync without waiting for the 30s gossip interval.
+	      void broadcastStateDigest(effectiveProfile);
+	    })().catch((err) => console.error('sendHandshake failed', err));
+	  });
 
   conn.on('data', (data) => {
     (async () => {
@@ -1273,20 +1221,64 @@ export async function handleMessage(msg, fromConn, profile) {
       avatarBase64
     });
     await saveKnownPeer({ username: msg.from.username, peerId: remotePeerId, lastSeen: Date.now() });
-    setChatOnlineStatus(remotePeerId, true);
 
-    // Persist avatar for existing private chats so it survives reloads.
-    if (avatarBase64) {
-      const myPeerId = get(peerStore).peerId;
-      if (myPeerId) {
-        const chatId = buildSessionId(myPeerId, remotePeerId);
-        const existing = await getPrivateChat(chatId);
-        if (existing) {
-          await upsertPrivateChat({ ...existing, theirAvatarBase64: avatarBase64 });
-          upsertChatEntry({ id: chatId, theirAvatarBase64: avatarBase64 });
+    // Update any existing private chat entry: PeerJS IDs are transient, chatId is username-based.
+    if (profile?.username && profile.username !== 'pre-registration' && msg.from.username) {
+      const chatId = buildSessionId(profile.username, msg.from.username);
+      const existing = await getPrivateChat(chatId);
+      if (existing) {
+        await upsertPrivateChat({
+          ...existing,
+          myPeerId: get(peerStore).peerId ?? existing.myPeerId,
+          myUsername: profile.username,
+          theirPeerId: remotePeerId,
+          theirAvatarBase64: avatarBase64 ?? existing.theirAvatarBase64 ?? null
+        });
+        upsertChatEntry({
+          id: chatId,
+          theirPeerId: remotePeerId,
+          theirAvatarBase64: avatarBase64 ?? existing.theirAvatarBase64 ?? null,
+          isOnline: true
+        });
+
+        // If we have a persisted key ring for this chat, resume and decrypt sealed history immediately.
+        if (!isSessionActive(chatId)) {
+          try {
+            await resumeSession(chatId);
+          } catch {
+            // ignore
+          }
         }
+        if (isSessionActive(chatId)) {
+          setKeyExchangeState(chatId, 'active');
+          try {
+            await decryptSealedMessages(chatId, chatId);
+          } catch {
+            // ignore
+          }
+	        } else if (get(privateChatStore).chats.get(chatId)?.keyExchangeState === 'idle') {
+	          // No stored keys: try to re-key silently so queued messages can flush.
+	          try {
+	            const myPid = get(peerStore).peerId;
+	            if (!myPid) throw new Error('missing peerId');
+	            const { publicKeyBase64 } = await createSession(profile.username, msg.from.username);
+	            setKeyExchangeState(chatId, 'initiated');
+	            startKeyExchangeTimeout(chatId);
+	            sendToPeer(
+	              remotePeerId,
+	              buildDirectMessage('PRIVATE_KEY_EXCHANGE', myPid, profile, remotePeerId, { publicKeyBase64 }, Date.now())
+	            );
+	          } catch {
+	            // ignore
+	          }
+	        }
+
+        // After updating peerId mapping + keys, attempt queue flush.
+        void flushQueueForPeer(remotePeerId);
       }
     }
+
+    setChatOnlineStatus(remotePeerId, true);
     await sendHandshakeAck(fromConn, profile);
     return;
   }
@@ -1302,19 +1294,60 @@ export async function handleMessage(msg, fromConn, profile) {
       avatarBase64
     });
     await saveKnownPeer({ username: msg.from.username, peerId: remotePeerId, lastSeen: Date.now() });
-    setChatOnlineStatus(remotePeerId, true);
 
-    if (avatarBase64) {
-      const myPeerId = get(peerStore).peerId;
-      if (myPeerId) {
-        const chatId = buildSessionId(myPeerId, remotePeerId);
-        const existing = await getPrivateChat(chatId);
-        if (existing) {
-          await upsertPrivateChat({ ...existing, theirAvatarBase64: avatarBase64 });
-          upsertChatEntry({ id: chatId, theirAvatarBase64: avatarBase64 });
+    if (profile?.username && profile.username !== 'pre-registration' && msg.from.username) {
+      const chatId = buildSessionId(profile.username, msg.from.username);
+      const existing = await getPrivateChat(chatId);
+      if (existing) {
+        await upsertPrivateChat({
+          ...existing,
+          myPeerId: get(peerStore).peerId ?? existing.myPeerId,
+          myUsername: profile.username,
+          theirPeerId: remotePeerId,
+          theirAvatarBase64: avatarBase64 ?? existing.theirAvatarBase64 ?? null
+        });
+        upsertChatEntry({
+          id: chatId,
+          theirPeerId: remotePeerId,
+          theirAvatarBase64: avatarBase64 ?? existing.theirAvatarBase64 ?? null,
+          isOnline: true
+        });
+
+        if (!isSessionActive(chatId)) {
+          try {
+            await resumeSession(chatId);
+          } catch {
+            // ignore
+          }
         }
+        if (isSessionActive(chatId)) {
+          setKeyExchangeState(chatId, 'active');
+          try {
+            await decryptSealedMessages(chatId, chatId);
+          } catch {
+            // ignore
+          }
+	        } else if (get(privateChatStore).chats.get(chatId)?.keyExchangeState === 'idle') {
+	          try {
+	            const myPid = get(peerStore).peerId;
+	            if (!myPid) throw new Error('missing peerId');
+	            const { publicKeyBase64 } = await createSession(profile.username, msg.from.username);
+	            setKeyExchangeState(chatId, 'initiated');
+	            startKeyExchangeTimeout(chatId);
+	            sendToPeer(
+	              remotePeerId,
+	              buildDirectMessage('PRIVATE_KEY_EXCHANGE', myPid, profile, remotePeerId, { publicKeyBase64 }, Date.now())
+	            );
+	          } catch {
+	            // ignore
+	          }
+	        }
+
+        void flushQueueForPeer(remotePeerId);
       }
     }
+
+    setChatOnlineStatus(remotePeerId, true);
     return;
   }
 
@@ -1323,38 +1356,58 @@ export async function handleMessage(msg, fromConn, profile) {
       typeof msg.payload?.avatarBase64 === 'string' && msg.payload.avatarBase64.length > 0 ? msg.payload.avatarBase64 : null;
     if (avatarBase64) setCachedAvatar(remotePeerId, avatarBase64);
 
+    const theirUsername = msg.payload?.username ?? msg.from.username;
     upsertConnectedPeer(remotePeerId, fromConn, {
-      username: msg.payload?.username ?? msg.from.username,
+      username: theirUsername,
       color: msg.payload?.color ?? msg.from.color,
       age: typeof msg.payload?.age === 'number' ? msg.payload.age : msg.from.age,
       avatarBase64
     });
-    setChatOnlineStatus(remotePeerId, true);
     await saveKnownPeer({ username: msg.from.username, peerId: remotePeerId, lastSeen: msg.timestamp ?? Date.now() });
 
     // If we have a private chat with them and session is not active, silently re-key.
     const myPeerId = get(peerStore).peerId;
-    if (myPeerId) {
-      const chatId = buildSessionId(myPeerId, remotePeerId);
+    const p = userProfileRef ?? cachedProfile;
+    if (myPeerId && p?.username && p.username !== 'pre-registration' && theirUsername) {
+      const chatId = buildSessionId(p.username, theirUsername);
       const chat = get(privateChatStore).chats.get(chatId);
+
+      // If the chat exists, update theirPeerId (PeerJS IDs can change across refreshes).
+      if (chat) {
+        try {
+          const existing = await getPrivateChat(chatId);
+          if (existing) {
+            await upsertPrivateChat({
+              ...existing,
+              myPeerId,
+              myUsername: p.username,
+              theirPeerId: remotePeerId,
+              theirAvatarBase64: avatarBase64 ?? existing.theirAvatarBase64 ?? null
+            });
+          }
+        } catch {
+          // ignore
+        }
+        upsertChatEntry({ id: chatId, theirPeerId: remotePeerId, isOnline: true, theirAvatarBase64: avatarBase64 ?? chat.theirAvatarBase64 });
+      }
+
       if (chat && !isSessionActive(chatId) && chat.keyExchangeState !== 'initiated' && chat.keyExchangeState !== 'completing') {
         try {
-          const p = userProfileRef ?? cachedProfile;
-          if (p && p.username !== 'pre-registration') {
-            const { publicKeyBase64 } = await createSession(myPeerId, remotePeerId);
-            setKeyExchangeState(chatId, 'initiated');
-            startKeyExchangeTimeout(chatId);
-            sendToPeer(
-              remotePeerId,
-              buildDirectMessage('PRIVATE_KEY_EXCHANGE', myPeerId, p, remotePeerId, { publicKeyBase64 }, Date.now())
-            );
-          }
+          const { publicKeyBase64 } = await createSession(p.username, theirUsername);
+          setKeyExchangeState(chatId, 'initiated');
+          startKeyExchangeTimeout(chatId);
+          sendToPeer(
+            remotePeerId,
+            buildDirectMessage('PRIVATE_KEY_EXCHANGE', myPeerId, p, remotePeerId, { publicKeyBase64 }, Date.now())
+          );
         } catch (err) {
           console.error('Auto re-key failed', err);
           setKeyExchangeState(chatId, 'failed');
         }
       }
     }
+
+    setChatOnlineStatus(remotePeerId, true);
     return;
   }
 
@@ -1537,21 +1590,25 @@ export async function handleMessage(msg, fromConn, profile) {
   }
 
   if (msg.type === 'PRIVATE_KEY_EXCHANGE') {
-    const myPeerId = get(peerStore).peerId;
-    if (!myPeerId) return;
-    if (msg.to !== myPeerId) return;
-    const theirPeerId = remotePeerId;
+	    const myPeerId = get(peerStore).peerId;
+	    if (!myPeerId) return;
+		    if (msg.to !== myPeerId) return;
+		    const theirPeerId = remotePeerId;
+		    const myUsername = profile?.username ?? null;
+	    const theirUsername = msg.from.username;
+    if (!myUsername || myUsername === 'pre-registration') return;
+    if (!theirUsername) return;
 
     const publicKeyBase64 = msg.payload?.publicKeyBase64;
     if (typeof publicKeyBase64 !== 'string' || publicKeyBase64.length === 0) return;
 
-    const chatId = buildSessionId(myPeerId, theirPeerId);
+    const chatId = buildSessionId(myUsername, theirUsername);
     clearKeyExchangeTimeout(chatId);
     setKeyExchangeState(chatId, 'completing');
 
     let ourPublicKeyBase64;
     try {
-      ({ publicKeyBase64: ourPublicKeyBase64 } = await completeSession(myPeerId, theirPeerId, publicKeyBase64));
+      ({ publicKeyBase64: ourPublicKeyBase64 } = await completeSession(myUsername, theirUsername, publicKeyBase64));
     } catch (err) {
       console.error('completeSession (responder) failed', err);
       setKeyExchangeState(chatId, 'failed');
@@ -1567,8 +1624,9 @@ export async function handleMessage(msg, fromConn, profile) {
       ...(existing ?? {}),
       id: chatId,
       myPeerId,
+      myUsername,
       theirPeerId,
-      theirUsername: msg.from.username,
+      theirUsername,
       theirColor: msg.from.color,
       theirAvatarBase64: cachedAvatar,
       theirAge: msg.from.age,
@@ -1607,19 +1665,23 @@ export async function handleMessage(msg, fromConn, profile) {
     return;
   }
 
-  if (msg.type === 'PRIVATE_KEY_EXCHANGE_ACK') {
-    const myPeerId = get(peerStore).peerId;
-    if (!myPeerId) return;
-    if (msg.to !== myPeerId) return;
+	  if (msg.type === 'PRIVATE_KEY_EXCHANGE_ACK') {
+	    const myPeerId = get(peerStore).peerId;
+	    if (!myPeerId) return;
+	    if (msg.to !== myPeerId) return;
 
-    const theirPeerId = remotePeerId;
+	    const theirPeerId = remotePeerId;
+	    const myUsername = profile?.username ?? null;
+	    const theirUsername = msg.from.username;
+    if (!myUsername || myUsername === 'pre-registration') return;
+    if (!theirUsername) return;
     const publicKeyBase64 = msg.payload?.publicKeyBase64;
     if (typeof publicKeyBase64 !== 'string' || publicKeyBase64.length === 0) return;
 
-    const chatId = buildSessionId(myPeerId, theirPeerId);
+    const chatId = buildSessionId(myUsername, theirUsername);
     clearKeyExchangeTimeout(chatId);
     try {
-      await completeSession(myPeerId, theirPeerId, publicKeyBase64);
+      await completeSession(myUsername, theirUsername, publicKeyBase64);
     } catch (err) {
       console.error('completeSession (initiator) failed', err);
       setKeyExchangeState(chatId, 'failed');
@@ -1631,19 +1693,23 @@ export async function handleMessage(msg, fromConn, profile) {
     return;
   }
 
-  if (msg.type === 'PRIVATE_MSG') {
-    const myPeerId = get(peerStore).peerId;
-    if (!myPeerId) return;
-    if (msg.to !== myPeerId) return;
+	  if (msg.type === 'PRIVATE_MSG') {
+	    const myPeerId = get(peerStore).peerId;
+	    if (!myPeerId) return;
+	    if (msg.to !== myPeerId) return;
 
-    const theirPeerId = remotePeerId;
+	    const theirPeerId = remotePeerId;
+	    const myUsername = profile?.username ?? null;
+	    const theirUsername = msg.from.username;
+    if (!myUsername || myUsername === 'pre-registration') return;
+    if (!theirUsername) return;
     const ciphertext = msg.payload?.ciphertext;
     const iv = msg.payload?.iv;
     const messageId = msg.payload?.messageId;
     if (typeof ciphertext !== 'string' || typeof iv !== 'string') return;
     if (typeof messageId !== 'string' || messageId.length === 0) return;
 
-    const chatId = buildSessionId(myPeerId, theirPeerId);
+    const chatId = buildSessionId(myUsername, theirUsername);
     const cachedAvatar =
       get(avatarCache).get(theirPeerId) ?? get(peerStore).connectedPeers.get(theirPeerId)?.avatarBase64 ?? null;
 
@@ -1654,8 +1720,9 @@ export async function handleMessage(msg, fromConn, profile) {
       ...(existing ?? {}),
       id: chatId,
       myPeerId,
+      myUsername,
       theirPeerId,
-      theirUsername: msg.from.username,
+      theirUsername,
       theirColor: msg.from.color,
       theirAvatarBase64: cachedAvatar,
       theirAge: msg.from.age,
@@ -1727,11 +1794,14 @@ export async function handleMessage(msg, fromConn, profile) {
     if (!myPeerId) return;
     if (msg.to !== myPeerId) return;
 
-    const theirPeerId = remotePeerId;
+    const myUsername = profile?.username ?? null;
+    const theirUsername = msg.from.username;
+    if (!myUsername || myUsername === 'pre-registration') return;
+    if (!theirUsername) return;
     const messageId = msg.payload?.messageId;
     if (typeof messageId !== 'string' || messageId.length === 0) return;
 
-    const chatId = buildSessionId(myPeerId, theirPeerId);
+    const chatId = buildSessionId(myUsername, theirUsername);
     markDelivered(chatId, messageId);
     try {
       await markMessageDelivered(messageId);
@@ -1771,17 +1841,16 @@ export async function initPeer(profile) {
 
     // If the peer already exists (e.g. we connected pre-registration), update cached profile
     // and refresh our handshake so remote peers learn our final username/avatar.
-    if (mainPeer && !mainPeer.destroyed) {
-      const shouldRefresh = Boolean(profile?.createdAt) && profile?.username && profile.username !== 'pre-registration';
-      if (shouldRefresh) {
-        const state = get(peerStore);
-        persistPeerIdForUsername(profile.username, state.peerId).catch(() => {});
-        for (const entry of state.connectedPeers.values()) {
-          sendHandshake(entry.connection, profile).catch((err) => console.error('refresh handshake failed', err));
-        }
-      }
-      return mainPeer;
-    }
+	    if (mainPeer && !mainPeer.destroyed) {
+	      const shouldRefresh = Boolean(profile?.createdAt) && profile?.username && profile.username !== 'pre-registration';
+	      if (shouldRefresh) {
+	        const state = get(peerStore);
+	        for (const entry of state.connectedPeers.values()) {
+	          sendHandshake(entry.connection, profile).catch((err) => console.error('refresh handshake failed', err));
+	        }
+	      }
+	      return mainPeer;
+	    }
     if (mainPeer?.destroyed) {
       mainPeer = null;
       localPeerRef = null;
@@ -1792,10 +1861,11 @@ export async function initPeer(profile) {
     // Keep PeerJS internal logs quiet; use the in-app debug panel in dev instead (Phase 3).
     const debug = 0;
 
-		    const effectiveUsername = profile?.username && profile.username !== 'pre-registration' ? profile.username : null;
-		    const peerId = forcedPeerId ?? (effectiveUsername ? await getOrCreatePeerId(effectiveUsername) : randomPeerId());
-		    forcedPeerId = null;
-		    mainPeer = new Peer(peerId, { ...PEERJS_CONFIG, debug });
+			    // PeerJS IDs are ephemeral: browsers often keep the previous socket alive briefly on refresh,
+			    // causing "unavailable-id". Use a new random ID each session and rely on username identity.
+			    const peerId = forcedPeerId ?? randomPeerId();
+			    forcedPeerId = null;
+			    mainPeer = new Peer(peerId, { ...PEERJS_CONFIG, debug });
 		    const thisPeer = mainPeer;
 		    localPeerRef = mainPeer;
 		    // Set peerId immediately so local-only features (DB queries, offline queueing) can
@@ -1834,16 +1904,13 @@ export async function initPeer(profile) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
-      peerStore.update((s) => ({
-        ...s,
-        peerId: id,
-        isConnected: true,
-        error: null,
-        reconnectAttempt: 0
-      }));
-      if (effectiveUsername) {
-        persistPeerIdForUsername(effectiveUsername, id).catch(() => {});
-      }
+	      peerStore.update((s) => ({
+	        ...s,
+	        peerId: id,
+	        isConnected: true,
+	        error: null,
+	        reconnectAttempt: 0
+	      }));
       // Register ourselves in the local username registry (for offline uniqueness checks).
       const shouldRegisterLocally = Boolean(profile?.createdAt) && Boolean(profile?.username) && profile.username !== 'pre-registration';
       if (shouldRegisterLocally) {
@@ -1900,19 +1967,16 @@ export async function initPeer(profile) {
 	          // Expected: lobby not found -> host election logic handles this on the connection error path.
 	          return;
 			        case 'unavailable-id': {
-			          // PeerJS server still thinks this ID is in use (common after hard close / fast reopen).
-			          // Rotating peerId breaks identity (chatId/session keys). Prefer retrying the SAME peerId
-			          // with backoff so identity stays stable across reloads.
-			          console.error('PeerJS error:', err?.type, err?.message);
+				          // PeerJS refused our requested ID. IDs are ephemeral; rotate immediately and retry with backoff.
+				          console.error('PeerJS error:', err?.type, err?.message);
 			          if (unavailableIdAttempts >= UNAVAILABLE_ID_RETRY_DELAYS_MS.length) {
 			            peerStore.update((s) => ({ ...s, error: err?.type ?? 'peer-error', connectionState: 'failed' }));
 			            return;
 			          }
-			          const delay = UNAVAILABLE_ID_RETRY_DELAYS_MS[unavailableIdAttempts] ?? 500;
-			          unavailableIdAttempts += 1;
-			          // If we're registered, keep the same stable ID. If not, just rotate.
-			          forcedPeerId = effectiveUsername ? peerId : randomPeerId();
-			          peerStore.update((s) => ({ ...s, connectionState: 'reconnecting', isConnected: false, error: null }));
+				          const delay = UNAVAILABLE_ID_RETRY_DELAYS_MS[unavailableIdAttempts] ?? 500;
+				          unavailableIdAttempts += 1;
+				          forcedPeerId = randomPeerId();
+				          peerStore.update((s) => ({ ...s, connectionState: 'reconnecting', isConnected: false, error: null }));
 
 			          // Avoid concurrent retry timers (multiple error events can fire per failure).
 			          if (unavailableIdRetryTimer) {
@@ -2065,11 +2129,15 @@ export async function initiatePrivateChat(theirPeerId, theirUsername, theirColor
     console.warn('initiatePrivateChat: missing user profile');
     return;
   }
+  if (!profile.username || profile.username === 'pre-registration') {
+    console.warn('initiatePrivateChat: user not registered');
+    return;
+  }
 
   // Always switch to the private tab first so UI never feels unresponsive.
   activeTab.set('private');
 
-  const chatId = buildSessionId(myPeerId, theirPeerId);
+  const chatId = buildSessionId(profile.username, theirUsername);
   const now = Date.now();
 
   // Ensure chat exists in store/DB (important after reload).
@@ -2099,6 +2167,7 @@ export async function initiatePrivateChat(theirPeerId, theirUsername, theirColor
       await upsertPrivateChat({
         id: chatId,
         myPeerId,
+        myUsername: profile.username,
         theirPeerId,
         theirUsername,
         theirColor,
@@ -2132,14 +2201,15 @@ export async function initiatePrivateChat(theirPeerId, theirUsername, theirColor
   }
 
   // If the target peer isn't currently connected, defer key exchange until they reconnect.
-  if (state.connectedPeers.get(theirPeerId)?.connection?.open === false) {
+  const peerConn = state.connectedPeers.get(theirPeerId)?.connection ?? null;
+  if (!peerConn || peerConn.open === false) {
     setKeyExchangeState(chatId, 'idle');
     return;
   }
 
   setKeyExchangeState(chatId, 'initiated');
   try {
-    const { publicKeyBase64 } = await createSession(myPeerId, theirPeerId);
+    const { publicKeyBase64 } = await createSession(profile.username, theirUsername);
     startKeyExchangeTimeout(chatId);
     sendToPeer(theirPeerId, buildDirectMessage('PRIVATE_KEY_EXCHANGE', myPeerId, profile, theirPeerId, { publicKeyBase64 }, now));
   } catch (err) {
@@ -2149,10 +2219,15 @@ export async function initiatePrivateChat(theirPeerId, theirUsername, theirColor
   }
 }
 
-export async function sendPrivateMessage(theirPeerId, plaintext) {
+export async function sendPrivateMessage(chatId, theirPeerId, plaintext) {
   const state = get(peerStore);
-  let myPeerId = state.peerId;
+  const myPeerId = state.peerId;
   const profile = userProfileRef ?? cachedProfile;
+  const cid = String(chatId ?? '').trim();
+  if (!cid) {
+    console.warn('sendPrivateMessage: missing chat id');
+    return;
+  }
   if (!theirPeerId) {
     console.warn('sendPrivateMessage: missing target peer id');
     return;
@@ -2162,51 +2237,42 @@ export async function sendPrivateMessage(theirPeerId, plaintext) {
     return;
   }
   if (!myPeerId) {
-    // PeerJS may not be fully connected yet; fall back to our stable peerId from IndexedDB.
-    // This enables offline queueing immediately on app boot.
-    const effectiveUsername = profile?.username && profile.username !== 'pre-registration' ? profile.username : null;
-    if (effectiveUsername) {
-      try {
-        myPeerId = await getOrCreatePeerId(effectiveUsername);
-        peerStore.update((s) => ({ ...s, peerId: s.peerId ?? myPeerId }));
-      } catch (err) {
-        console.error('sendPrivateMessage: getOrCreatePeerId failed', err);
-      }
-    }
-  }
-  if (!myPeerId) {
     console.warn('sendPrivateMessage: peer not initialized');
+    return;
+  }
+  if (!profile.username || profile.username === 'pre-registration') {
+    console.warn('sendPrivateMessage: user not registered');
     return;
   }
 
   const trimmed = String(plaintext ?? '').trim();
   if (!trimmed) return;
 
-  const chatId = buildSessionId(myPeerId, theirPeerId);
+  // chatId/sessionId is derived from usernames, not PeerJS IDs.
   const messageId = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `pm-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const timestamp = Date.now();
 
   // Optimistic UI: show the plaintext immediately.
-  addOutgoingMessage(chatId, { id: messageId, text: trimmed, timestamp });
+  addOutgoingMessage(cid, { id: messageId, text: trimmed, timestamp });
 
-  const sessionActive = isSessionActive(chatId);
-  const peerOnline = state.connectedPeers.get(theirPeerId)?.connection?.open !== false;
+  const sessionActive = isSessionActive(cid);
+  const peerOnline = state.connectedPeers.get(theirPeerId)?.connection?.open === true;
 
   if (sessionActive && peerOnline) {
     // Encrypt and send immediately.
-    const { ciphertext, iv } = await encryptForSession(chatId, trimmed);
+    const { ciphertext, iv } = await encryptForSession(cid, trimmed);
     await saveEncryptedPrivateMessage({
       id: messageId,
-      chatId,
+      chatId: cid,
       direction: 'sent',
       ciphertext,
       iv,
       timestamp,
       delivered: false
     });
-    await saveSentMessagePlaintext({ id: messageId, chatId, plaintext: trimmed, timestamp });
+    await saveSentMessagePlaintext({ id: messageId, chatId: cid, plaintext: trimmed, timestamp });
 
-    updateChatMeta(chatId, { lastMessagePreview: trimmed.slice(0, 40), lastActivity: timestamp }).catch((err) =>
+    updateChatMeta(cid, { lastMessagePreview: trimmed.slice(0, 40), lastActivity: timestamp }).catch((err) =>
       console.error('updateChatMeta failed', err)
     );
 
@@ -2216,13 +2282,13 @@ export async function sendPrivateMessage(theirPeerId, plaintext) {
 
   // Queue path: persist plaintext locally and mark message as queued in the UI.
   try {
-    await saveQueuedMessage({ id: messageId, chatId, theirPeerId, plaintext: trimmed, timestamp });
-    updateMessageQueued(chatId, messageId, true);
+    await saveQueuedMessage({ id: messageId, chatId: cid, theirPeerId, plaintext: trimmed, timestamp });
+    updateMessageQueued(cid, messageId, true);
   } catch (err) {
     console.error('saveQueuedMessage failed', err);
   }
 
-  updateChatMeta(chatId, { lastMessagePreview: trimmed.slice(0, 40), lastActivity: timestamp }).catch((err) =>
+  updateChatMeta(cid, { lastMessagePreview: trimmed.slice(0, 40), lastActivity: timestamp }).catch((err) =>
     console.error('updateChatMeta failed', err)
   );
 
@@ -2258,27 +2324,28 @@ export async function closePrivateChat(chatIdOrTheirPeerId) {
         // ignore
       }
     }
-  } else {
-    theirPeerId = raw;
-    const computed = myPeerId ? buildSessionId(myPeerId, theirPeerId) : null;
-    if (computed && get(privateChatStore).chats.has(computed)) {
-      chatId = computed;
-    } else {
-      // Fallback: locate the persisted chat by theirPeerId (covers peerId changes / legacy ids).
-      try {
-        for (const [id, chat] of get(privateChatStore).chats.entries()) {
-          if (chat?.theirPeerId === theirPeerId) {
-            chatId = id;
-            break;
-          }
-        }
-      } catch {
-        // ignore
-      }
-      // As a last resort, attempt DB deletion using the computed id even if it's not in-memory.
-      if (!chatId && computed) chatId = computed;
-    }
-  }
+	  } else {
+	    theirPeerId = raw;
+	    // Fallback: locate the persisted chat by theirPeerId (PeerJS IDs can change across refreshes).
+	    try {
+	      for (const [id, chat] of get(privateChatStore).chats.entries()) {
+	        if (chat?.theirPeerId === theirPeerId) {
+	          chatId = id;
+	          break;
+	        }
+	      }
+	    } catch {
+	      // ignore
+	    }
+	    if (!chatId) {
+	      try {
+	        const row = await db.privateChats.where('theirPeerId').equals(theirPeerId).first();
+	        if (row?.id) chatId = row.id;
+	      } catch {
+	        // ignore
+	      }
+	    }
+	  }
   if (!chatId) return;
 
   await deleteChatFromStore(chatId);
