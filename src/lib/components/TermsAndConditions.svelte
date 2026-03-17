@@ -307,10 +307,12 @@
 
       <h2 class="h2">CONTACT</h2>
       <p>
-        GitHub:
-        <a class="link" href="https://github.com/CodeWithBotinaOficial/aetherchat" target="_blank" rel="noreferrer">
-          https://github.com/CodeWithBotinaOficial/aetherchat
-        </a>
+        Support email: <a class="link" href="mailto:support@codewithbotina.com">support@codewithbotina.com</a>
+      </p>
+      <p>
+        GitHub (source code):
+        <a class="link" href="https://github.com/CodeWithBotinaOficial/aetherchat" target="_blank" rel="noreferrer">https://github.com/CodeWithBotinaOficial/aetherchat</a>.
+        The repository README documents the project at a high level, including encryption technologies and how the website works, rather than providing a coding tutorial.
       </p>
     </article>
   </div>
