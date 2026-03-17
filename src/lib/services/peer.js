@@ -76,7 +76,9 @@ export const PEERJS_CONFIG = {
 const RECONNECT_DELAYS = [2000, 5000, 10000];
 const MAX_RECONNECT_ATTEMPTS = 3;
 const JOIN_LOBBY_TIMEOUT_MS = 6000;
-const UNAVAILABLE_ID_RETRY_DELAYS_MS = [250, 500, 900, 1500, 2200];
+// PeerJS public server can keep an ID "taken" for a bit after hard-close; retry with backoff.
+// First attempts stay under ~5s total, then continue backing off to avoid thrashing.
+const UNAVAILABLE_ID_RETRY_DELAYS_MS = [250, 500, 900, 1500, 2200, 3500, 5500, 8500, 13000];
 
 let registrySyncResolve = null;
 export let registrySyncReady = new Promise((resolve) => {
@@ -168,6 +170,7 @@ const keyExchangeTimeouts = new Map(); // chatId -> timeoutId
 let reconnectAttempts = 0;
 let reconnectTimer = null;
 let unavailableIdAttempts = 0;
+let unavailableIdRetryTimer = null;
 let unloadHookInstalled = false;
 /** @type {string|null} */
 let forcedPeerId = null;
@@ -1789,10 +1792,11 @@ export async function initPeer(profile) {
     // Keep PeerJS internal logs quiet; use the in-app debug panel in dev instead (Phase 3).
     const debug = 0;
 
-	    const effectiveUsername = profile?.username && profile.username !== 'pre-registration' ? profile.username : null;
-	    const peerId = forcedPeerId ?? (effectiveUsername ? await getOrCreatePeerId(effectiveUsername) : randomPeerId());
-	    forcedPeerId = null;
+		    const effectiveUsername = profile?.username && profile.username !== 'pre-registration' ? profile.username : null;
+		    const peerId = forcedPeerId ?? (effectiveUsername ? await getOrCreatePeerId(effectiveUsername) : randomPeerId());
+		    forcedPeerId = null;
 		    mainPeer = new Peer(peerId, { ...PEERJS_CONFIG, debug });
+		    const thisPeer = mainPeer;
 		    localPeerRef = mainPeer;
 		    // Set peerId immediately so local-only features (DB queries, offline queueing) can
 		    // function before the PeerJS 'open' event fires.
@@ -1819,7 +1823,12 @@ export async function initPeer(profile) {
 	    }
 
     mainPeer.on('open', (id) => {
+      if (localPeerRef !== thisPeer) return; // stale peer instance
       unavailableIdAttempts = 0;
+      if (unavailableIdRetryTimer) {
+        clearTimeout(unavailableIdRetryTimer);
+        unavailableIdRetryTimer = null;
+      }
       reconnectAttempts = 0;
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
@@ -1879,11 +1888,13 @@ export async function initPeer(profile) {
 	      })().catch((err) => console.error('joinLobby failed', err));
 	    });
 
-	    mainPeer.on('connection', (conn) => {
-	      handleIncomingConnection(conn, cachedProfile);
-	    });
+		    mainPeer.on('connection', (conn) => {
+		      if (localPeerRef !== thisPeer) return; // stale peer instance
+		      handleIncomingConnection(conn, cachedProfile);
+		    });
 
 		    mainPeer.on('error', (err) => {
+		      if (localPeerRef !== thisPeer) return; // stale peer instance
 		      switch (err?.type) {
 	        case 'peer-unavailable':
 	          // Expected: lobby not found -> host election logic handles this on the connection error path.
@@ -1902,6 +1913,16 @@ export async function initPeer(profile) {
 			          // If we're registered, keep the same stable ID. If not, just rotate.
 			          forcedPeerId = effectiveUsername ? peerId : randomPeerId();
 			          peerStore.update((s) => ({ ...s, connectionState: 'reconnecting', isConnected: false, error: null }));
+
+			          // Avoid concurrent retry timers (multiple error events can fire per failure).
+			          if (unavailableIdRetryTimer) {
+			            clearTimeout(unavailableIdRetryTimer);
+			            unavailableIdRetryTimer = null;
+			          }
+			          if (reconnectTimer) {
+			            clearTimeout(reconnectTimer);
+			            reconnectTimer = null;
+			          }
 			          try {
 			            mainPeer?.destroy?.();
 			          } catch {
@@ -1909,7 +1930,8 @@ export async function initPeer(profile) {
 			          }
 			          mainPeer = null;
 			          localPeerRef = null;
-			          setTimeout(() => {
+			          unavailableIdRetryTimer = setTimeout(() => {
+			            unavailableIdRetryTimer = null;
 			            initPeer(userProfileRef ?? cachedProfile).catch((e) =>
 			              console.error('retry initPeer after unavailable-id failed', e)
 			            );
@@ -1945,6 +1967,7 @@ export async function initPeer(profile) {
     });
 
     mainPeer.on('disconnected', () => {
+      if (localPeerRef !== thisPeer) return; // stale peer instance
       peerStore.update((s) => ({ ...s, connectionState: 'reconnecting' }));
       void handlePeerDisconnect();
     });
