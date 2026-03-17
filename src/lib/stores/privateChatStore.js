@@ -4,6 +4,7 @@ import { closeSession, decryptForSession, isSessionActive } from '$lib/services/
 import {
   clearQueuedMessagesForPeer,
   deletePrivateChat,
+  getSentMessagesPlaintext,
   getPrivateChats,
   getPrivateMessages,
   getQueuedMessagesForPeer,
@@ -56,16 +57,33 @@ export async function loadPrivateChats(myPeerId) {
 
   for (const c of chats) {
     const dbMessages = await getPrivateMessages(c.id, 50);
-    const sealedMessages = dbMessages.map((m) => ({
-      id: m.id,
-      direction: m.direction,
-      text: null,
-      ciphertext: m.ciphertext,
-      iv: m.iv,
-      timestamp: m.timestamp,
-      delivered: Boolean(m.delivered),
-      sealed: true
-    }));
+    const sentPlain = await getSentMessagesPlaintext(c.id);
+    const sentPlainMap = new Map(sentPlain.map((m) => [m.id, m.plaintext]));
+    const messages = dbMessages.map((m) => {
+      if (m.direction === 'sent') {
+        const plaintext = sentPlainMap.get(m.id);
+        return {
+          id: m.id,
+          direction: 'sent',
+          text: plaintext ?? '🔒 Sent message (plaintext not available)',
+          ciphertext: m.ciphertext,
+          iv: m.iv,
+          timestamp: m.timestamp,
+          delivered: Boolean(m.delivered),
+          sealed: false
+        };
+      }
+      return {
+        id: m.id,
+        direction: 'received',
+        text: null,
+        ciphertext: m.ciphertext,
+        iv: m.iv,
+        timestamp: m.timestamp,
+        delivered: Boolean(m.delivered),
+        sealed: true
+      };
+    });
 
     const queuedMsgs = await getQueuedMessagesForPeer(c.theirPeerId);
     const queuedInMemory = queuedMsgs.map((m) => ({
@@ -80,7 +98,7 @@ export async function loadPrivateChats(myPeerId) {
       sealed: false
     }));
 
-    const allMessages = [...sealedMessages, ...queuedInMemory].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+    const allMessages = [...messages, ...queuedInMemory].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
 
     chatMap.set(c.id, {
       id: c.id,
@@ -176,7 +194,8 @@ export async function decryptSealedMessages(chatId, sessionId) {
 
   const decrypted = await Promise.all(
     chat.messages.map(async (m) => {
-      if (!m?.sealed) return m;
+      // Only attempt to decrypt received sealed messages.
+      if (!m?.sealed || m.direction === 'sent') return m;
       try {
         const text = await decryptForSession(sessionId, m.ciphertext, m.iv);
         return { ...m, text, sealed: false };

@@ -170,19 +170,33 @@ class AetherChatDB extends Dexie {
 	        });
 	      });
 
-	    // Phase 7: stable peer IDs + persisted offline queue for private messages.
-	    this.version(8).stores({
-	      users: 'id, username, createdAt',
-	      globalMessages: 'id, timestamp, peerId, username',
-	      privateChats: 'id, myPeerId, theirPeerId, theirUsername, createdAt, lastActivity',
-	      privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
-	      knownPeers: '++id, peerId, lastSeen, username',
-	      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
-	      peerIds: 'username, peerId',
-	      queuedMessages: 'id, chatId, theirPeerId, timestamp'
-	    });
-	  }
-	}
+		    // Phase 7: stable peer IDs + persisted offline queue for private messages.
+		    this.version(8).stores({
+		      users: 'id, username, createdAt',
+		      globalMessages: 'id, timestamp, peerId, username',
+		      privateChats: 'id, myPeerId, theirPeerId, theirUsername, createdAt, lastActivity',
+		      privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+		      knownPeers: '++id, peerId, lastSeen, username',
+		      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+		      peerIds: 'username, peerId',
+		      queuedMessages: 'id, chatId, theirPeerId, timestamp'
+		    });
+
+		    // Phase 8: keep a local plaintext copy of SENT private messages for sender readability
+		    // across session key rotation (forward secrecy).
+		    this.version(9).stores({
+		      users: 'id, username, createdAt',
+		      globalMessages: 'id, timestamp, peerId, username',
+		      privateChats: 'id, myPeerId, theirPeerId, theirUsername, createdAt, lastActivity',
+		      privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+		      knownPeers: '++id, peerId, lastSeen, username',
+		      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+		      peerIds: 'username, peerId',
+		      queuedMessages: 'id, chatId, theirPeerId, timestamp',
+		      sentMessagesPlaintext: 'id, chatId, timestamp'
+		    });
+		  }
+		}
 
 export const db = new AetherChatDB();
 
@@ -346,6 +360,64 @@ export async function clearQueuedMessagesForPeer(theirPeerId) {
 }
 
 /**
+ * Stores a plaintext copy of sent messages so the sender can always read what they sent,
+ * even after session key rotation (forward secrecy). This data is local-only and never
+ * transmitted to peers. It is deleted when the chat is deleted.
+ *
+ * @typedef {Object} SentMessagePlaintext
+ * @property {string} id
+ * @property {string} chatId
+ * @property {string} plaintext
+ * @property {number} timestamp
+ */
+
+/**
+ * @param {{ id: string, chatId: string, plaintext: string, timestamp: number }} msg
+ */
+export async function saveSentMessagePlaintext(msg) {
+  try {
+    await db.sentMessagesPlaintext.put({
+      id: msg.id,
+      chatId: msg.chatId,
+      plaintext: msg.plaintext,
+      timestamp: msg.timestamp
+    });
+  } catch (err) {
+    console.error('saveSentMessagePlaintext failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} chatId
+ * @returns {Promise<SentMessagePlaintext[]>}
+ */
+export async function getSentMessagesPlaintext(chatId) {
+  try {
+    const key = String(chatId ?? '').trim();
+    if (!key) return [];
+    return await db.sentMessagesPlaintext.where('chatId').equals(key).sortBy('timestamp');
+  } catch (err) {
+    console.error('getSentMessagesPlaintext failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} chatId
+ */
+export async function deleteSentMessagesPlaintext(chatId) {
+  try {
+    const key = String(chatId ?? '').trim();
+    if (!key) return;
+    await db.sentMessagesPlaintext.where('chatId').equals(key).delete();
+  } catch (err) {
+    console.error('deleteSentMessagesPlaintext failed', err);
+    throw err;
+  }
+}
+
+/**
  * Delete global messages older than 24h.
  * @returns {Promise<number>} count deleted
  */
@@ -418,8 +490,9 @@ export async function getPrivateChat(chatId) {
  */
 export async function deletePrivateChat(chatId) {
   try {
-    await db.transaction('rw', db.privateChats, db.privateMessages, async () => {
+    await db.transaction('rw', db.privateChats, db.privateMessages, db.sentMessagesPlaintext, async () => {
       await db.privateMessages.where('chatId').equals(chatId).delete();
+      await db.sentMessagesPlaintext.where('chatId').equals(chatId).delete();
       await db.privateChats.delete(chatId);
     });
   } catch (err) {
@@ -547,10 +620,11 @@ export async function deletePrivateMessages(chatId) {
 export async function cleanOldPrivateChats() {
   try {
     const cutoff = Date.now() - THIRTY_DAYS_MS;
-    return await db.transaction('rw', db.privateChats, db.privateMessages, async () => {
+    return await db.transaction('rw', db.privateChats, db.privateMessages, db.sentMessagesPlaintext, async () => {
       const oldChatIds = await db.privateChats.where('lastActivity').below(cutoff).primaryKeys();
       if (oldChatIds.length === 0) return 0;
       await db.privateMessages.where('chatId').anyOf(oldChatIds).delete();
+      await db.sentMessagesPlaintext.where('chatId').anyOf(oldChatIds).delete();
       await db.privateChats.bulkDelete(oldChatIds);
       return oldChatIds.length;
     });

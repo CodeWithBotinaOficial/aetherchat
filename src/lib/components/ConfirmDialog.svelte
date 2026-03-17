@@ -1,8 +1,9 @@
 <script>
-  import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
-  import { scale } from 'svelte/transition';
+  import { createEventDispatcher, onDestroy, onMount } from 'svelte';
+  import { tick } from 'svelte';
+  import { fade, scale } from 'svelte/transition';
 
-  export let title = 'Confirm';
+  export let title = 'Are you sure?';
   export let message = '';
   export let confirmLabel = 'Confirm';
   export let cancelLabel = 'Cancel';
@@ -11,107 +12,161 @@
   const dispatch = createEventDispatcher();
 
   let destroyed = false;
-
   /** @type {HTMLButtonElement|null} */
   let cancelBtn = null;
   /** @type {HTMLButtonElement|null} */
   let confirmBtn = null;
 
-  function confirm() {
-    if (destroyed) return;
-    dispatch('confirm');
-  }
-
-  function cancel() {
-    if (destroyed) return;
-    dispatch('cancel');
-  }
-
-  function onKeydown(e) {
-    if (destroyed) return;
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      cancel();
-      return;
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      confirm();
-      return;
-    }
-    if (e.key !== 'Tab') return;
-
-    // Focus trap: only cancel + confirm are focusable.
-    const focusables = [cancelBtn, confirmBtn].filter(Boolean);
-    if (focusables.length < 2) return;
-
-    const active = document.activeElement;
-    const first = focusables[0];
-    const last = focusables[focusables.length - 1];
-
-    if (e.shiftKey && active === first) {
-      e.preventDefault();
-      last.focus();
-      return;
-    }
-    if (!e.shiftKey && active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  }
-
   onMount(async () => {
     await tick();
     if (destroyed) return;
+    // Focus cancel by default to avoid accidental destructive confirmation.
     cancelBtn?.focus?.();
   });
 
   onDestroy(() => {
     destroyed = true;
   });
+
+  function handleConfirm() {
+    if (destroyed) return;
+    dispatch('confirm');
+  }
+
+  function handleCancel() {
+    if (destroyed) return;
+    dispatch('cancel');
+  }
+
+  function handleKeydown(e) {
+    if (destroyed) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      handleCancel();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleConfirm();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+
+    // Focus trap: toggle between cancel + confirm.
+    e.preventDefault();
+    const active = document.activeElement;
+    if (active === confirmBtn) cancelBtn?.focus?.();
+    else confirmBtn?.focus?.();
+  }
 </script>
 
-<svelte:window on:keydown|capture={onKeydown} />
+<svelte:window on:keydown|capture={handleKeydown} />
 
-<div class="fixed inset-0 z-80 grid place-items-center bg-[color-mix(in_srgb,var(--bg-overlay)_75%,transparent)] backdrop-blur">
+<div
+  transition:fade={{ duration: 150 }}
+  style="
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--bg-dim, rgba(0, 0, 0, 0.65));
+    padding: 16px;
+  "
+>
   <button
     type="button"
-    class="absolute inset-0 cursor-default"
     aria-label="Close dialog"
-    on:click={cancel}
+    on:click={handleCancel}
+    style="
+      position: absolute;
+      inset: 0;
+      border: 0;
+      padding: 0;
+      background: transparent;
+      cursor: default;
+    "
   ></button>
+
   <div
-    class="w-[min(92vw,400px)] rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-surface)] shadow-[var(--shadow-lg)] p-[var(--space-lg)]"
     transition:scale={{ duration: 150, start: 0.95 }}
     role="dialog"
     aria-modal="true"
-    aria-label={title}
+    aria-labelledby="dialog-title"
     tabindex="-1"
+    style="
+      background: var(--bg-overlay, #2a2f47);
+      border: 1px solid var(--border, #2e3350);
+      border-radius: var(--radius-md, 12px);
+      padding: 24px;
+      width: 100%;
+      max-width: 400px;
+      box-shadow: var(--shadow-lg, 0 8px 32px rgba(0,0,0,0.6));
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    "
   >
-    <div class="text-[var(--text-primary)] font-800">{title}</div>
+    <h2
+      id="dialog-title"
+      style="
+        margin: 0;
+        color: var(--text-primary, #e8eaf0);
+        font-size: var(--font-size-lg, 1.125rem);
+        font-weight: 600;
+        font-family: var(--font-sans);
+      "
+    >
+      {title}
+    </h2>
+
     {#if message}
-      <div class="mt-[var(--space-sm)] text-[var(--text-secondary)] text-[var(--font-size-sm)] leading-relaxed">
+      <p
+        style="
+          margin: 0;
+          color: var(--text-secondary, #8b90a8);
+          font-size: var(--font-size-sm, 0.875rem);
+          font-family: var(--font-sans);
+          line-height: 1.5;
+        "
+      >
         {message}
-      </div>
+      </p>
     {/if}
 
-    <div class="mt-[var(--space-lg)] flex justify-end gap-[var(--space-sm)]">
+    <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 8px;">
       <button
         bind:this={cancelBtn}
-        class="rounded-[var(--radius-md)] border border-[var(--border)] bg-transparent px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
-        on:click={cancel}
+        on:click={handleCancel}
+        style="
+          padding: 8px 20px;
+          border-radius: var(--radius-sm, 6px);
+          border: 1px solid var(--border, #2e3350);
+          background: transparent;
+          color: var(--text-secondary, #8b90a8);
+          font-size: var(--font-size-sm, 0.875rem);
+          font-family: var(--font-sans);
+          cursor: pointer;
+        "
       >
         {cancelLabel}
       </button>
+
       <button
         bind:this={confirmBtn}
-        class={[
-          'rounded-[var(--radius-md)] border border-[var(--border)] px-[var(--space-md)] py-[var(--space-sm)] font-700',
-          dangerous
-            ? 'bg-[var(--danger)] text-[var(--bg-base)] hover:opacity-90'
-            : 'bg-[var(--accent)] text-[var(--text-primary)] hover:bg-[var(--accent-hover)]'
-        ].join(' ')}
-        on:click={confirm}
+        on:click={handleConfirm}
+        style="
+          padding: 8px 20px;
+          border-radius: var(--radius-sm, 6px);
+          border: none;
+          background: {dangerous ? 'var(--danger, #f87171)' : 'var(--accent, #6c8ef5)'};
+          color: #ffffff;
+          font-size: var(--font-size-sm, 0.875rem);
+          font-family: var(--font-sans);
+          font-weight: 600;
+          cursor: pointer;
+        "
       >
         {confirmLabel}
       </button>

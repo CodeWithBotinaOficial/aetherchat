@@ -1,5 +1,5 @@
 import { get } from 'svelte/store';
-import { db, deletePrivateChat, savePrivateMessage, upsertPrivateChat } from '$lib/services/db.js';
+import { db, deletePrivateChat, savePrivateMessage, saveSentMessagePlaintext, upsertPrivateChat } from '$lib/services/db.js';
 import { fireEvent, render } from '@testing-library/svelte';
 import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
@@ -26,6 +26,7 @@ import {
   chatList,
   closeChat,
   deleteChatFromStore,
+  decryptSealedMessages,
   loadChatMessages,
   loadPrivateChats,
   markDelivered,
@@ -43,6 +44,7 @@ async function clearAllTables() {
     db.globalMessages,
     db.privateChats,
     db.privateMessages,
+    db.sentMessagesPlaintext,
     db.queuedMessages,
     db.knownPeers,
     db.usernameRegistry,
@@ -53,6 +55,7 @@ async function clearAllTables() {
         db.globalMessages.clear(),
         db.privateChats.clear(),
         db.privateMessages.clear(),
+        db.sentMessagesPlaintext.clear(),
         db.queuedMessages.clear(),
         db.knownPeers.clear(),
         db.usernameRegistry.clear(),
@@ -445,6 +448,136 @@ it('loadChatMessages shows placeholder for undecryptable messages', async () => 
 
   const chat = get(privateChatStore).chats.get('a:b');
   expect(chat.messages[0].text).toMatch(/Encrypted message/i);
+});
+
+it('loadPrivateChats loads plaintext for sent messages (readable after reload)', async () => {
+  const now = Date.now();
+  await upsertPrivateChat({
+    id: 'a:b',
+    myPeerId: 'a',
+    theirPeerId: 'b',
+    theirUsername: 'bob',
+    theirColor: 'hsl(2, 65%, 65%)',
+    theirAvatarBase64: null,
+    createdAt: now,
+    lastActivity: now
+  });
+  await savePrivateMessage({
+    id: 'pm-sent',
+    chatId: 'a:b',
+    direction: 'sent',
+    ciphertext: 'CT',
+    iv: 'IV',
+    timestamp: now,
+    delivered: false
+  });
+  await saveSentMessagePlaintext({ id: 'pm-sent', chatId: 'a:b', plaintext: 'hello', timestamp: now });
+
+  await loadPrivateChats('a');
+  const chat = get(privateChatStore).chats.get('a:b');
+  expect(chat.messages).toHaveLength(1);
+  expect(chat.messages[0].direction).toBe('sent');
+  expect(chat.messages[0].text).toBe('hello');
+  expect(chat.messages[0].sealed).toBe(false);
+});
+
+it('loadPrivateChats keeps received messages sealed until decrypt', async () => {
+  const now = Date.now();
+  await upsertPrivateChat({
+    id: 'a:b',
+    myPeerId: 'a',
+    theirPeerId: 'b',
+    theirUsername: 'bob',
+    theirColor: 'hsl(2, 65%, 65%)',
+    theirAvatarBase64: null,
+    createdAt: now,
+    lastActivity: now
+  });
+  await savePrivateMessage({
+    id: 'pm-recv',
+    chatId: 'a:b',
+    direction: 'received',
+    ciphertext: 'CT',
+    iv: 'IV',
+    timestamp: now,
+    delivered: true
+  });
+
+  await loadPrivateChats('a');
+  const chat = get(privateChatStore).chats.get('a:b');
+  expect(chat.messages).toHaveLength(1);
+  expect(chat.messages[0].direction).toBe('received');
+  expect(chat.messages[0].text).toBeNull();
+  expect(chat.messages[0].sealed).toBe(true);
+});
+
+it('decryptSealedMessages only decrypts received sealed messages (not sent)', async () => {
+  hoisted.decryptForSessionMock.mockResolvedValueOnce('decrypted');
+  privateChatStore.set({
+    chats: new Map([
+      [
+        'a:b',
+        {
+          id: 'a:b',
+          theirPeerId: 'b',
+          theirUsername: 'bob',
+          theirColor: 'hsl(2, 65%, 65%)',
+          theirAvatarBase64: null,
+          messages: [
+            { id: 'm-sent', direction: 'sent', text: 'hello', ciphertext: 'CT', iv: 'IV', timestamp: 1, delivered: false, sealed: false },
+            { id: 'm-recv', direction: 'received', text: null, ciphertext: 'CT2', iv: 'IV2', timestamp: 2, delivered: true, sealed: true }
+          ],
+          unreadCount: 0,
+          lastMessage: null,
+          lastActivity: 2,
+          isOnline: true,
+          keyExchangeState: 'active',
+          __loaded: true
+        }
+      ]
+    ]),
+    activeChatId: 'a:b',
+    pendingKeyExchanges: new Map()
+  });
+
+  await decryptSealedMessages('a:b', 'a:b');
+  expect(hoisted.decryptForSessionMock).toHaveBeenCalledTimes(1);
+  const chat = get(privateChatStore).chats.get('a:b');
+  expect(chat.messages[0].text).toBe('hello');
+  expect(chat.messages[1].text).toBe('decrypted');
+  expect(chat.messages[1].sealed).toBe(false);
+});
+
+it('decryptSealedMessages marks old-session failures with placeholder text', async () => {
+  hoisted.decryptForSessionMock.mockRejectedValueOnce(new Error('bad key'));
+  privateChatStore.set({
+    chats: new Map([
+      [
+        'a:b',
+        {
+          id: 'a:b',
+          theirPeerId: 'b',
+          theirUsername: 'bob',
+          theirColor: 'hsl(2, 65%, 65%)',
+          theirAvatarBase64: null,
+          messages: [{ id: 'm-recv', direction: 'received', text: null, ciphertext: 'CT', iv: 'IV', timestamp: 2, delivered: true, sealed: true }],
+          unreadCount: 0,
+          lastMessage: null,
+          lastActivity: 2,
+          isOnline: true,
+          keyExchangeState: 'active',
+          __loaded: true
+        }
+      ]
+    ]),
+    activeChatId: 'a:b',
+    pendingKeyExchanges: new Map()
+  });
+
+  await decryptSealedMessages('a:b', 'a:b');
+  const chat = get(privateChatStore).chats.get('a:b');
+  expect(chat.messages[0].text).toMatch(/previous session/i);
+  expect(chat.messages[0].sealed).toBe(false);
 });
 
 it('ConfirmDialog handles keydown and does not throw after destruction', async () => {

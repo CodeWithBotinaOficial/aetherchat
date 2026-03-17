@@ -71,6 +71,7 @@ class MockPeer {
 	  return {
 	    addGlobalMessageMock: vi.fn().mockResolvedValue(undefined),
 	    saveKnownPeerMock: vi.fn().mockResolvedValue(undefined),
+	    getKnownPeersMock: vi.fn().mockResolvedValue([]),
 	    getGlobalMessagesMock: vi.fn().mockResolvedValue([]),
 	    getFullUsernameRegistryMock: vi.fn().mockResolvedValue([]),
 	    registerUsernameLocallyMock: vi.fn().mockResolvedValue(undefined),
@@ -78,12 +79,13 @@ class MockPeer {
 	    mergeUsernameRegistryMock: vi.fn().mockResolvedValue(undefined),
 	    upsertPrivateChatMock: vi.fn().mockResolvedValue(undefined),
 	    getPrivateChatMock: vi.fn().mockResolvedValue(null),
-	    savePrivateMessageMock: vi.fn().mockResolvedValue(undefined),
-	    updateChatLastActivityMock: vi.fn().mockResolvedValue(undefined),
-	    updateChatMetaMock: vi.fn().mockResolvedValue(undefined),
-	    saveQueuedMessageMock: vi.fn().mockResolvedValue(undefined),
-	    getQueuedMessagesForPeerMock: vi.fn().mockResolvedValue([]),
-	    deleteQueuedMessageMock: vi.fn().mockResolvedValue(undefined),
+		    savePrivateMessageMock: vi.fn().mockResolvedValue(undefined),
+		    saveSentMessagePlaintextMock: vi.fn().mockResolvedValue(undefined),
+		    updateChatLastActivityMock: vi.fn().mockResolvedValue(undefined),
+		    updateChatMetaMock: vi.fn().mockResolvedValue(undefined),
+		    saveQueuedMessageMock: vi.fn().mockResolvedValue(undefined),
+		    getQueuedMessagesForPeerMock: vi.fn().mockResolvedValue([]),
+		    deleteQueuedMessageMock: vi.fn().mockResolvedValue(undefined),
 	    markMessageDeliveredMock: vi.fn().mockResolvedValue(undefined),
 	    openChatMock: vi.fn(),
 	    upsertChatEntryMock: vi.fn(),
@@ -122,20 +124,22 @@ vi.mock('$lib/stores/chatStore.js', () => {
 	      transaction: vi.fn(async (_mode, _table, fn) => fn())
 	    },
 	    saveKnownPeer: (...args) => hoisted.saveKnownPeerMock(...args),
+	    getKnownPeers: (...args) => hoisted.getKnownPeersMock(...args),
 	    getGlobalMessages: (...args) => hoisted.getGlobalMessagesMock(...args),
 	    getFullUsernameRegistry: (...args) => hoisted.getFullUsernameRegistryMock(...args),
 	    registerUsernameLocally: (...args) => hoisted.registerUsernameLocallyMock(...args),
 	    isUsernameTaken: (...args) => hoisted.isUsernameTakenMock(...args),
 	    mergeUsernameRegistry: (...args) => hoisted.mergeUsernameRegistryMock(...args),
 
-	    upsertPrivateChat: (...args) => hoisted.upsertPrivateChatMock(...args),
-	    getPrivateChat: (...args) => hoisted.getPrivateChatMock(...args),
-	    savePrivateMessage: (...args) => hoisted.savePrivateMessageMock(...args),
-	    updateChatLastActivity: (...args) => hoisted.updateChatLastActivityMock(...args),
-	    updateChatMeta: (...args) => hoisted.updateChatMetaMock(...args),
-	    saveQueuedMessage: (...args) => hoisted.saveQueuedMessageMock(...args),
-	    getQueuedMessagesForPeer: (...args) => hoisted.getQueuedMessagesForPeerMock(...args),
-	    deleteQueuedMessage: (...args) => hoisted.deleteQueuedMessageMock(...args),
+		    upsertPrivateChat: (...args) => hoisted.upsertPrivateChatMock(...args),
+		    getPrivateChat: (...args) => hoisted.getPrivateChatMock(...args),
+		    savePrivateMessage: (...args) => hoisted.savePrivateMessageMock(...args),
+		    saveSentMessagePlaintext: (...args) => hoisted.saveSentMessagePlaintextMock(...args),
+		    updateChatLastActivity: (...args) => hoisted.updateChatLastActivityMock(...args),
+		    updateChatMeta: (...args) => hoisted.updateChatMetaMock(...args),
+		    saveQueuedMessage: (...args) => hoisted.saveQueuedMessageMock(...args),
+		    getQueuedMessagesForPeer: (...args) => hoisted.getQueuedMessagesForPeerMock(...args),
+		    deleteQueuedMessage: (...args) => hoisted.deleteQueuedMessageMock(...args),
 	    markMessageDelivered: (...args) => hoisted.markMessageDeliveredMock(...args)
 	  };
 	});
@@ -186,6 +190,7 @@ vi.mock('$lib/services/crypto.js', () => {
 	  becomeLobbyHost,
 	  broadcastGlobalMessage,
 	  flushQueueForPeer,
+	  handleIncomingConnection,
 	  registrySyncReady,
 	  initiatePrivateChat,
   sendPrivateMessage,
@@ -204,16 +209,18 @@ const me = { username: 'alice', color: 'hsl(1, 65%, 65%)', age: 22, avatarBase64
 	  MockPeer.instances = [];
 	  hoisted.addGlobalMessageMock.mockClear();
 	  hoisted.saveKnownPeerMock.mockClear();
+	  hoisted.getKnownPeersMock.mockClear();
 	  hoisted.getGlobalMessagesMock.mockClear();
 	  hoisted.getFullUsernameRegistryMock.mockClear();
 	  hoisted.registerUsernameLocallyMock.mockClear();
 	  hoisted.isUsernameTakenMock.mockClear();
 	  hoisted.mergeUsernameRegistryMock.mockClear();
-	  hoisted.upsertPrivateChatMock.mockClear();
-	  hoisted.getPrivateChatMock.mockClear();
-	  hoisted.savePrivateMessageMock.mockClear();
-	  hoisted.updateChatLastActivityMock.mockClear();
-	  hoisted.updateChatMetaMock.mockClear();
+		  hoisted.upsertPrivateChatMock.mockClear();
+		  hoisted.getPrivateChatMock.mockClear();
+		  hoisted.savePrivateMessageMock.mockClear();
+		  hoisted.saveSentMessagePlaintextMock.mockClear();
+		  hoisted.updateChatLastActivityMock.mockClear();
+		  hoisted.updateChatMetaMock.mockClear();
 	  hoisted.saveQueuedMessageMock.mockClear();
 	  hoisted.getQueuedMessagesForPeerMock.mockClear();
 	  hoisted.deleteQueuedMessageMock.mockClear();
@@ -520,6 +527,116 @@ it('handleMessage routes GLOBAL_MSG to globalMessages store (via addGlobalMessag
     text: 'hi',
     timestamp: 123
   });
+});
+
+it('reconnectToKnownPeers connects to all peers in knownPeers DB (skips self + already connected)', async () => {
+  hoisted.getKnownPeersMock.mockResolvedValueOnce([
+    { username: 'me', peerId: 'local' },
+    { username: 'bob', peerId: 'p2' },
+    { username: 'carol', peerId: 'p3' }
+  ]);
+
+  // Pretend we already have an open connection to p3.
+  peerStore.set({
+    peerId: null,
+    isConnected: false,
+    connectionState: 'offline',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map([['p3', { username: 'carol', color: 'x', age: 1, connection: { open: true, send: vi.fn(), close: vi.fn() } }]])
+  });
+
+  await initPeer(me);
+  const main = MockPeer.instances[0];
+  main.emit('open', 'local');
+
+  // Resolve joinLobby quickly.
+  const lobbyConn = main._connections.find((c) => c.peer === LOBBY_PEER_ID);
+  lobbyConn.emit('open');
+
+  await flushMicrotasks();
+  await flushMicrotasks();
+
+  // Should attempt to connect to p2 (not self, not already-connected p3).
+  const connectedTo = main._connections.map((c) => c.peer);
+  expect(connectedTo).toContain(LOBBY_PEER_ID);
+  expect(connectedTo).toContain('p2');
+  expect(connectedTo).not.toContain('p3');
+});
+
+it('stale connection is replaced when a new connection opens for the same peerId', async () => {
+  peerTest.setUserProfileRefForTest(me);
+  peerStore.update((s) => ({ ...s, peerId: 'local', isConnected: true }));
+
+  const c1 = new MockConn('p2', {});
+  const c2 = new MockConn('p2', {});
+
+  handleIncomingConnection(c1, me);
+  handleIncomingConnection(c2, me);
+
+  expect(c1.close).toHaveBeenCalledTimes(1);
+  expect(get(peerStore).connectedPeers.get('p2').connection).toBe(c2);
+});
+
+it("conn 'close' does not remove peer if a newer connection replaced the closed one", async () => {
+  peerTest.setUserProfileRefForTest(me);
+  peerStore.update((s) => ({ ...s, peerId: 'local', isConnected: true }));
+
+  const c1 = new MockConn('p2', {});
+  const c2 = new MockConn('p2', {});
+
+  handleIncomingConnection(c1, me);
+  handleIncomingConnection(c2, me);
+
+  c1.emit('close');
+  expect(get(peerStore).connectedPeers.has('p2')).toBe(true);
+
+  c2.emit('close');
+  expect(get(peerStore).connectedPeers.has('p2')).toBe(false);
+});
+
+it('PRESENCE_ANNOUNCE updates connectedPeers and triggers re-key for idle private chats', async () => {
+  peerTest.setUserProfileRefForTest(me);
+  peerStore.set({
+    peerId: 'local',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'x', age: 1, connection: new MockConn('p2', {}) }]])
+  });
+
+  // Seed an idle chat so PRESENCE_ANNOUNCE auto re-keys.
+  const cryptoMod = await import('$lib/services/crypto.js');
+  const chatId = cryptoMod.buildSessionId('local', 'p2');
+  hoisted.privateChatStoreState.chats.set(chatId, { id: chatId, theirPeerId: 'p2', keyExchangeState: 'idle' });
+
+  const p2Conn = new MockConn('p2', {});
+  await handleMessage(
+    {
+      type: 'PRESENCE_ANNOUNCE',
+      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33 },
+      payload: { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33, avatarBase64: null },
+      timestamp: 1
+    },
+    p2Conn,
+    me
+  );
+
+  expect(get(peerStore).connectedPeers.get('p2').username).toBe('bob');
+  expect(cryptoMod.createSession).toHaveBeenCalled();
+  expect(hoisted.setKeyExchangeStateMock).toHaveBeenCalledWith(chatId, 'initiated');
+
+  const entry = get(peerStore).connectedPeers.get('p2');
+  expect(entry.connection.send).toHaveBeenCalled();
+  const sent = entry.connection.send.mock.calls.map((c) => c[0]).find((m) => m.type === 'PRIVATE_KEY_EXCHANGE');
+  expect(sent).toBeTruthy();
 });
 
 it('initiatePrivateChat calls createSession and sends PRIVATE_KEY_EXCHANGE', async () => {
