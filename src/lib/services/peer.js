@@ -77,7 +77,9 @@ export const PEERJS_CONFIG = {
   host: '0.peerjs.com',
   port: 443,
   secure: true,
-  debug: import.meta.env.DEV ? 2 : 0,
+  // Keep PeerJS internal console output quiet by default.
+  // Override via VITE_PEERJS_DEBUG (0-3) when needed.
+  debug: 0,
   config: {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
@@ -92,6 +94,13 @@ export const PEERJS_CONFIG = {
     ]
   }
 };
+
+function getPeerJsDebugLevel() {
+  const raw = import.meta.env?.VITE_PEERJS_DEBUG;
+  const n = Number.parseInt(String(raw ?? ''), 10);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(3, n));
+}
 
 const RECONNECT_DELAYS = [2000, 5000, 10000];
 const MAX_RECONNECT_ATTEMPTS = 3;
@@ -1185,7 +1194,7 @@ export async function becomeLobbyHost(localPeer, profile, attempt = 0, lobbyId =
     const mod = globalThis._PeerJS;
     const Peer = mod?.Peer ?? mod?.default ?? PeerCtor;
     const desired = String(lobbyId ?? activeLobbyId ?? getLobbyIdCandidates(localPeer?.id ?? '')[0] ?? getLobbyPeerId(0));
-    const debug = import.meta.env?.DEV ? 2 : 0;
+    const debug = getPeerJsDebugLevel();
     const hostPeer = new Peer(desired, { ...PEERJS_CONFIG, debug });
 
     hostPeer.on('open', () => {
@@ -2079,8 +2088,8 @@ export async function initPeer(profile) {
 
     const Peer = await ensurePeerCtor();
 
-    // Keep PeerJS internal logs quiet in prod; allow some verbosity in dev.
-    const debug = import.meta.env?.DEV ? 2 : 0;
+    // Keep PeerJS internal logs quiet by default; override via VITE_PEERJS_DEBUG when needed.
+    const debug = getPeerJsDebugLevel();
 
     // IMPORTANT: Do not rely on the PeerJS cloud `/id` endpoint.
     // Some browsers (or networks) block cross-origin fetches in a way that causes

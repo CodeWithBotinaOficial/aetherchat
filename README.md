@@ -2,17 +2,22 @@
 
 > A decentralized, peer-to-peer chat platform built entirely in the browser — no servers, no tracking, no compromise.
 
-AetherChat connects people across the globe through WebRTC technology, enabling real-time communication without any central infrastructure. Messages flow directly between browsers, private conversations are end-to-end encrypted, and no personal data ever leaves your device.
+AetherChat connects people across the globe using WebRTC (via PeerJS) so messages flow directly between browsers. Private 1-to-1 conversations are end-to-end encrypted, and the platform avoids analytics/telemetry by design.
 
 ---
 
-## ✨ What we're building
+## ✨ Features
 
-- **Global public chat** — open to anyone, no invite codes required
-- **Private 1-to-1 messaging** — end-to-end encrypted via ECDH + AES-GCM
-- **Zero backend** — P2P signaling only for the initial handshake, all data stays local
-- **Automatic data retention policies** — 24h for global chat, 30 days for private messages
-- **Unique visual identity per user** — dynamic color assignment, custom avatars
+- **Global Chat**: real-time public chat shared peer-to-peer between connected browsers.
+- **Private Chats (E2EE)**: end-to-end encrypted 1-to-1 messaging using ECDH (P-256) + HKDF-SHA256 + AES-GCM (256-bit).
+- **No centralized message server**: there is no backend that stores or processes chat content.
+- **Local-only identity**: profiles live in your browser storage; clearing site data resets identity and local history.
+- **Offline-first UX**: the UI loads and remains usable even when the network is unavailable (messages can be stored locally).
+- **Automatic cleanup**: local retention policies delete old data on a schedule (global + private history).
+- **Responsive UI**: mobile TopBar + BottomNav, tablet icon rail, desktop sidebar, wide/TV max width.
+- **Terms & Conditions page**: full Terms of Service and Privacy Policy rendered in-app.
+- **SEO-ready**: full metadata, Open Graph/Twitter cards, JSON-LD structured data, `robots.txt` and `sitemap.xml`.
+- **Production-ready Cloudflare Pages config**: SPA fallback routing and security headers (`_redirects`, `_headers`).
 
 ---
 
@@ -26,6 +31,15 @@ AetherChat connects people across the globe through WebRTC technology, enabling 
 | Encryption | Web Crypto API (native) |
 | Styles | UnoCSS + Uno preset |
 | Hosting | Cloudflare Pages |
+
+---
+
+## 🔧 How It Works (High Level)
+
+- **Discovery**: a lightweight lobby peer ID is used so newcomers can join a network and receive a snapshot of peers + registry state.
+- **Direct connections**: after discovery, the app forms a limited mesh of direct DataChannel connections to reduce spam and stay within PeerJS limits.
+- **Protocol messages**: peers exchange handshake metadata, public messages, private E2EE payloads, delivery acks, and network state digests.
+- **Local storage**: chat history, registry state, and E2EE key rings (local-only) are persisted in IndexedDB using Dexie.
 
 ---
 
@@ -57,6 +71,18 @@ npm run dev
 
 Open your browser at `http://localhost:5173` and you're ready to go.
 
+### PeerJS debug logging (optional)
+
+PeerJS can be noisy in the console when peers disconnect or are unreachable. By default, AetherChat keeps PeerJS logs disabled.
+
+Enable them only when debugging:
+
+```bash
+VITE_PEERJS_DEBUG=2 npm run dev
+```
+
+Valid values: `0` (disabled), `1` (errors), `2` (warnings), `3` (all).
+
 ### Build for production
 
 ```bash
@@ -81,10 +107,20 @@ src/
 
 ---
 
+## 🔒 Privacy Notes
+
+- AetherChat does not ship analytics/telemetry by default.
+- WebRTC is peer-to-peer: your IP address can be visible to peers you connect with (use a VPN if you need to hide it).
+- Data retention is implemented locally in the browser via cleanup jobs.
+
+---
+
 ## 🤝 Contributing
 
 This project is developed by [CodeWithBotinaOficial](https://github.com/CodeWithBotinaOficial).  
 Contributions, issues and feature requests are welcome.
+
+Support email: support@codewithbotina.com
 
 ---
 

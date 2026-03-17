@@ -32,19 +32,19 @@
   });
 </script>
 
-<div class="terms h-full">
-  <div bind:this={scroller} class="terms-scroll scroll-container" on:scroll={() => void computeProgress()}>
-    <div class="progress-track" aria-hidden="true">
-      <div class="progress-bar" style={`transform: scaleX(${progress});`}></div>
+<div class="terms">
+  <div class="progress-track" aria-hidden="true">
+    <div class="progress-bar" style={`transform: scaleX(${progress});`}></div>
+  </div>
+
+  <header class="terms-header">
+    <div class="header-inner">
+      <div class="title">Terms of Service and Privacy Policy</div>
+      <div class="updated">Last updated: {LAST_UPDATED}</div>
     </div>
+  </header>
 
-    <header class="terms-header">
-      <div class="header-inner">
-        <div class="title">Terms of Service and Privacy Policy</div>
-        <div class="updated">Last updated: {LAST_UPDATED}</div>
-      </div>
-    </header>
-
+  <div bind:this={scroller} class="terms-scroll scroll-container" on:scroll={() => void computeProgress()}>
     <article class="doc" aria-label="Terms of Service and Privacy Policy">
       <h1 class="h1">TERMS OF SERVICE AND PRIVACY POLICY</h1>
       <p class="meta">
@@ -326,17 +326,17 @@
     color: var(--text-primary);
     height: 100%;
     overflow: hidden;
-  }
-
-  .terms-scroll {
-    height: 100%;
+    min-height: 0;
     display: flex;
     flex-direction: column;
   }
 
+  .terms-scroll {
+    flex: 1;
+    min-height: 0;
+  }
+
   .progress-track {
-    position: sticky;
-    top: 0;
     height: 3px;
     background: var(--bg-surface);
     z-index: 5;
@@ -350,8 +350,6 @@
   }
 
   .terms-header {
-    position: sticky;
-    top: 3px;
     z-index: 4;
     border-bottom: 1px solid var(--border);
     background: var(--bg-surface);
