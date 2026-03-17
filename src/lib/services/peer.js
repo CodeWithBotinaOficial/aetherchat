@@ -166,6 +166,29 @@ const keyExchangeTimeouts = new Map(); // chatId -> timeoutId
 
 let reconnectAttempts = 0;
 let reconnectTimer = null;
+let unavailableIdAttempts = 0;
+let unloadHookInstalled = false;
+/** @type {string|null} */
+let forcedPeerId = null;
+
+async function broadcastStateDigest(profile) {
+  try {
+    const latest = await db.globalMessages.orderBy('timestamp').last();
+    const registryCount = await db.usernameRegistry.count();
+    broadcastToAll({
+      type: 'STATE_DIGEST',
+      from: buildFromProfile(profile),
+      payload: {
+        latestGlobalMsgTimestamp: latest?.timestamp ?? 0,
+        usernameRegistryCount: registryCount,
+        peerId: get(peerStore).peerId
+      },
+      timestamp: Date.now()
+    });
+  } catch (err) {
+    console.error('broadcastStateDigest failed', err);
+  }
+}
 
 async function handlePeerDisconnect() {
   if (reconnectTimer) {
@@ -580,20 +603,7 @@ function safeClose(conn) {
 function startGossipInterval(profile) {
   if (gossipIntervalId) clearInterval(gossipIntervalId);
   gossipIntervalId = setInterval(() => {
-    (async () => {
-      const latest = await db.globalMessages.orderBy('timestamp').last();
-      const registryCount = await db.usernameRegistry.count();
-      broadcastToAll({
-        type: 'STATE_DIGEST',
-        from: buildFromProfile(profile),
-        payload: {
-          latestGlobalMsgTimestamp: latest?.timestamp ?? 0,
-          usernameRegistryCount: registryCount,
-          peerId: get(peerStore).peerId
-        },
-        timestamp: Date.now()
-      });
-    })().catch((err) => console.error('gossip tick failed', err));
+    broadcastStateDigest(profile).catch((err) => console.error('gossip tick failed', err));
   }, 30_000);
 }
 
@@ -1059,6 +1069,9 @@ export function handleIncomingConnection(conn, profile) {
       void flushQueueForPeer(remotePeerId);
       flushGlobalOutbox();
       setChatOnlineStatus(remotePeerId, true);
+      // Trigger an immediate digest after a peer link comes up so refreshed peers
+      // can sync without waiting for the 30s gossip interval.
+      void broadcastStateDigest(effectiveProfile);
 
       // Auto-initiate key exchange for existing chats after reconnect (no UI side effects).
       const myPeerId = get(peerStore).peerId;
@@ -1776,14 +1789,36 @@ export async function initPeer(profile) {
     const debug = 0;
 
 	    const effectiveUsername = profile?.username && profile.username !== 'pre-registration' ? profile.username : null;
-	    const peerId = effectiveUsername ? await getOrCreatePeerId(effectiveUsername) : randomPeerId();
+	    const peerId = forcedPeerId ?? (effectiveUsername ? await getOrCreatePeerId(effectiveUsername) : randomPeerId());
+	    forcedPeerId = null;
 	    mainPeer = new Peer(peerId, { ...PEERJS_CONFIG, debug });
 	    localPeerRef = mainPeer;
 	    // Set peerId immediately so local-only features (DB queries, offline queueing) can
 	    // function before the PeerJS 'open' event fires.
 	    peerStore.update((s) => ({ ...s, peerId: s.peerId ?? peerId }));
 
+	    if (typeof window !== 'undefined' && !unloadHookInstalled) {
+	      unloadHookInstalled = true;
+	      window.addEventListener(
+	        'beforeunload',
+	        () => {
+	          try {
+	            localPeerRef?.destroy?.();
+	          } catch {
+	            // ignore
+	          }
+	          try {
+	            lobbyPeer?.destroy?.();
+	          } catch {
+	            // ignore
+	          }
+	        },
+	        { once: true }
+	      );
+	    }
+
     mainPeer.on('open', (id) => {
+      unavailableIdAttempts = 0;
       reconnectAttempts = 0;
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
@@ -1809,8 +1844,8 @@ export async function initPeer(profile) {
           lastSeenAt: Date.now()
         }).catch((err) => console.error('registerUsernameLocally failed', err));
       }
-	      (async () => {
-	        const res = await joinLobby(mainPeer, cachedProfile);
+		      (async () => {
+		        const res = await joinLobby(mainPeer, cachedProfile);
 	        if (res.role === 'guest') {
 	          setConnectionState('syncing', { isConnected: true, isLobbyHost: false });
 	        } else if (res.role === 'host') {
@@ -1819,9 +1854,22 @@ export async function initPeer(profile) {
 	          setConnectionState('standalone', { isConnected: true, isLobbyHost: false });
 	        }
 
-	        await reconnectToKnownPeers(cachedProfile);
-	        startHeartbeat(cachedProfile);
-	        startGossipInterval(cachedProfile);
+		        await reconnectToKnownPeers(cachedProfile);
+		        // Retry reconnect a couple times if we have no mesh links yet (common after refresh).
+		        const retryDelays = [1500, 3500];
+		        for (const d of retryDelays) {
+		          setTimeout(() => {
+		            try {
+		              const st = get(peerStore);
+		              const hasOpen = [...st.connectedPeers.values()].some((e) => e.connection?.open !== false);
+		              if (!hasOpen) void reconnectToKnownPeers(cachedProfile);
+		            } catch {
+		              // ignore
+		            }
+		          }, d);
+		        }
+		        startHeartbeat(cachedProfile);
+		        startGossipInterval(cachedProfile);
 
 	        // Presence announce after reconnect so peers refresh stale status + connections.
 	        if (cachedProfile?.username && cachedProfile.username !== 'pre-registration') {
@@ -1840,7 +1888,28 @@ export async function initPeer(profile) {
 	          // Expected: lobby not found -> host election logic handles this on the connection error path.
 	          return;
 	        case 'unavailable-id':
-	          // Expected: lobby ID race condition handled in becomeLobbyHost.
+	          // For main peers, this usually means the PeerJS server still thinks the ID is in use
+	          // (e.g. after a hard browser close). Treat as recoverable: rotate ID and retry init.
+	          console.error('PeerJS error:', err?.type, err?.message);
+	          if (unavailableIdAttempts >= 2) {
+	            peerStore.update((s) => ({ ...s, error: err?.type ?? 'peer-error', connectionState: 'failed' }));
+	            return;
+	          }
+	          unavailableIdAttempts += 1;
+	          forcedPeerId = randomPeerId();
+	          if (effectiveUsername) {
+	            persistPeerIdForUsername(effectiveUsername, forcedPeerId).catch(() => {});
+	          }
+	          try {
+	            mainPeer?.destroy?.();
+	          } catch {
+	            // ignore
+	          }
+	          mainPeer = null;
+	          localPeerRef = null;
+	          setTimeout(() => {
+	            initPeer(userProfileRef ?? cachedProfile).catch((e) => console.error('retry initPeer after unavailable-id failed', e));
+	          }, 250);
 	          return;
 	        case 'disconnected':
 	          // Peer cannot open new connections while disconnected from the PeerJS server.

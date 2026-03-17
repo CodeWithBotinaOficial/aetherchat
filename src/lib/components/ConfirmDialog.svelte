@@ -82,6 +82,7 @@
     style="
       position: absolute;
       inset: 0;
+      z-index: 0;
       border: 0;
       padding: 0;
       background: transparent;
@@ -96,6 +97,8 @@
     aria-labelledby="dialog-title"
     tabindex="-1"
     style="
+      position: relative;
+      z-index: 1;
       background: var(--bg-overlay, #2a2f47);
       border: 1px solid var(--border, #2e3350);
       border-radius: var(--radius-md, 12px);
