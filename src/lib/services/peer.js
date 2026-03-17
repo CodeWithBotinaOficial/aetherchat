@@ -153,6 +153,9 @@ const lobbyConnections = new Map(); // peerId -> DataConnection (to lobby peer)
 /** @type {Map<string, { peerId: string, username: string, color: string, age: number }>} */
 const lobbyPeerList = new Map(); // peerId -> peer info (main peer IDs)
 
+/** @type {Map<string, ProtocolEnvelope>} */
+const pendingGlobalOutbox = new Map(); // messageId -> envelope (flush when peers connect)
+
 let gossipIntervalId = null;
 
 let reconnectAttempts = 0;
@@ -594,17 +597,27 @@ function connectToPeer(peerId, profile) {
 }
 
 async function sendHandshake(conn, profile) {
+  const effectiveProfile = profile ?? userProfileRef ?? cachedProfile;
+  if (!effectiveProfile) return;
   const id = get(peerStore).peerId;
   if (!id) return;
   const publicKey = await ensureLocalPublicKeyBase64();
-  safeSend(conn, buildMessage('HANDSHAKE', id, profile, { publicKey, avatarBase64: profile.avatarBase64 }));
+  safeSend(
+    conn,
+    buildMessage('HANDSHAKE', id, effectiveProfile, { publicKey, avatarBase64: effectiveProfile.avatarBase64 ?? null })
+  );
 }
 
 async function sendHandshakeAck(conn, profile) {
+  const effectiveProfile = profile ?? userProfileRef ?? cachedProfile;
+  if (!effectiveProfile) return;
   const id = get(peerStore).peerId;
   if (!id) return;
   const publicKey = await ensureLocalPublicKeyBase64();
-  safeSend(conn, buildMessage('HANDSHAKE_ACK', id, profile, { publicKey, avatarBase64: profile.avatarBase64 }));
+  safeSend(
+    conn,
+    buildMessage('HANDSHAKE_ACK', id, effectiveProfile, { publicKey, avatarBase64: effectiveProfile.avatarBase64 ?? null })
+  );
 }
 
 function broadcastToAll(envelope) {
@@ -617,6 +630,15 @@ function sendToPeer(peerId, envelope) {
   const entry = state.connectedPeers.get(peerId);
   if (!entry) return;
   safeSend(entry.connection, envelope);
+}
+
+function flushGlobalOutbox() {
+  const state = get(peerStore);
+  if (state.connectedPeers.size === 0) return;
+  for (const [msgId, env] of pendingGlobalOutbox.entries()) {
+    for (const entry of state.connectedPeers.values()) safeSend(entry.connection, env);
+    pendingGlobalOutbox.delete(msgId);
+  }
 }
 
 export async function flushQueueForPeer(theirPeerId) {
@@ -897,13 +919,15 @@ export async function becomeLobbyHost(localPeer, profile, attempt = 0) {
 export function handleIncomingConnection(conn, profile) {
   if (!conn) return;
   const remotePeerId = conn.peer;
+  const effectiveProfile = profile ?? userProfileRef ?? cachedProfile;
 
   upsertConnectedPeer(remotePeerId, conn, null);
 
   conn.on('open', () => {
     (async () => {
-      await sendHandshake(conn, profile);
+      await sendHandshake(conn, effectiveProfile);
       void flushQueueForPeer(remotePeerId);
+      flushGlobalOutbox();
       setChatOnlineStatus(remotePeerId, true);
 
       // Auto-initiate key exchange for existing chats after reconnect (no UI side effects).
@@ -927,7 +951,7 @@ export function handleIncomingConnection(conn, profile) {
 
   conn.on('data', (data) => {
     (async () => {
-      await handleMessage(data, conn, profile);
+      await handleMessage(data, conn, effectiveProfile);
     })().catch((err) => console.error('handleMessage failed', err));
   });
 
@@ -1509,9 +1533,9 @@ export async function initPeer(profile) {
       })().catch((err) => console.error('joinLobby failed', err));
     });
 
-    mainPeer.on('connection', (conn) => {
-      handleIncomingConnection(conn, profile);
-    });
+	    mainPeer.on('connection', (conn) => {
+	      handleIncomingConnection(conn, cachedProfile);
+	    });
 
 	    mainPeer.on('error', (err) => {
 	      switch (err?.type) {
@@ -1594,7 +1618,14 @@ export async function broadcastGlobalMessage(text, profile) {
   // Optimistic update.
   await addGlobalMessage(localMessage);
 
-  for (const entry of state.connectedPeers.values()) {
+  const stateAfter = get(peerStore);
+  if (stateAfter.connectedPeers.size === 0) {
+    // No peers yet (still connecting/reconnecting). Queue and flush when a peer connects.
+    pendingGlobalOutbox.set(msgId, envelope);
+    return;
+  }
+
+  for (const entry of stateAfter.connectedPeers.values()) {
     safeSend(entry.connection, envelope);
   }
 }

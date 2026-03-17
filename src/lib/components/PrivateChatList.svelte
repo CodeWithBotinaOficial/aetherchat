@@ -19,9 +19,8 @@
   }
 
   function preview(chat) {
-    if (chat.keyExchangeState !== 'active') return '🔒 Encrypted message';
     const txt = String(chat.lastMessage ?? '').trim();
-    if (!txt) return ' ';
+    if (!txt) return chat.keyExchangeState === 'active' ? ' ' : '🔒 Encrypted message';
     return txt.length > 40 ? `${txt.slice(0, 40)}…` : txt;
   }
 

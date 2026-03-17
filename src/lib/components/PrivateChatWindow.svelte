@@ -19,6 +19,8 @@
   let hasMore = true;
 
   let showDelete = false;
+  /** @type {{ theirPeerId: string, theirUsername: string } | null} */
+  let deleteTarget = null;
   let showActiveBanner = false;
   let bannerTimer = 0;
   let prevKeyState = '';
@@ -142,7 +144,12 @@
   function msgToBubble(m, chat) {
     const u = get(user);
     const isOwn = m.direction === 'sent';
-    const safeText = typeof m.text === 'string' ? m.text : '🔒 Encrypted message';
+    const safeText =
+      typeof m.text === 'string'
+        ? m.text
+        : m?.sealed
+          ? '🔒 Encrypted in a previous session'
+          : '🔒 Encrypted message';
     return {
       username: isOwn ? (u?.username ?? 'me') : chat.theirUsername,
       age: isOwn ? (u?.age ?? 0) : (chat.theirAge ?? get(peerStore).connectedPeers.get(chat.theirPeerId)?.age ?? 0),
@@ -155,9 +162,10 @@
 
   async function confirmDelete() {
     showDelete = false;
-    const chat = $activeChat;
-    if (!chat) return;
-    await closePrivateChat(chat.theirPeerId);
+    const target = deleteTarget;
+    deleteTarget = null;
+    if (!target?.theirPeerId) return;
+    await closePrivateChat(target.theirPeerId);
   }
 
   async function retryKeyExchange() {
@@ -201,7 +209,10 @@
 
       <button
         class="rounded-[var(--radius-md)] border border-[var(--border)] bg-transparent px-[var(--space-sm)] py-[6px] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
-        on:click={() => (showDelete = true)}
+        on:click={() => {
+          showDelete = true;
+          if ($activeChat) deleteTarget = { theirPeerId: $activeChat.theirPeerId, theirUsername: $activeChat.theirUsername };
+        }}
         aria-label="Delete conversation"
         title="Delete conversation"
       >
@@ -279,13 +290,16 @@
   </div>
 {/if}
 
-{#if showDelete && $activeChat}
+{#if showDelete && deleteTarget}
   <ConfirmDialog
     title="Delete conversation?"
-    message={`This deletes the conversation from this device only. ${$activeChat.theirUsername} will keep their copy.`}
+    message={`This deletes the conversation from this device only. ${deleteTarget.theirUsername} will keep their copy.`}
     confirmLabel="Delete"
     dangerous={true}
     on:confirm={confirmDelete}
-    on:cancel={() => (showDelete = false)}
+    on:cancel={() => {
+      showDelete = false;
+      deleteTarget = null;
+    }}
   />
 {/if}
