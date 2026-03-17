@@ -2,8 +2,8 @@
   import { fly } from 'svelte/transition';
   import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-  import { chatList, totalUnread, openChat } from '$lib/stores/privateChatStore.js';
-  import { closePrivateChat } from '$lib/services/peer.js';
+  import { avatarCache, closePrivateChat } from '$lib/services/peer.js';
+  import { activeChat, chatList, totalUnread, openChat } from '$lib/stores/privateChatStore.js';
 
   function formatRelative(ts) {
     const diff = Date.now() - ts;
@@ -23,6 +23,11 @@
     const txt = String(chat.lastMessage ?? '').trim();
     if (!txt) return ' ';
     return txt.length > 40 ? `${txt.slice(0, 40)}…` : txt;
+  }
+
+  function getAvatar(chat) {
+    const cache = $avatarCache;
+    return chat.theirAvatarBase64 ?? cache?.get?.(chat.theirPeerId) ?? null;
   }
 
   let pendingDelete = null;
@@ -53,21 +58,18 @@
   }
 </script>
 
-<div class="h-full flex flex-col bg-[var(--bg-surface)]">
-  <div class="flex items-center justify-between px-[var(--space-md)] py-[var(--space-md)] border-b border-[var(--border)]">
-    <div class="font-800 text-[var(--text-primary)]">Private Chats</div>
+<div class="chat-list h-full flex flex-col">
+  <div class="section-header flex items-center justify-between">
+    <div>Private Chats</div>
     {#if $totalUnread > 0}
-      <div
-        class="rounded-[var(--radius-full)] bg-[var(--accent-subtle)] px-[var(--space-sm)] py-[2px] text-[var(--font-size-xs)] text-[var(--text-primary)] border border-[var(--border)]"
-        aria-label="Total unread messages"
-      >
+      <div class="unread-badge" aria-label="Total unread messages">
         {$totalUnread > 99 ? '99+' : $totalUnread}
       </div>
     {/if}
   </div>
 
   {#if $chatList.length === 0}
-    <div class="flex-1 grid place-items-center px-[var(--space-lg)]">
+    <div class="empty-state flex-1 grid place-items-center">
       <div class="text-center">
         <div class="mx-auto mb-[var(--space-md)] h-[44px] w-[44px] rounded-[var(--radius-full)] grid place-items-center border border-[var(--border)] bg-[var(--bg-elevated)]">
           <svg viewBox="0 0 24 24" class="h-[20px] w-[20px] text-[var(--text-secondary)]" fill="currentColor" aria-hidden="true">
@@ -84,7 +86,8 @@
     <div class="flex-1 overflow-y-auto">
       {#each $chatList as c (c.id)}
         <button
-          class="w-full text-left px-[var(--space-md)] py-[var(--space-md)] border-b border-[var(--border)] hover:bg-[var(--bg-elevated)] transition-colors duration-150"
+          class="chat-item w-full text-left"
+          class:active={$activeChat?.id === c.id}
           on:click={() => openChat(c.id)}
           on:contextmenu|preventDefault={() => requestDelete(c)}
           on:pointerdown={() => onPressStart(c)}
@@ -93,18 +96,16 @@
           on:pointerleave={onPressEnd}
           in:fly={{ y: -20, duration: 200 }}
         >
-          <div class="flex items-center gap-[var(--space-sm)]">
-            <AvatarDisplay username={c.theirUsername} avatarBase64={c.theirAvatarBase64 ?? null} size={34} showRing={true} />
+          <div class="flex items-center gap-[var(--space-sm)] px-[var(--space-md)] py-[var(--space-md)]">
+            <AvatarDisplay username={c.theirUsername} avatarBase64={getAvatar(c)} size={34} showRing={true} />
 
             <div class="min-w-0 flex-1">
               <div class="flex items-center justify-between gap-[var(--space-sm)]">
-                <div class="truncate font-700 text-[var(--text-primary)]">{c.theirUsername}</div>
+                <div class="chat-username truncate">{c.theirUsername}</div>
                 <div class="flex items-center gap-[var(--space-sm)]">
-                  <div class="text-[var(--font-size-xs)] text-[var(--text-muted)] font-mono">
-                    {formatRelative(c.lastActivity)}
-                  </div>
+                  <div class="chat-timestamp">{formatRelative(c.lastActivity)}</div>
                   {#if c.unreadCount > 0}
-                    <div class="rounded-[var(--radius-full)] bg-[var(--accent)] px-[var(--space-sm)] py-[2px] text-[var(--font-size-xs)] text-[var(--text-primary)]">
+                    <div class="unread-badge">
                       {c.unreadCount > 99 ? '99+' : c.unreadCount}
                     </div>
                   {/if}
@@ -112,15 +113,9 @@
               </div>
 
               <div class="mt-[2px] flex items-center justify-between gap-[var(--space-sm)]">
-                <div class="min-w-0 truncate text-[var(--font-size-sm)] text-[var(--text-secondary)]">
-                  {preview(c)}
-                </div>
+                <div class="chat-preview min-w-0">{preview(c)}</div>
                 <div class="flex items-center gap-[6px] text-[var(--font-size-xs)] text-[var(--text-muted)] font-mono">
-                  <span
-                    class="inline-block h-[8px] w-[8px] rounded-[var(--radius-full)]"
-                    style={`background:${c.isOnline ? 'var(--success)' : 'var(--text-muted)'}`}
-                    aria-hidden="true"
-                  ></span>
+                  <span class={c.isOnline ? 'online-dot' : 'offline-dot'} aria-hidden="true"></span>
                   <span>{c.isOnline ? 'online' : 'offline'}</span>
                 </div>
               </div>
@@ -143,3 +138,95 @@
   />
 {/if}
 
+<style>
+  .chat-list {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+  }
+
+  .section-header {
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: var(--space-sm) var(--space-md);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-surface);
+  }
+
+  .chat-item {
+    background: transparent;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border);
+    border-left: 3px solid transparent;
+    transition: background 150ms ease, color 150ms ease;
+    cursor: pointer;
+  }
+
+  .chat-item:hover {
+    background: var(--bg-elevated);
+  }
+
+  .chat-item.active {
+    background: var(--accent-subtle);
+    border-left-color: var(--accent);
+  }
+
+  .chat-username {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: var(--font-size-sm);
+  }
+
+  .chat-preview {
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 180px;
+  }
+
+  .chat-timestamp {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+    font-family: var(--font-mono);
+  }
+
+  .online-dot,
+  .offline-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .online-dot {
+    background: var(--success);
+  }
+
+  .offline-dot {
+    background: var(--text-muted);
+  }
+
+  .unread-badge {
+    background: var(--accent);
+    color: var(--text-primary);
+    font-size: var(--font-size-xs);
+    font-weight: 700;
+    border-radius: var(--radius-full);
+    padding: 1px 6px;
+    min-width: 18px;
+    text-align: center;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  .empty-state {
+    color: var(--text-muted);
+    padding: var(--space-xl) var(--space-lg);
+    font-size: var(--font-size-sm);
+  }
+</style>

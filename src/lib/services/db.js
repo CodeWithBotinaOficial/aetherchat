@@ -29,6 +29,8 @@ import Dexie from 'dexie';
  * @property {string} theirUsername
  * @property {string} theirColor
  * @property {string|null} theirAvatarBase64
+ * @property {string|null} [lastMessagePreview]
+ * @property {number} [unreadCount]
  * @property {number} createdAt
  * @property {number} lastActivity
  */
@@ -130,6 +132,24 @@ class AetherChatDB extends Dexie {
       knownPeers: '++id, peerId, lastSeen, username',
       usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt'
     });
+
+    // Phase 6: persist private chat metadata (preview + unreadCount). Indexes unchanged.
+    this.version(7)
+      .stores({
+        users: 'id, username, createdAt',
+        globalMessages: 'id, timestamp, peerId, username',
+        privateChats: 'id, myPeerId, theirPeerId, theirUsername, createdAt, lastActivity',
+        privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+        knownPeers: '++id, peerId, lastSeen, username',
+        usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt'
+      })
+      .upgrade(async (tx) => {
+        const table = tx.table('privateChats');
+        await table.toCollection().modify((chat) => {
+          if (typeof chat.unreadCount !== 'number') chat.unreadCount = 0;
+          if (!Object.prototype.hasOwnProperty.call(chat, 'lastMessagePreview')) chat.lastMessagePreview = null;
+        });
+      });
   }
 }
 
@@ -290,6 +310,24 @@ export async function updateChatLastActivity(chatId, timestamp) {
     await db.privateChats.update(chatId, { lastActivity: timestamp });
   } catch (err) {
     console.error('updateChatLastActivity failed', err);
+    throw err;
+  }
+}
+
+/**
+ * Update private chat metadata fields.
+ * @param {string} chatId
+ * @param {{ lastMessagePreview?: string|null, unreadCount?: number, lastActivity?: number }} meta
+ */
+export async function updateChatMeta(chatId, meta) {
+  try {
+    const patch = {};
+    if (Object.prototype.hasOwnProperty.call(meta, 'lastMessagePreview')) patch.lastMessagePreview = meta.lastMessagePreview;
+    if (Object.prototype.hasOwnProperty.call(meta, 'unreadCount')) patch.unreadCount = meta.unreadCount;
+    if (Object.prototype.hasOwnProperty.call(meta, 'lastActivity')) patch.lastActivity = meta.lastActivity;
+    await db.privateChats.update(chatId, patch);
+  } catch (err) {
+    console.error('updateChatMeta failed', err);
     throw err;
   }
 }

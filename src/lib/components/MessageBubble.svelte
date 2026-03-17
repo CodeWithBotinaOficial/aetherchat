@@ -1,6 +1,7 @@
-<script>
-  import { createEventDispatcher } from 'svelte';
-  import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
+	<script>
+	  import { createEventDispatcher, onDestroy } from 'svelte';
+	  import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
+	  import { formatMessageTime } from '$lib/utils/time.js';
 
   /**
    * @typedef {Object} Message
@@ -22,23 +23,14 @@
 
   const dispatch = createEventDispatcher();
 
-  let hovered = false;
-  let hideTimeout = null;
+	  let hovered = false;
+	  let hideTimeout = null;
 
-  function formatRelative(ts) {
-    const diff = Date.now() - ts;
-    if (diff < 10_000) return 'just now';
-    const s = Math.floor(diff / 1000);
-    if (s < 60) return `${s}s ago`;
-    const m = Math.floor(s / 60);
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h ago`;
-    const d = Math.floor(h / 24);
-    return `${d}d ago`;
-  }
-
-  $: relativeTime = formatRelative(message.timestamp);
+	  let displayTime = formatMessageTime(message.timestamp);
+	  const timer = setInterval(() => {
+	    displayTime = formatMessageTime(message.timestamp);
+	  }, 30000);
+	  onDestroy(() => clearInterval(timer));
 
   function getPositionFromEvent(e) {
     if (typeof e?.clientX === 'number' && typeof e?.clientY === 'number') {
@@ -113,12 +105,12 @@
       <AvatarDisplay username={message.username} avatarBase64={message.avatarBase64 ?? null} size={28} showRing={true} />
 
       <div class="min-w-0 flex items-baseline gap-[var(--space-sm)]">
-        <div class="truncate font-600 text-[var(--text-primary)]">{message.username}</div>
-        <div class="text-[var(--font-size-xs)] text-[var(--text-muted)]">
-          {message.age} · {relativeTime}
-        </div>
-      </div>
-    </div>
+	        <div class="truncate font-600 text-[var(--text-primary)]">{message.username}</div>
+	        <div class="text-[var(--font-size-xs)] text-[var(--text-muted)]" title={new Date(message.timestamp).toLocaleString()}>
+	          {message.age} · {displayTime}
+	        </div>
+	      </div>
+	    </div>
 
     <div class="mt-[var(--space-xs)] whitespace-pre-wrap break-words text-[var(--text-primary)]">
       {message.text}

@@ -67,28 +67,31 @@ class MockPeer {
   }
 }
 
-const hoisted = vi.hoisted(() => {
-  return {
-    addGlobalMessageMock: vi.fn().mockResolvedValue(undefined),
-    saveKnownPeerMock: vi.fn().mockResolvedValue(undefined),
-    getGlobalMessagesMock: vi.fn().mockResolvedValue([]),
-    getFullUsernameRegistryMock: vi.fn().mockResolvedValue([]),
-    registerUsernameLocallyMock: vi.fn().mockResolvedValue(undefined),
-    isUsernameTakenMock: vi.fn().mockResolvedValue(false),
-    mergeUsernameRegistryMock: vi.fn().mockResolvedValue(undefined),
-    upsertPrivateChatMock: vi.fn().mockResolvedValue(undefined),
-    savePrivateMessageMock: vi.fn().mockResolvedValue(undefined),
-    updateChatLastActivityMock: vi.fn().mockResolvedValue(undefined),
-    markMessageDeliveredMock: vi.fn().mockResolvedValue(undefined),
-    openChatMock: vi.fn(),
-    upsertChatEntryMock: vi.fn(),
-    setKeyExchangeStateMock: vi.fn(),
-    addOutgoingMessageMock: vi.fn(),
+	const hoisted = vi.hoisted(() => {
+	  return {
+	    addGlobalMessageMock: vi.fn().mockResolvedValue(undefined),
+	    saveKnownPeerMock: vi.fn().mockResolvedValue(undefined),
+	    getGlobalMessagesMock: vi.fn().mockResolvedValue([]),
+	    getFullUsernameRegistryMock: vi.fn().mockResolvedValue([]),
+	    registerUsernameLocallyMock: vi.fn().mockResolvedValue(undefined),
+	    isUsernameTakenMock: vi.fn().mockResolvedValue(false),
+	    mergeUsernameRegistryMock: vi.fn().mockResolvedValue(undefined),
+	    upsertPrivateChatMock: vi.fn().mockResolvedValue(undefined),
+	    getPrivateChatMock: vi.fn().mockResolvedValue(null),
+	    savePrivateMessageMock: vi.fn().mockResolvedValue(undefined),
+	    updateChatLastActivityMock: vi.fn().mockResolvedValue(undefined),
+	    updateChatMetaMock: vi.fn().mockResolvedValue(undefined),
+	    markMessageDeliveredMock: vi.fn().mockResolvedValue(undefined),
+	    openChatMock: vi.fn(),
+	    upsertChatEntryMock: vi.fn(),
+	    setKeyExchangeStateMock: vi.fn(),
+	    addOutgoingMessageMock: vi.fn(),
     addIncomingMessageMock: vi.fn(),
-    deleteChatFromStoreMock: vi.fn().mockResolvedValue(undefined),
-    markDeliveredMock: vi.fn()
-  };
-});
+	    deleteChatFromStoreMock: vi.fn().mockResolvedValue(undefined),
+	    markDeliveredMock: vi.fn(),
+	    privateChatStoreState: { chats: new Map(), activeChatId: null, pendingKeyExchanges: new Map() }
+	  };
+	});
 
 vi.mock('peerjs', () => {
   return { Peer: MockPeer, default: MockPeer };
@@ -101,32 +104,34 @@ vi.mock('$lib/stores/chatStore.js', () => {
   };
 });
 
-vi.mock('$lib/services/db.js', () => {
-  const globalMessages = {
-    put: vi.fn().mockResolvedValue(undefined),
-    orderBy: vi.fn(() => ({ last: vi.fn().mockResolvedValue(null) }))
-  };
-  const usernameRegistry = { count: vi.fn().mockResolvedValue(0) };
+	vi.mock('$lib/services/db.js', () => {
+	  const globalMessages = {
+	    put: vi.fn().mockResolvedValue(undefined),
+	    orderBy: vi.fn(() => ({ last: vi.fn().mockResolvedValue(null) }))
+	  };
+	  const usernameRegistry = { count: vi.fn().mockResolvedValue(0) };
 
-  return {
-    db: {
-      globalMessages,
-      usernameRegistry,
-      transaction: vi.fn(async (_mode, _table, fn) => fn())
-    },
-    saveKnownPeer: (...args) => hoisted.saveKnownPeerMock(...args),
-    getGlobalMessages: (...args) => hoisted.getGlobalMessagesMock(...args),
-    getFullUsernameRegistry: (...args) => hoisted.getFullUsernameRegistryMock(...args),
-    registerUsernameLocally: (...args) => hoisted.registerUsernameLocallyMock(...args),
-    isUsernameTaken: (...args) => hoisted.isUsernameTakenMock(...args),
-    mergeUsernameRegistry: (...args) => hoisted.mergeUsernameRegistryMock(...args),
+	  return {
+	    db: {
+	      globalMessages,
+	      usernameRegistry,
+	      transaction: vi.fn(async (_mode, _table, fn) => fn())
+	    },
+	    saveKnownPeer: (...args) => hoisted.saveKnownPeerMock(...args),
+	    getGlobalMessages: (...args) => hoisted.getGlobalMessagesMock(...args),
+	    getFullUsernameRegistry: (...args) => hoisted.getFullUsernameRegistryMock(...args),
+	    registerUsernameLocally: (...args) => hoisted.registerUsernameLocallyMock(...args),
+	    isUsernameTaken: (...args) => hoisted.isUsernameTakenMock(...args),
+	    mergeUsernameRegistry: (...args) => hoisted.mergeUsernameRegistryMock(...args),
 
-    upsertPrivateChat: (...args) => hoisted.upsertPrivateChatMock(...args),
-    savePrivateMessage: (...args) => hoisted.savePrivateMessageMock(...args),
-    updateChatLastActivity: (...args) => hoisted.updateChatLastActivityMock(...args),
-    markMessageDelivered: (...args) => hoisted.markMessageDeliveredMock(...args)
-  };
-});
+	    upsertPrivateChat: (...args) => hoisted.upsertPrivateChatMock(...args),
+	    getPrivateChat: (...args) => hoisted.getPrivateChatMock(...args),
+	    savePrivateMessage: (...args) => hoisted.savePrivateMessageMock(...args),
+	    updateChatLastActivity: (...args) => hoisted.updateChatLastActivityMock(...args),
+	    updateChatMeta: (...args) => hoisted.updateChatMetaMock(...args),
+	    markMessageDelivered: (...args) => hoisted.markMessageDeliveredMock(...args)
+	  };
+	});
 
 vi.mock('$lib/services/crypto.js', () => {
   const buildSessionId = (a, b) => [a, b].sort().join(':');
@@ -147,28 +152,34 @@ vi.mock('$lib/services/crypto.js', () => {
   };
 });
 
-vi.mock('$lib/stores/privateChatStore.js', () => {
-  return {
-    openChat: (...args) => hoisted.openChatMock(...args),
-    upsertChatEntry: (...args) => hoisted.upsertChatEntryMock(...args),
-    setKeyExchangeState: (...args) => hoisted.setKeyExchangeStateMock(...args),
-    addOutgoingMessage: (...args) => hoisted.addOutgoingMessageMock(...args),
-    addIncomingMessage: (...args) => hoisted.addIncomingMessageMock(...args),
+	vi.mock('$lib/stores/privateChatStore.js', () => {
+	  return {
+	    privateChatStore: {
+	      subscribe(run) {
+	        run(hoisted.privateChatStoreState);
+	        return () => {};
+	      }
+	    },
+	    openChat: (...args) => hoisted.openChatMock(...args),
+	    upsertChatEntry: (...args) => hoisted.upsertChatEntryMock(...args),
+	    setKeyExchangeState: (...args) => hoisted.setKeyExchangeStateMock(...args),
+	    addOutgoingMessage: (...args) => hoisted.addOutgoingMessageMock(...args),
+	    addIncomingMessage: (...args) => hoisted.addIncomingMessageMock(...args),
     deleteChatFromStore: (...args) => hoisted.deleteChatFromStoreMock(...args),
     markDelivered: (...args) => hoisted.markDeliveredMock(...args),
-    setChatOnlineStatus: vi.fn()
-  };
-});
+	    decryptSealedMessages: vi.fn().mockResolvedValue(undefined),
+	    setChatOnlineStatus: vi.fn()
+	  };
+	});
 
-import {
-  LOBBY_PEER_ID,
-  __test as peerTest,
-  attemptReconnect,
-  becomeLobbyHost,
-  broadcastGlobalMessage,
-  flushQueueForPeer,
-  registrySyncReady,
-  initiatePrivateChat,
+	import {
+	  LOBBY_PEER_ID,
+	  __test as peerTest,
+	  becomeLobbyHost,
+	  broadcastGlobalMessage,
+	  flushQueueForPeer,
+	  registrySyncReady,
+	  initiatePrivateChat,
   sendPrivateMessage,
   closePrivateChat,
   disconnectPeer,
@@ -180,27 +191,32 @@ import {
 
 const me = { username: 'alice', color: 'hsl(1, 65%, 65%)', age: 22, avatarBase64: 'data:image/png;base64,AAAA' };
 
-beforeEach(async () => {
-  MockPeer.ctorCalls = [];
-  MockPeer.instances = [];
-  hoisted.addGlobalMessageMock.mockClear();
-  hoisted.saveKnownPeerMock.mockClear();
-  hoisted.getGlobalMessagesMock.mockClear();
-  hoisted.getFullUsernameRegistryMock.mockClear();
-  hoisted.registerUsernameLocallyMock.mockClear();
-  hoisted.isUsernameTakenMock.mockClear();
-  hoisted.mergeUsernameRegistryMock.mockClear();
-  hoisted.upsertPrivateChatMock.mockClear();
-  hoisted.savePrivateMessageMock.mockClear();
-  hoisted.updateChatLastActivityMock.mockClear();
-  hoisted.markMessageDeliveredMock.mockClear();
-  hoisted.openChatMock.mockClear();
-  hoisted.upsertChatEntryMock.mockClear();
-  hoisted.setKeyExchangeStateMock.mockClear();
-  hoisted.addOutgoingMessageMock.mockClear();
+	beforeEach(async () => {
+	  MockPeer.ctorCalls = [];
+	  MockPeer.instances = [];
+	  hoisted.addGlobalMessageMock.mockClear();
+	  hoisted.saveKnownPeerMock.mockClear();
+	  hoisted.getGlobalMessagesMock.mockClear();
+	  hoisted.getFullUsernameRegistryMock.mockClear();
+	  hoisted.registerUsernameLocallyMock.mockClear();
+	  hoisted.isUsernameTakenMock.mockClear();
+	  hoisted.mergeUsernameRegistryMock.mockClear();
+	  hoisted.upsertPrivateChatMock.mockClear();
+	  hoisted.getPrivateChatMock.mockClear();
+	  hoisted.savePrivateMessageMock.mockClear();
+	  hoisted.updateChatLastActivityMock.mockClear();
+	  hoisted.updateChatMetaMock.mockClear();
+	  hoisted.markMessageDeliveredMock.mockClear();
+	  hoisted.openChatMock.mockClear();
+	  hoisted.upsertChatEntryMock.mockClear();
+	  hoisted.setKeyExchangeStateMock.mockClear();
+	  hoisted.addOutgoingMessageMock.mockClear();
   hoisted.addIncomingMessageMock.mockClear();
   hoisted.deleteChatFromStoreMock.mockClear();
-  hoisted.markDeliveredMock.mockClear();
+	  hoisted.markDeliveredMock.mockClear();
+	  hoisted.privateChatStoreState.chats = new Map();
+	  hoisted.privateChatStoreState.activeChatId = null;
+	  hoisted.privateChatStoreState.pendingKeyExchanges = new Map();
 
   const cryptoMod = await import('$lib/services/crypto.js');
   const sid = cryptoMod.buildSessionId('local', 'p2');
@@ -900,29 +916,102 @@ it('Two messages created at the same millisecond have different IDs', async () =
   nowSpy.mockRestore();
 });
 
-it('Reconnect is attempted up to 3 times on unexpected disconnect', async () => {
-  vi.useFakeTimers();
+	it('handlePeerDisconnect does NOT call peer.reconnect() when peer.disconnected is false', async () => {
+	  vi.useFakeTimers();
 
-  const p = new MockPeer('local', {});
-  // Never emit 'open' => each attempt should time out and try again.
-  const promise = attemptReconnect(p, me, 0);
+	  const p = new MockPeer('local', {});
+	  p.disconnected = false;
+	  p.destroyed = false;
+	  peerTest.setUserProfileRefForTest(me);
+	  peerTest.setLocalPeerRefForTest(p);
 
-  // 2s + 1.5s open wait
-  await vi.advanceTimersByTimeAsync(3500);
-  expect(p.reconnect).toHaveBeenCalledTimes(1);
-  expect(get(peerStore).connectionState).toBe('reconnecting');
+  await peerTest.handlePeerDisconnectForTest();
+  await vi.advanceTimersByTimeAsync(2000);
 
-  // 5s + 1.5s open wait
-  await vi.advanceTimersByTimeAsync(6500);
-  expect(p.reconnect).toHaveBeenCalledTimes(2);
-
-  // 10s + 1.5s open wait
-  await vi.advanceTimersByTimeAsync(11500);
-  expect(p.reconnect).toHaveBeenCalledTimes(3);
-
-  await promise;
-  expect(get(peerStore).connectionState).toBe('failed');
+  expect(p.reconnect).not.toHaveBeenCalled();
+  vi.clearAllTimers();
+  vi.useRealTimers();
 });
+
+	it('handlePeerDisconnect calls peer.reconnect() only when peer.disconnected is true', async () => {
+	  vi.useFakeTimers();
+
+	  const p = new MockPeer('local', {});
+	  p.disconnected = true;
+	  p.destroyed = false;
+	  peerTest.setUserProfileRefForTest(me);
+	  peerTest.setLocalPeerRefForTest(p);
+
+  await peerTest.handlePeerDisconnectForTest();
+  await vi.advanceTimersByTimeAsync(2000);
+
+  expect(p.reconnect).toHaveBeenCalledTimes(1);
+  vi.clearAllTimers();
+  vi.useRealTimers();
+});
+
+	it('handlePeerDisconnect creates a new Peer instance when peer.destroyed is true', async () => {
+	  vi.useFakeTimers();
+
+	  const p = new MockPeer('local', {});
+	  p.disconnected = true;
+	  p.destroyed = true;
+	  peerTest.setUserProfileRefForTest(me);
+	  peerTest.setLocalPeerRefForTest(p);
+
+  const before = MockPeer.instances.length;
+  await peerTest.handlePeerDisconnectForTest();
+  await vi.advanceTimersByTimeAsync(2000);
+
+  expect(MockPeer.instances.length).toBeGreaterThan(before);
+  expect(p.reconnect).not.toHaveBeenCalled();
+  vi.clearAllTimers();
+  vi.useRealTimers();
+});
+
+	it('reconnectAttempts resets to 0 on successful open event', async () => {
+	  vi.useFakeTimers();
+
+	  peerTest.setUserProfileRefForTest(me);
+
+	  // initPeer attaches the 'open' handler that resets reconnectAttempts.
+	  const p = await initPeer(me);
+	  p.disconnected = true;
+	  p.destroyed = false;
+	  peerTest.setLocalPeerRefForTest(p);
+
+	  await peerTest.handlePeerDisconnectForTest();
+	  await vi.advanceTimersByTimeAsync(2000);
+	  expect(peerTest.getReconnectAttemptsForTest()).toBe(1);
+
+	  // Simulate successful reconnection/open.
+	  p.emit('open', 'local');
+	  expect(peerTest.getReconnectAttemptsForTest()).toBe(0);
+	  vi.clearAllTimers();
+	  vi.useRealTimers();
+	});
+
+	it('After MAX_RECONNECT_ATTEMPTS, connectionState is set to failed', async () => {
+	  vi.useFakeTimers();
+
+	  const p = new MockPeer('local', {});
+	  p.disconnected = true;
+	  p.destroyed = false;
+	  peerTest.setUserProfileRefForTest(me);
+	  peerTest.setLocalPeerRefForTest(p);
+
+  // 3 attempts.
+  for (let i = 0; i < 3; i += 1) {
+    await peerTest.handlePeerDisconnectForTest();
+    await vi.advanceTimersByTimeAsync([2000, 5000, 10000][i]);
+  }
+
+	  // Next disconnect event should give up.
+	  await peerTest.handlePeerDisconnectForTest();
+	  expect(get(peerStore).connectionState).toBe('failed');
+	  vi.clearAllTimers();
+	  vi.useRealTimers();
+	});
 
 it('handleMessage ignores malformed messages (missing required envelope fields)', async () => {
   const conn = new MockConn('p2');

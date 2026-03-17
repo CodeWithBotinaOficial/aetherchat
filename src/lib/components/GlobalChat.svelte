@@ -70,12 +70,13 @@
     const avatarBase64 = isOwnMsg
       ? ($user?.avatarBase64 ?? null)
       : (message.avatarBase64 ?? cache?.get?.(message.peerId) ?? null);
-    tooltipUser = {
-      username: message.username,
-      age: message.age,
-      color: message.color,
-      avatarBase64
-    };
+	    tooltipUser = {
+	      peerId: message.peerId,
+	      username: message.username,
+	      age: message.age,
+	      color: message.color,
+	      avatarBase64
+	    };
     tooltipPos = position;
     tooltipKey = String(messageKey ?? '');
     tooltipCancelHide = bubbleRefs[tooltipKey]?.cancelHide ?? null;

@@ -1,10 +1,7 @@
 <script>
-  import { get } from 'svelte/store';
   import { createEventDispatcher, tick } from 'svelte';
   import { fade, scale } from 'svelte/transition';
   import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
-  import { peer as peerStore } from '$lib/stores/peerStore.js';
-  import { activeTab } from '$lib/stores/navigationStore.js';
   import { initiatePrivateChat } from '$lib/services/peer.js';
 
   /** @type {{ peerId?: string, username: string, age: number, color: string, avatarBase64: string | null } | null} */
@@ -53,31 +50,12 @@
     stylePos = '';
   }
 
-  function resolvePeerId(u) {
-    if (!u) return null;
-    if (typeof u.peerId === 'string' && u.peerId.length > 0) return u.peerId;
-
-    // Global chat messages currently pass only a user object, not the peerId.
-    // Best-effort: match connectedPeers by username + color + age.
-    const peers = get(peerStore).connectedPeers;
-    for (const [peerId, info] of peers.entries()) {
-      if (info.username === u.username && info.color === u.color && info.age === u.age) return peerId;
-    }
-    // Fallback: match by username only.
-    for (const [peerId, info] of peers.entries()) {
-      if (info.username === u.username) return peerId;
-    }
-    return null;
-  }
-
-  async function startChat() {
+  async function handleStartPrivateChat() {
     if (!user) return;
-    const theirPeerId = resolvePeerId(user);
-    if (!theirPeerId) return;
     try {
-      await initiatePrivateChat(theirPeerId, user.username, user.color, user.avatarBase64 ?? null);
-      activeTab.set('private');
       dispatch('close');
+      if (!user.peerId) return;
+      await initiatePrivateChat(user.peerId, user.username, user.color, user.avatarBase64 ?? null);
     } catch (err) {
       console.error('initiatePrivateChat failed', err);
     }
@@ -129,7 +107,7 @@
       <div class="mt-[var(--space-md)]">
         <button
           class="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--accent)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-primary)] font-600 hover:bg-[var(--accent-hover)]"
-          on:click={startChat}
+          on:click={handleStartPrivateChat}
         >
           Start Private Chat
         </button>

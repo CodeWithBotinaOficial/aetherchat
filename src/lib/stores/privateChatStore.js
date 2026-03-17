@@ -1,6 +1,6 @@
 import { derived, get, writable } from 'svelte/store';
 import { decryptForSession, isSessionActive } from '$lib/services/crypto.js';
-import { deletePrivateChat, getPrivateChats, getPrivateMessages } from '$lib/services/db.js';
+import { deletePrivateChat, getPrivateChats, getPrivateMessages, updateChatMeta } from '$lib/services/db.js';
 
 // ── State shape ──────────────────────────────────────────────────────────────
 // {
@@ -44,26 +44,38 @@ function withChat(updateFn) {
  */
 export async function loadPrivateChats(myPeerId) {
   const chats = await getPrivateChats(myPeerId);
-  update((s) => {
-    const next = new Map();
-    for (const c of chats) {
-      next.set(c.id, {
-        id: c.id,
-        theirPeerId: c.theirPeerId,
-        theirUsername: c.theirUsername,
-        theirColor: c.theirColor,
-        theirAvatarBase64: c.theirAvatarBase64 ?? null,
-        messages: [],
-        unreadCount: 0,
-        lastMessage: null,
-        lastActivity: c.lastActivity ?? c.createdAt ?? Date.now(),
-        isOnline: false,
-        keyExchangeState: 'idle',
-        __loaded: false
-      });
-    }
-    return { ...s, chats: next };
-  });
+  const chatMap = new Map();
+
+  for (const c of chats) {
+    const dbMessages = await getPrivateMessages(c.id, 50);
+    const sealedMessages = dbMessages.map((m) => ({
+      id: m.id,
+      direction: m.direction,
+      text: null,
+      ciphertext: m.ciphertext,
+      iv: m.iv,
+      timestamp: m.timestamp,
+      delivered: Boolean(m.delivered),
+      sealed: true
+    }));
+
+    chatMap.set(c.id, {
+      id: c.id,
+      theirPeerId: c.theirPeerId,
+      theirUsername: c.theirUsername,
+      theirColor: c.theirColor,
+      theirAvatarBase64: c.theirAvatarBase64 ?? null,
+      messages: sealedMessages,
+      unreadCount: typeof c.unreadCount === 'number' ? c.unreadCount : 0,
+      lastMessage: c.lastMessagePreview ?? null,
+      lastActivity: c.lastActivity ?? c.createdAt ?? Date.now(),
+      isOnline: false,
+      keyExchangeState: 'idle',
+      __loaded: true
+    });
+  }
+
+  update((s) => ({ ...s, chats: chatMap }));
 }
 
 /**
@@ -83,6 +95,9 @@ export function openChat(chatId) {
   if (chat && !chat.__loaded) {
     loadChatMessages(chatId, chatId).catch((err) => console.error('loadChatMessages failed', err));
   }
+
+  // Persist unreadCount reset.
+  updateChatMeta(chatId, { unreadCount: 0 }).catch((err) => console.error('updateChatMeta failed', err));
 }
 
 export function closeChat() {
@@ -132,11 +147,34 @@ export async function loadChatMessages(chatId, sessionId) {
   });
 }
 
+export async function decryptSealedMessages(chatId, sessionId) {
+  const chat = get(privateChatStore).chats.get(chatId);
+  if (!chat) return;
+
+  const decrypted = await Promise.all(
+    chat.messages.map(async (m) => {
+      if (!m?.sealed) return m;
+      try {
+        const text = await decryptForSession(sessionId, m.ciphertext, m.iv);
+        return { ...m, text, sealed: false };
+      } catch {
+        return { ...m, text: '🔒 Encrypted in a previous session', sealed: false };
+      }
+    })
+  );
+
+  withChat((chats) => {
+    const curr = chats.get(chatId);
+    if (!curr) return;
+    chats.set(chatId, { ...curr, messages: decrypted });
+  });
+}
+
 export function addOutgoingMessage(chatId, { id, text, timestamp }) {
   withChat((chats) => {
     const chat = chats.get(chatId);
     if (!chat) return;
-    const messages = [...chat.messages, { id, direction: 'sent', text, timestamp, delivered: false }];
+    const messages = [...chat.messages, { id, direction: 'sent', text, timestamp, delivered: false, sealed: false }];
     chats.set(chatId, { ...chat, messages, lastMessage: text, lastActivity: timestamp });
   });
 }
@@ -147,7 +185,7 @@ export function addIncomingMessage(chatId, { id, text, timestamp }) {
     const chat = next.get(chatId);
     if (!chat) return s;
 
-    const messages = [...chat.messages, { id, direction: 'received', text, timestamp, delivered: true }];
+    const messages = [...chat.messages, { id, direction: 'received', text, timestamp, delivered: true, sealed: false }];
     const unreadInc = s.activeChatId === chatId ? 0 : 1;
     next.set(chatId, {
       ...chat,
@@ -227,4 +265,5 @@ export function markChatAsRead(chatId) {
     if (!chat) return;
     chats.set(chatId, { ...chat, unreadCount: 0 });
   });
+  updateChatMeta(chatId, { unreadCount: 0 }).catch((err) => console.error('updateChatMeta failed', err));
 }

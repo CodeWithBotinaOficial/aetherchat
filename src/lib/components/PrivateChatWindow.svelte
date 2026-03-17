@@ -7,7 +7,7 @@
   import MessageBubble from '$lib/components/MessageBubble.svelte';
   import { decryptForSession, isSessionActive } from '$lib/services/crypto.js';
   import { getPrivateMessagesPage } from '$lib/services/db.js';
-  import { closePrivateChat, initiatePrivateChat, sendPrivateMessage } from '$lib/services/peer.js';
+  import { avatarCache, closePrivateChat, initiatePrivateChat, sendPrivateMessage } from '$lib/services/peer.js';
   import { peer as peerStore } from '$lib/stores/peerStore.js';
   import { user } from '$lib/stores/userStore.js';
   import { activeChat, closeChat, prependMessages } from '$lib/stores/privateChatStore.js';
@@ -24,6 +24,9 @@
   let prevKeyState = '';
   let prevChatId = '';
   $: bannerInfo = banner($activeChat);
+  $: theirAvatar = $activeChat
+    ? ($activeChat.theirAvatarBase64 ?? $avatarCache.get($activeChat.theirPeerId) ?? null)
+    : null;
 
   function scrollToBottom() {
     if (!listEl) return;
@@ -128,12 +131,13 @@
   function msgToBubble(m, chat) {
     const u = get(user);
     const isOwn = m.direction === 'sent';
+    const safeText = typeof m.text === 'string' ? m.text : '🔒 Encrypted message';
     return {
       username: isOwn ? (u?.username ?? 'me') : chat.theirUsername,
       age: isOwn ? (u?.age ?? 0) : (chat.theirAge ?? get(peerStore).connectedPeers.get(chat.theirPeerId)?.age ?? 0),
       color: isOwn ? (u?.color ?? 'hsl(0,0%,65%)') : chat.theirColor,
-      avatarBase64: isOwn ? (u?.avatarBase64 ?? null) : (chat.theirAvatarBase64 ?? null),
-      text: m.text,
+      avatarBase64: isOwn ? (u?.avatarBase64 ?? null) : theirAvatar,
+      text: safeText,
       timestamp: m.timestamp
     };
   }
@@ -149,7 +153,7 @@
     const chat = $activeChat;
     if (!chat) return;
     try {
-      await initiatePrivateChat(chat.theirPeerId, chat.theirUsername, chat.theirColor, chat.theirAvatarBase64 ?? null);
+      await initiatePrivateChat(chat.theirPeerId, chat.theirUsername, chat.theirColor, theirAvatar);
     } catch (err) {
       console.error('retry key exchange failed', err);
     }
@@ -169,7 +173,7 @@
           ←
         </button>
 
-        <AvatarDisplay username={$activeChat.theirUsername} avatarBase64={$activeChat.theirAvatarBase64 ?? null} size={36} showRing={true} />
+        <AvatarDisplay username={$activeChat.theirUsername} avatarBase64={theirAvatar} size={36} showRing={true} />
 
         <div class="min-w-0">
           <div class="truncate font-800 text-[var(--text-primary)]">{$activeChat.theirUsername}</div>

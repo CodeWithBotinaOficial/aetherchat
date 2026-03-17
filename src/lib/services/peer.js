@@ -26,15 +26,21 @@ import {
   addIncomingMessage,
   addOutgoingMessage,
   deleteChatFromStore,
+  decryptSealedMessages,
   markDelivered,
   openChat,
+  privateChatStore,
+  setChatOnlineStatus,
   setKeyExchangeState,
   upsertChatEntry
 } from '$lib/stores/privateChatStore.js';
+import { activeTab } from '$lib/stores/navigationStore.js';
 import {
+  getPrivateChat,
   markMessageDelivered,
   savePrivateMessage as saveEncryptedPrivateMessage,
   updateChatLastActivity,
+  updateChatMeta,
   upsertPrivateChat
 } from '$lib/services/db.js';
 
@@ -63,6 +69,7 @@ export const PEERJS_CONFIG = {
 };
 
 const RECONNECT_DELAYS = [2000, 5000, 10000];
+const MAX_RECONNECT_ATTEMPTS = 3;
 const JOIN_LOBBY_TIMEOUT_MS = 6000;
 
 let registrySyncResolve = null;
@@ -119,6 +126,7 @@ let PeerCtor = null;
 
 /** @type {any|null} */
 let mainPeer = null;
+let localPeerRef = null;
 /** @type {any|null} */
 let lobbyPeer = null;
 /** @type {any|null} */
@@ -126,6 +134,7 @@ let lobbyConn = null;
 
 /** @type {UserProfile|null} */
 let cachedProfile = null;
+let userProfileRef = null;
 
 /** @type {Promise<{publicKey: CryptoKey, privateKey: CryptoKey}>|null} */
 let localKeyPairPromise = null;
@@ -147,6 +156,77 @@ let gossipIntervalId = null;
 // queued payloads are already encrypted; if a new session key is negotiated before delivery,
 // the recipient may be unable to decrypt and will see a locked placeholder.
 const offlineMessageQueue = new Map();
+
+let reconnectAttempts = 0;
+let reconnectTimer = null;
+
+async function handlePeerDisconnect() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    peerStore.update((s) => ({ ...s, connectionState: 'failed' }));
+    return;
+  }
+
+  peerStore.update((s) => ({
+    ...s,
+    connectionState: 'reconnecting',
+    reconnectAttempt: reconnectAttempts + 1
+  }));
+
+  reconnectTimer = setTimeout(() => {
+    (async () => {
+      reconnectAttempts += 1;
+
+      if (!localPeerRef) {
+        mainPeer = null;
+        await initPeer(userProfileRef);
+        return;
+      }
+
+      if (localPeerRef.destroyed) {
+        try {
+          mainPeer = null;
+          localPeerRef = null;
+        } catch {
+          // ignore
+        }
+        await initPeer(userProfileRef);
+        return;
+      }
+
+      if (localPeerRef.disconnected) {
+        try {
+          localPeerRef.reconnect();
+        } catch (err) {
+          console.error('Reconnect failed:', err);
+          try {
+            localPeerRef.destroy();
+          } catch {
+            // ignore
+          }
+          localPeerRef = null;
+          mainPeer = null;
+          await initPeer(userProfileRef);
+        }
+        return;
+      }
+
+      // Bad intermediate state: destroy and start fresh.
+      try {
+        localPeerRef.destroy();
+      } catch {
+        // ignore
+      }
+      localPeerRef = null;
+      mainPeer = null;
+      await initPeer(userProfileRef);
+    })().catch((err) => console.error('handlePeerDisconnect failed', err));
+  }, RECONNECT_DELAYS[reconnectAttempts] ?? 10_000);
+}
 
 const ALLOWED_TYPES = new Set([
   'HANDSHAKE',
@@ -178,10 +258,6 @@ const REQUIRES_TO = new Set([
   'PRIVATE_MSG_ACK',
   'PRIVATE_CHAT_CLOSED'
 ]);
-
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
 
 // Simple pub/sub so callers can await specific messages without coupling to PeerJS.
 const listeners = new Map(); // type -> Set<(msg) => void>
@@ -725,6 +801,24 @@ export function handleIncomingConnection(conn, profile) {
     (async () => {
       await sendHandshake(conn, profile);
       flushQueueForPeer(remotePeerId);
+      setChatOnlineStatus(remotePeerId, true);
+
+      // Auto-initiate key exchange for existing chats after reconnect (no UI side effects).
+      const myPeerId = get(peerStore).peerId;
+      if (!myPeerId) return;
+      const chatId = buildSessionId(myPeerId, remotePeerId);
+      const existingChat = get(privateChatStore).chats.get(chatId);
+      if (!existingChat) return;
+      if (existingChat.keyExchangeState !== 'idle') return;
+      if (isSessionActive(chatId)) return;
+      if (!userProfileRef) return;
+
+      const { publicKeyBase64 } = await createSession(myPeerId, remotePeerId);
+      setKeyExchangeState(chatId, 'initiated');
+      sendToPeer(
+        remotePeerId,
+        buildDirectMessage('PRIVATE_KEY_EXCHANGE', myPeerId, userProfileRef, remotePeerId, { publicKeyBase64 }, Date.now())
+      );
     })().catch((err) => console.error('sendHandshake failed', err));
   });
 
@@ -812,32 +906,57 @@ export async function handleMessage(msg, fromConn, profile) {
 
   if (msg.type === 'HANDSHAKE') {
     remoteIdentityKeys.set(remotePeerId, msg.payload?.publicKey ?? '');
-    if (typeof msg.payload?.avatarBase64 === 'string' && msg.payload.avatarBase64.length > 0) {
-      setCachedAvatar(remotePeerId, msg.payload.avatarBase64);
-    }
+    const avatarBase64 = typeof msg.payload?.avatarBase64 === 'string' && msg.payload.avatarBase64.length > 0 ? msg.payload.avatarBase64 : null;
+    if (avatarBase64) setCachedAvatar(remotePeerId, avatarBase64);
     upsertConnectedPeer(remotePeerId, fromConn, {
       username: msg.from.username,
       color: msg.from.color,
       age: msg.from.age,
-      avatarBase64: typeof msg.payload?.avatarBase64 === 'string' ? msg.payload.avatarBase64 : null
+      avatarBase64
     });
     await saveKnownPeer({ username: msg.from.username, peerId: remotePeerId, lastSeen: Date.now() });
+    setChatOnlineStatus(remotePeerId, true);
+
+    // Persist avatar for existing private chats so it survives reloads.
+    if (avatarBase64) {
+      const myPeerId = get(peerStore).peerId;
+      if (myPeerId) {
+        const chatId = buildSessionId(myPeerId, remotePeerId);
+        const existing = await getPrivateChat(chatId);
+        if (existing) {
+          await upsertPrivateChat({ ...existing, theirAvatarBase64: avatarBase64 });
+          upsertChatEntry({ id: chatId, theirAvatarBase64: avatarBase64 });
+        }
+      }
+    }
     await sendHandshakeAck(fromConn, profile);
     return;
   }
 
   if (msg.type === 'HANDSHAKE_ACK') {
     remoteIdentityKeys.set(remotePeerId, msg.payload?.publicKey ?? '');
-    if (typeof msg.payload?.avatarBase64 === 'string' && msg.payload.avatarBase64.length > 0) {
-      setCachedAvatar(remotePeerId, msg.payload.avatarBase64);
-    }
+    const avatarBase64 = typeof msg.payload?.avatarBase64 === 'string' && msg.payload.avatarBase64.length > 0 ? msg.payload.avatarBase64 : null;
+    if (avatarBase64) setCachedAvatar(remotePeerId, avatarBase64);
     upsertConnectedPeer(remotePeerId, fromConn, {
       username: msg.from.username,
       color: msg.from.color,
       age: msg.from.age,
-      avatarBase64: typeof msg.payload?.avatarBase64 === 'string' ? msg.payload.avatarBase64 : null
+      avatarBase64
     });
     await saveKnownPeer({ username: msg.from.username, peerId: remotePeerId, lastSeen: Date.now() });
+    setChatOnlineStatus(remotePeerId, true);
+
+    if (avatarBase64) {
+      const myPeerId = get(peerStore).peerId;
+      if (myPeerId) {
+        const chatId = buildSessionId(myPeerId, remotePeerId);
+        const existing = await getPrivateChat(chatId);
+        if (existing) {
+          await upsertPrivateChat({ ...existing, theirAvatarBase64: avatarBase64 });
+          upsertChatEntry({ id: chatId, theirAvatarBase64: avatarBase64 });
+        }
+      }
+    }
     return;
   }
 
@@ -1029,7 +1148,9 @@ export async function handleMessage(msg, fromConn, profile) {
       get(avatarCache).get(theirPeerId) ?? get(peerStore).connectedPeers.get(theirPeerId)?.avatarBase64 ?? null;
 
     const now = Date.now();
+    const existing = await getPrivateChat(chatId);
     await upsertPrivateChat({
+      ...(existing ?? {}),
       id: chatId,
       myPeerId,
       theirPeerId,
@@ -1037,8 +1158,10 @@ export async function handleMessage(msg, fromConn, profile) {
       theirColor: msg.from.color,
       theirAvatarBase64: cachedAvatar,
       theirAge: msg.from.age,
-      createdAt: now,
-      lastActivity: now
+      createdAt: existing?.createdAt ?? now,
+      lastActivity: now,
+      lastMessagePreview: existing?.lastMessagePreview ?? null,
+      unreadCount: typeof existing?.unreadCount === 'number' ? existing.unreadCount : 0
     });
 
     upsertChatEntry({
@@ -1055,6 +1178,7 @@ export async function handleMessage(msg, fromConn, profile) {
 
     sendToPeer(theirPeerId, buildDirectMessage('PRIVATE_KEY_EXCHANGE_ACK', myPeerId, profile, theirPeerId, { publicKeyBase64: ourPublicKeyBase64 }));
     setKeyExchangeState(chatId, 'active');
+    await decryptSealedMessages(chatId, chatId);
     return;
   }
 
@@ -1071,6 +1195,7 @@ export async function handleMessage(msg, fromConn, profile) {
     await completeSession(myPeerId, theirPeerId, publicKeyBase64);
     setKeyExchangeState(chatId, 'active');
     flushQueueForPeer(theirPeerId);
+    await decryptSealedMessages(chatId, chatId);
     return;
   }
 
@@ -1092,7 +1217,9 @@ export async function handleMessage(msg, fromConn, profile) {
 
     // Ensure chat exists in DB/store.
     const now = Date.now();
+    const existing = await getPrivateChat(chatId);
     await upsertPrivateChat({
+      ...(existing ?? {}),
       id: chatId,
       myPeerId,
       theirPeerId,
@@ -1100,8 +1227,10 @@ export async function handleMessage(msg, fromConn, profile) {
       theirColor: msg.from.color,
       theirAvatarBase64: cachedAvatar,
       theirAge: msg.from.age,
-      createdAt: now,
-      lastActivity: msg.timestamp ?? now
+      createdAt: existing?.createdAt ?? now,
+      lastActivity: msg.timestamp ?? now,
+      lastMessagePreview: existing?.lastMessagePreview ?? null,
+      unreadCount: typeof existing?.unreadCount === 'number' ? existing.unreadCount : 0
     });
 
     upsertChatEntry({
@@ -1137,13 +1266,19 @@ export async function handleMessage(msg, fromConn, profile) {
       console.error('savePrivateMessage failed', err);
     }
 
-    try {
-      await updateChatLastActivity(chatId, msg.timestamp ?? now);
-    } catch (err) {
-      console.error('updateChatLastActivity failed', err);
-    }
-
     addIncomingMessage(chatId, { id: messageId, text, timestamp: msg.timestamp ?? now });
+
+    try {
+      // Persist a best-effort preview + unread count so it survives reload.
+      const currentUnread = get(privateChatStore).chats.get(chatId)?.unreadCount ?? 0;
+      await updateChatMeta(chatId, {
+        lastMessagePreview: typeof text === 'string' ? text.slice(0, 40) : null,
+        lastActivity: msg.timestamp ?? now,
+        unreadCount: currentUnread
+      });
+    } catch (err) {
+      console.error('updateChatMeta failed', err);
+    }
 
     sendToPeer(
       theirPeerId,
@@ -1190,12 +1325,14 @@ export async function handleMessage(msg, fromConn, profile) {
 
 export async function initPeer(profile) {
   try {
+    // Keep profile references set synchronously so UI actions can always access them.
     cachedProfile = profile;
+    userProfileRef = profile;
     setConnectionState('connecting', { error: null, reconnectAttempt: 0 });
 
     // If the peer already exists (e.g. we connected pre-registration), update cached profile
     // and refresh our handshake so remote peers learn our final username/avatar.
-    if (mainPeer) {
+    if (mainPeer && !mainPeer.destroyed) {
       const shouldRefresh = Boolean(profile?.createdAt) && profile?.username && profile.username !== 'pre-registration';
       if (shouldRefresh) {
         const state = get(peerStore);
@@ -1205,6 +1342,10 @@ export async function initPeer(profile) {
       }
       return mainPeer;
     }
+    if (mainPeer?.destroyed) {
+      mainPeer = null;
+      localPeerRef = null;
+    }
 
     const Peer = await ensurePeerCtor();
 
@@ -1213,8 +1354,14 @@ export async function initPeer(profile) {
 
     const peerId = randomPeerId();
     mainPeer = new Peer(peerId, { ...PEERJS_CONFIG, debug });
+    localPeerRef = mainPeer;
 
     mainPeer.on('open', (id) => {
+      reconnectAttempts = 0;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
       peerStore.update((s) => ({
         ...s,
         peerId: id,
@@ -1251,15 +1398,38 @@ export async function initPeer(profile) {
     });
 
     mainPeer.on('error', (err) => {
-      // When we're the first peer, connecting to the lobby ID is expected to fail.
-      // PeerJS reports that as a peer-level error; don't surface it as a failure.
-      if (isLobbyUnavailableError(err)) return;
-      console.error('PeerJS error', err);
-      peerStore.update((s) => ({ ...s, error: err?.type ?? 'peer-error' }));
+      console.error('PeerJS error:', err?.type, err?.message);
+
+      switch (err?.type) {
+        case 'peer-unavailable':
+          // Expected: lobby not found -> host election logic handles this on the connection error path.
+          return;
+        case 'unavailable-id':
+          // Expected: lobby ID race condition handled in becomeLobbyHost.
+          return;
+        case 'network':
+        case 'server-error':
+        case 'socket-error':
+        case 'socket-closed':
+          void handlePeerDisconnect();
+          return;
+        case 'browser-incompatible':
+        case 'ssl-unavailable':
+        case 'invalid-id':
+        case 'invalid-key':
+          peerStore.update((s) => ({ ...s, connectionState: 'failed' }));
+          return;
+        default:
+          // When we're the first peer, connecting to the lobby ID is expected to fail.
+          if (isLobbyUnavailableError(err)) return;
+          console.warn('Unhandled PeerJS error type:', err?.type);
+          peerStore.update((s) => ({ ...s, error: err?.type ?? 'peer-error' }));
+      }
     });
 
     mainPeer.on('disconnected', () => {
-      void attemptReconnect(mainPeer, profile, 0);
+      peerStore.update((s) => ({ ...s, connectionState: 'reconnecting' }));
+      void handlePeerDisconnect();
     });
 
     return mainPeer;
@@ -1270,53 +1440,9 @@ export async function initPeer(profile) {
   }
 }
 
-export async function attemptReconnect(peer, profile, attempt = 0) {
-  if (!peer) return;
-  if (attempt >= RECONNECT_DELAYS.length) {
-    setConnectionState('failed', { isConnected: false });
-    return;
-  }
-
-  setConnectionState('reconnecting', { reconnectAttempt: attempt + 1 });
-  await sleep(RECONNECT_DELAYS[attempt]);
-
-  try {
-    peer.reconnect?.();
-    // If reconnect succeeds, PeerJS should emit `open` again; joinLobby happens there.
-  } catch (err) {
-    console.error('reconnect failed', err);
-    await attemptReconnect(peer, profile, attempt + 1);
-    return;
-  }
-
-  // Some PeerJS reconnect failures don't throw; they simply never re-open.
-  // Treat a missing 'open' within a short window as a failed attempt.
-  const opened = await new Promise((resolve) => {
-    let done = false;
-    const finish = (ok) => {
-      if (done) return;
-      done = true;
-      try {
-        peer.off?.('open', onOpen);
-      } catch {
-        // ignore
-      }
-      resolve(ok);
-    };
-
-    const onOpen = () => finish(true);
-    try {
-      peer.on?.('open', onOpen);
-    } catch {
-      // ignore
-    }
-
-    setTimeout(() => finish(false), 1500);
-  });
-
-  if (!opened) {
-    await attemptReconnect(peer, profile, attempt + 1);
-  }
+// Back-compat export: delegate to the new state-checked handler.
+export async function attemptReconnect() {
+  await handlePeerDisconnect();
 }
 
 export async function broadcastGlobalMessage(text, profile) {
@@ -1377,60 +1503,95 @@ export function broadcastUsernameRegistered(profile) {
 export async function initiatePrivateChat(theirPeerId, theirUsername, theirColor, theirAvatarBase64) {
   const state = get(peerStore);
   const myPeerId = state.peerId;
-  if (!myPeerId) throw new Error('Peer not initialized');
-  if (!theirPeerId) throw new Error('Missing target peer id');
-  if (!cachedProfile) throw new Error('Missing user profile');
+  const profile = userProfileRef ?? cachedProfile;
 
-  const chatId = buildSessionId(myPeerId, theirPeerId);
-
-  // If the session is already active, just open the chat.
-  if (isSessionActive(chatId)) {
-    upsertChatEntry({
-      id: chatId,
-      theirPeerId,
-      theirUsername,
-      theirColor,
-      theirAvatarBase64: theirAvatarBase64 ?? null,
-      lastActivity: Date.now(),
-      keyExchangeState: 'active',
-      isOnline: state.connectedPeers.has(theirPeerId)
-    });
-    openChat(chatId);
+  if (!myPeerId || !state.isConnected) {
+    console.warn('initiatePrivateChat: not connected yet');
+    return;
+  }
+  if (!theirPeerId) {
+    console.warn('initiatePrivateChat: missing target peer id');
+    return;
+  }
+  if (!profile) {
+    console.warn('initiatePrivateChat: missing user profile');
     return;
   }
 
-  const { publicKeyBase64 } = await createSession(myPeerId, theirPeerId);
+  // Always switch to the private tab first so UI never feels unresponsive.
+  activeTab.set('private');
+
+  const chatId = buildSessionId(myPeerId, theirPeerId);
   const now = Date.now();
 
-  await upsertPrivateChat({
-    id: chatId,
-    myPeerId,
-    theirPeerId,
-    theirUsername,
-    theirColor,
-    theirAvatarBase64: theirAvatarBase64 ?? null,
-    createdAt: now,
-    lastActivity: now
-  });
+  // Ensure chat exists in store/DB (important after reload).
+  const storeState = get(privateChatStore);
+  const existingChat = storeState.chats.get(chatId) ?? null;
 
-  upsertChatEntry({
-    id: chatId,
-    theirPeerId,
-    theirUsername,
-    theirColor,
-    theirAvatarBase64: theirAvatarBase64 ?? null,
-    lastActivity: now,
-    keyExchangeState: 'initiated',
-    isOnline: state.connectedPeers.has(theirPeerId)
-  });
-  setKeyExchangeState(chatId, 'initiated');
+  if (!existingChat) {
+    let existingDbChat = null;
+    try {
+      existingDbChat = await getPrivateChat(chatId);
+    } catch (err) {
+      console.error('getPrivateChat failed', err);
+    }
+
+    if (existingDbChat) {
+      upsertChatEntry({
+        id: existingDbChat.id,
+        theirPeerId: existingDbChat.theirPeerId,
+        theirUsername: existingDbChat.theirUsername,
+        theirColor: existingDbChat.theirColor,
+        theirAvatarBase64: existingDbChat.theirAvatarBase64 ?? null,
+        lastActivity: existingDbChat.lastActivity ?? now,
+        keyExchangeState: 'idle',
+        isOnline: state.connectedPeers.has(theirPeerId)
+      });
+    } else {
+      await upsertPrivateChat({
+        id: chatId,
+        myPeerId,
+        theirPeerId,
+        theirUsername,
+        theirColor,
+        theirAvatarBase64: theirAvatarBase64 ?? null,
+        createdAt: now,
+        lastActivity: now,
+        lastMessagePreview: null,
+        unreadCount: 0
+      });
+
+      upsertChatEntry({
+        id: chatId,
+        theirPeerId,
+        theirUsername,
+        theirColor,
+        theirAvatarBase64: theirAvatarBase64 ?? null,
+        lastActivity: now,
+        keyExchangeState: 'idle',
+        isOnline: state.connectedPeers.has(theirPeerId)
+      });
+    }
+  }
+
   openChat(chatId);
+  setChatOnlineStatus(theirPeerId, state.connectedPeers.has(theirPeerId));
 
-  // Private key exchange is always a direct send.
-  sendToPeer(
-    theirPeerId,
-    buildDirectMessage('PRIVATE_KEY_EXCHANGE', myPeerId, cachedProfile, theirPeerId, { publicKeyBase64 }, now)
-  );
+  // If the session is already active, nothing else to do.
+  if (isSessionActive(chatId)) {
+    setKeyExchangeState(chatId, 'active');
+    return;
+  }
+
+  // If the target peer isn't currently connected, defer key exchange until they reconnect.
+  if (!state.connectedPeers.has(theirPeerId)) {
+    setKeyExchangeState(chatId, 'idle');
+    return;
+  }
+
+  setKeyExchangeState(chatId, 'initiated');
+  const { publicKeyBase64 } = await createSession(myPeerId, theirPeerId);
+  sendToPeer(theirPeerId, buildDirectMessage('PRIVATE_KEY_EXCHANGE', myPeerId, profile, theirPeerId, { publicKeyBase64 }, now));
 }
 
 export async function sendPrivateMessage(theirPeerId, plaintext) {
@@ -1507,6 +1668,12 @@ export function disconnectPeer() {
   const state = get(peerStore);
   const id = state.peerId;
 
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  reconnectAttempts = 0;
+
   if (gossipIntervalId) {
     clearInterval(gossipIntervalId);
     gossipIntervalId = null;
@@ -1533,9 +1700,11 @@ export function disconnectPeer() {
   }
 
   mainPeer = null;
+  localPeerRef = null;
   lobbyPeer = null;
   lobbyConn = null;
   cachedProfile = null;
+  userProfileRef = null;
   PeerCtor = null;
 
   closeAllSessions();
@@ -1576,5 +1745,19 @@ export const __test = {
   },
   resolveRegistrySyncForTest(reason = 'test') {
     resolveRegistrySync(reason);
+  },
+  setLocalPeerRefForTest(p) {
+    localPeerRef = p;
+    mainPeer = p;
+  },
+  setUserProfileRefForTest(p) {
+    userProfileRef = p;
+    cachedProfile = p;
+  },
+  async handlePeerDisconnectForTest() {
+    await handlePeerDisconnect();
+  },
+  getReconnectAttemptsForTest() {
+    return reconnectAttempts;
   }
 };
