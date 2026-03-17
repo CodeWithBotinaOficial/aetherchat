@@ -1,17 +1,37 @@
 <script>
-  import { onMount, tick } from 'svelte';
+	  import { onMount, tick } from 'svelte';
 
-  const LAST_UPDATED = 'March 17, 2026';
+	  const LAST_UPDATED = 'March 17, 2026';
 
-  /** @type {HTMLDivElement|null} */
-  let scroller = null;
-  let progress = 0;
+	  /** @type {HTMLDivElement|null} */
+	  let scroller = null;
+	  /** @type {HTMLElement|null} */
+	  let headerEl = null;
+	  let headerHeight = 64;
+	  let headerOffset = 64;
+	  let progress = 0;
 
-  async function computeProgress() {
-    if (!scroller) {
-      progress = 0;
-      return;
-    }
+	  async function computeHeaderOffset() {
+	    if (!scroller || !headerEl) {
+	      headerOffset = headerHeight || 64;
+	      return;
+	    }
+
+	    await tick();
+	    const headerRect = headerEl.getBoundingClientRect();
+	    const scrollerRect = scroller.getBoundingClientRect();
+
+	    // If the header overlays the scroller (overlap > 0), pad the scroller so content starts below it.
+	    // If they are already laid out in normal flow (overlap <= 0), no padding is needed.
+	    const overlap = Math.round(headerRect.bottom - scrollerRect.top);
+	    headerOffset = Math.max(0, overlap);
+	  }
+
+	  async function computeProgress() {
+	    if (!scroller) {
+	      progress = 0;
+	      return;
+	    }
     await tick();
     const max = scroller.scrollHeight - scroller.clientHeight;
     if (max <= 0) {
@@ -21,36 +41,40 @@
     progress = Math.max(0, Math.min(1, scroller.scrollTop / max));
   }
 
-  onMount(() => {
-    void computeProgress();
-    const onResize = () => computeProgress();
-    window.addEventListener('resize', onResize, { passive: true });
+	  onMount(() => {
+	    void computeProgress();
+	    void computeHeaderOffset();
+	    const onResize = () => {
+	      void computeProgress();
+	      void computeHeaderOffset();
+	    };
+	    window.addEventListener('resize', onResize, { passive: true });
 
-    return () => {
-      window.removeEventListener('resize', onResize);
-    };
-  });
-</script>
+	    return () => {
+	      window.removeEventListener('resize', onResize);
+	    };
+	  });
+	</script>
 
-<div class="terms">
-  <div class="progress-track" aria-hidden="true">
-    <div class="progress-bar" style={`transform: scaleX(${progress});`}></div>
-  </div>
+<div class="terms" style:--header-offset={`${headerOffset}px`}>
+	  <div class="progress-track" aria-hidden="true">
+	    <div class="progress-bar" style={`transform: scaleX(${progress});`}></div>
+	  </div>
 
-  <header class="terms-header">
-    <div class="header-inner">
-      <div class="title">Terms of Service and Privacy Policy</div>
-      <div class="updated">Last updated: {LAST_UPDATED}</div>
-    </div>
-  </header>
+	  <header bind:this={headerEl} bind:clientHeight={headerHeight} class="terms-header">
+	    <div class="header-inner">
+	      <h1 class="title" id="terms-title">Terms of Service and Privacy Policy</h1>
+	      <div class="updated">Last updated: {LAST_UPDATED}</div>
+	    </div>
+	  </header>
 
-  <div bind:this={scroller} class="terms-scroll scroll-container" on:scroll={() => void computeProgress()}>
-    <article class="doc" aria-label="Terms of Service and Privacy Policy">
-      <h1 class="h1">TERMS OF SERVICE AND PRIVACY POLICY</h1>
-      <p class="meta">
-        <strong>AetherChat</strong> —
-        <a class="link" href="https://aetherchat.codewithbotina.com" target="_blank" rel="noreferrer">https://aetherchat.codewithbotina.com</a><br />
-        <strong>Last updated:</strong> {LAST_UPDATED}<br />
+	  <div bind:this={scroller} class="terms-scroll scroll-container" on:scroll={() => void computeProgress()}>
+	    <article class="doc" aria-labelledby="terms-title">
+	      <h1 class="h1 doc-title">TERMS OF SERVICE AND PRIVACY POLICY</h1>
+	      <p class="meta">
+	        <strong>AetherChat</strong> —
+	        <a class="link" href="https://aetherchat.codewithbotina.com" target="_blank" rel="noreferrer">https://aetherchat.codewithbotina.com</a><br />
+	        <strong>Last updated:</strong> {LAST_UPDATED}<br />
         <strong>Operated by:</strong> CodeWithBotinaOficial<br />
         <strong>Contact:</strong>
         <a class="link" href="mailto:support@codewithbotina.com">support@codewithbotina.com</a>
@@ -320,21 +344,22 @@
   </div>
 </div>
 
-<style>
-  .terms {
-    background: var(--bg-base);
-    color: var(--text-primary);
-    height: 100%;
-    overflow: hidden;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
+	<style>
+	  .terms {
+	    background: var(--bg-base);
+	    color: var(--text-primary);
+	    height: 100%;
+	    overflow: hidden;
+	    min-height: 0;
+	    display: flex;
+	    flex-direction: column;
+	  }
 
-  .terms-scroll {
-    flex: 1;
-    min-height: 0;
-  }
+	  .terms-scroll {
+	    flex: 1;
+	    min-height: 0;
+	    padding-top: var(--header-offset, 64px);
+	  }
 
   .progress-track {
     height: 3px;
@@ -349,11 +374,13 @@
     background: var(--accent);
   }
 
-  .terms-header {
-    z-index: 4;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-surface);
-  }
+	  .terms-header {
+	    position: sticky;
+	    top: 0;
+	    z-index: 10;
+	    border-bottom: 1px solid var(--border);
+	    background: var(--bg-surface);
+	  }
 
   .header-inner {
     max-width: 720px;
@@ -365,11 +392,14 @@
     gap: 12px;
   }
 
-  .title {
-    font-weight: 800;
-    color: var(--text-primary);
-    letter-spacing: -0.01em;
-  }
+	  .title {
+	    font-weight: 800;
+	    color: var(--text-primary);
+	    letter-spacing: -0.01em;
+	    font-size: 1rem;
+	    line-height: 1.2;
+	    margin: 0;
+	  }
 
   .updated {
     font-size: var(--font-size-xs);
@@ -393,19 +423,23 @@
     margin: 0;
   }
 
-  .h1 {
-    font-size: 1.35rem;
-    font-weight: 900;
-    letter-spacing: -0.02em;
-    margin-top: 0;
-  }
+	  .h1 {
+	    font-size: 1.35rem;
+	    font-weight: 900;
+	    letter-spacing: -0.02em;
+	    margin-top: 0;
+	  }
 
-  .h2 {
-    margin-top: 22px;
-    font-size: 1.05rem;
-    font-weight: 800;
-    letter-spacing: -0.01em;
-  }
+	  .doc-title {
+	    display: none;
+	  }
+
+	  .h2 {
+	    margin-top: 22px;
+	    font-size: 1.05rem;
+	    font-weight: 800;
+	    letter-spacing: -0.01em;
+	  }
 
   p {
     margin: 0.9em 0;
@@ -451,10 +485,25 @@
     text-decoration: none;
   }
 
-  @media (hover: hover) {
-    .link:hover {
-      color: var(--accent-hover);
-      text-decoration: underline;
-    }
-  }
-</style>
+	  @media (hover: hover) {
+	    .link:hover {
+	      color: var(--accent-hover);
+	      text-decoration: underline;
+	    }
+	  }
+
+	  /* Mobile: avoid spending vertical space on a sticky header. */
+	  @media (max-width: 639px) {
+	    .terms-header {
+	      display: none;
+	    }
+
+	    .terms-scroll {
+	      padding-top: 0;
+	    }
+
+	    .doc-title {
+	      display: block;
+	    }
+	  }
+	</style>
