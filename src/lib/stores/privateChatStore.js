@@ -1,6 +1,6 @@
 import { derived, get, writable } from 'svelte/store';
 import { tick } from 'svelte';
-import { closeSession, decryptForSession, isSessionActive } from '$lib/services/crypto.js';
+import { closeSession, decryptForSession, isSessionActive, resumeSession } from '$lib/services/crypto.js';
 import {
   clearQueuedMessagesForPeer,
   deletePrivateChat,
@@ -136,6 +136,9 @@ export function openChat(chatId) {
   if (chat && !chat.__loaded) {
     loadChatMessages(chatId, chatId).catch((err) => console.error('loadChatMessages failed', err));
   }
+  // Best-effort: attempt to decrypt any sealed messages. decryptForSession will
+  // transparently resume the key ring from storage when available.
+  decryptSealedMessages(chatId, chatId).catch((err) => console.error('decryptSealedMessages failed', err));
 
   // Persist unreadCount reset.
   updateChatMeta(chatId, { unreadCount: 0 }).catch((err) => console.error('updateChatMeta failed', err));
@@ -192,15 +195,25 @@ export async function decryptSealedMessages(chatId, sessionId) {
   const chat = get(privateChatStore).chats.get(chatId);
   if (!chat) return;
 
+  // Best-effort: load the persisted key ring so previously-received messages can
+  // decrypt after a browser restart (Phase 9).
+  try {
+    await resumeSession(sessionId);
+  } catch {
+    // ignore
+  }
+
   const decrypted = await Promise.all(
     chat.messages.map(async (m) => {
       // Only attempt to decrypt received sealed messages.
       if (!m?.sealed || m.direction === 'sent') return m;
+      if (typeof m.ciphertext !== 'string' || typeof m.iv !== 'string') return m;
       try {
         const text = await decryptForSession(sessionId, m.ciphertext, m.iv);
         return { ...m, text, sealed: false };
       } catch {
-        return { ...m, text: '🔒 Encrypted in a previous session', sealed: false };
+        // Keep sealed so we can retry later (e.g. after a key ring resumes from storage).
+        return { ...m, text: '🔒 Encrypted in a previous session', sealed: true };
       }
     })
   );
@@ -221,13 +234,16 @@ export function addOutgoingMessage(chatId, { id, text, timestamp }) {
   });
 }
 
-export function addIncomingMessage(chatId, { id, text, timestamp }) {
+export function addIncomingMessage(chatId, { id, text, timestamp, ciphertext = null, iv = null, sealed = false }) {
   update((s) => {
     const next = new Map(s.chats);
     const chat = next.get(chatId);
     if (!chat) return s;
 
-    const messages = [...chat.messages, { id, direction: 'received', text, timestamp, delivered: true, sealed: false }];
+    const messages = [
+      ...chat.messages,
+      { id, direction: 'received', text, ciphertext, iv, timestamp, delivered: true, sealed: Boolean(sealed) }
+    ];
     const unreadInc = s.activeChatId === chatId ? 0 : 1;
     next.set(chatId, {
       ...chat,

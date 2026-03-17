@@ -154,6 +154,7 @@ vi.mock('$lib/services/crypto.js', () => {
   return {
     buildSessionId,
     isSessionActive: vi.fn().mockReturnValue(false),
+    resumeSession: vi.fn().mockResolvedValue(false),
     createSession: vi.fn().mockResolvedValue({ sessionId: buildSessionId('local', 'p2'), publicKeyBase64: 'OUR_PUB_EX' }),
     completeSession: vi.fn().mockResolvedValue({ sessionId: buildSessionId('local', 'p2'), publicKeyBase64: 'OUR_PUB_EX_ACK' }),
     encryptForSession: vi.fn().mockResolvedValue({ ciphertext: 'CIPH', iv: 'IV' }),
@@ -896,7 +897,14 @@ it('PRIVATE_MSG handler decrypts and calls addIncomingMessage (and sends ACK)', 
   );
 
   expect(cryptoMod.decryptForSession).toHaveBeenCalled();
-  expect(hoisted.addIncomingMessageMock).toHaveBeenCalledWith('local:p2', { id: 'm1', text: 'hello', timestamp: 2 });
+  expect(hoisted.addIncomingMessageMock).toHaveBeenCalledWith('local:p2', {
+    id: 'm1',
+    text: 'hello',
+    ciphertext: 'CIPH',
+    iv: 'IV',
+    sealed: false,
+    timestamp: 2
+  });
   const ack = send.mock.calls.map((c) => c[0]).find((m) => m.type === 'PRIVATE_MSG_ACK');
   expect(ack).toBeTruthy();
   expect(ack.payload.messageId).toBe('m1');
@@ -932,7 +940,14 @@ it('PRIVATE_MSG handler stores as unreadable if session not active', async () =>
   );
 
   expect(cryptoMod.decryptForSession).not.toHaveBeenCalled();
-  expect(hoisted.addIncomingMessageMock).toHaveBeenCalledWith('local:p2', { id: 'm2', text: '🔒 Encrypted message', timestamp: 2 });
+  expect(hoisted.addIncomingMessageMock).toHaveBeenCalledWith('local:p2', {
+    id: 'm2',
+    text: null,
+    ciphertext: 'CIPH',
+    iv: 'IV',
+    sealed: true,
+    timestamp: 2
+  });
 });
 
 it('PRIVATE_MSG_ACK handler calls markDelivered and markMessageDelivered', async () => {

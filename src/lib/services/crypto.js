@@ -1,3 +1,5 @@
+import { getSessionKeyRing, saveSessionKeyRing } from '$lib/services/db.js';
+
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -108,13 +110,33 @@ export async function deriveSharedSecret(privateKey, remotePublicKey) {
       },
       hkdfKey,
       { name: 'AES-GCM', length: 256 },
-      false,
+      // Extractable so we can persist the derived key locally (Phase 9).
+      true,
       ['encrypt', 'decrypt']
     );
   } catch (err) {
     console.error('deriveSharedSecret failed', err);
     throw err;
   }
+}
+
+/**
+ * @param {CryptoKey} key
+ * @returns {Promise<string>}
+ */
+async function exportAesKeyBase64(key) {
+  const raw = await crypto.subtle.exportKey('raw', key);
+  return arrayBufferToBase64(raw);
+}
+
+/**
+ * @param {string} base64
+ * @returns {Promise<CryptoKey>}
+ */
+async function importAesKeyBase64(base64) {
+  const raw = base64ToArrayBuffer(base64);
+  // Extractable so we can re-persist the ring after subsequent re-keys.
+  return await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']);
 }
 
 /**
@@ -170,8 +192,70 @@ export async function decryptMessage(sharedKey, ciphertext, iv) {
 // Session keys provide forward secrecy: keys are ephemeral per session and discarded on tab close.
 
 // Key: sessionId (string) — `${peerId1}:${peerId2}` sorted alphabetically
-// Value: { sharedKey, myKeyPair, createdAt, state }
+// Value: { keyRing, myKeyPair, createdAt }
 const activeSessions = new Map();
+const MAX_KEY_RING = 5;
+
+/**
+ * @param {string} sessionId
+ * @returns {Promise<boolean>}
+ */
+export async function resumeSession(sessionId) {
+  const id = String(sessionId ?? '').trim();
+  if (!id) return false;
+
+  const existing = activeSessions.get(id);
+  if (existing?.state === 'active' && existing?.keyRing?.length) return true;
+
+  try {
+    const row = await getSessionKeyRing(id);
+    const keys = Array.isArray(row?.keys) ? row.keys : [];
+    if (keys.length === 0) return false;
+
+    const imported = [];
+    for (const k of keys) {
+      if (!k?.keyBase64) continue;
+      try {
+        const key = await importAesKeyBase64(k.keyBase64);
+        imported.push({ key, createdAt: typeof k.createdAt === 'number' ? k.createdAt : Date.now() });
+      } catch {
+        // ignore malformed/legacy entry
+      }
+    }
+    if (imported.length === 0) return false;
+
+    activeSessions.set(id, {
+      keyRing: imported,
+      sharedKey: imported[0].key,
+      myKeyPair: null,
+      createdAt: row?.updatedAt ?? Date.now(),
+      state: 'active'
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function persistKeyRing(sessionId, keyRing) {
+  const id = String(sessionId ?? '').trim();
+  if (!id) return;
+  const ring = Array.isArray(keyRing) ? keyRing : [];
+
+  const exported = [];
+  for (const entry of ring) {
+    if (!entry?.key) continue;
+    try {
+      exported.push({
+        keyBase64: await exportAesKeyBase64(entry.key),
+        createdAt: typeof entry.createdAt === 'number' ? entry.createdAt : Date.now()
+      });
+    } catch {
+      // ignore
+    }
+  }
+  await saveSessionKeyRing(id, exported);
+}
 
 /**
  * Always sort so both peers generate the same sessionId.
@@ -190,14 +274,20 @@ export function buildSessionId(peerId1, peerId2) {
  */
 export async function createSession(myPeerId, theirPeerId) {
   const sessionId = buildSessionId(myPeerId, theirPeerId);
+  // Preserve existing ring (so decrypt stays possible during re-keys).
+  if (!activeSessions.has(sessionId)) {
+    await resumeSession(sessionId);
+  }
+  const prev = activeSessions.get(sessionId);
   const keyPair = await generateKeyPair();
   const publicKeyBase64 = await exportPublicKey(keyPair.publicKey);
 
   activeSessions.set(sessionId, {
+    state: 'pending', // 'pending' | 'active' | 'closed'
     sharedKey: null,
+    keyRing: prev?.keyRing ?? [],
     myKeyPair: keyPair,
-    createdAt: Date.now(),
-    state: 'pending' // 'pending' | 'active' | 'closed'
+    createdAt: Date.now()
   });
 
   return { sessionId, publicKeyBase64 };
@@ -215,19 +305,16 @@ export async function completeSession(myPeerId, theirPeerId, theirPublicKeyBase6
   /** @type {any} */
   let session = activeSessions.get(sessionId);
 
-  if (session?.state === 'active' && session?.sharedKey) {
-    // Idempotency: duplicate key exchange messages can happen during reconnects.
-    return {
-      sessionId,
-      publicKeyBase64: await exportPublicKey(session.myKeyPair.publicKey)
-    };
+  if (!session) {
+    await resumeSession(sessionId);
+    session = activeSessions.get(sessionId);
   }
 
   if (!session) {
     // Responder: create our key pair now.
     const keyPair = await generateKeyPair();
     session = {
-      sharedKey: null,
+      keyRing: [],
       myKeyPair: keyPair,
       createdAt: Date.now(),
       state: 'pending'
@@ -239,13 +326,16 @@ export async function completeSession(myPeerId, theirPeerId, theirPublicKeyBase6
   if (!session?.myKeyPair?.privateKey) {
     const keyPair = await generateKeyPair();
     session.myKeyPair = keyPair;
-    session.sharedKey = null;
-    session.state = 'pending';
   }
 
   const theirPublicKey = await importPublicKey(theirPublicKeyBase64);
   const sharedKey = await deriveSharedSecret(session.myKeyPair.privateKey, theirPublicKey);
 
+  // Add newest key to the front; keep a short ring to bound storage.
+  const now = Date.now();
+  const ring = Array.isArray(session.keyRing) ? session.keyRing : [];
+  ring.unshift({ key: sharedKey, createdAt: now });
+  session.keyRing = ring.slice(0, MAX_KEY_RING);
   session.sharedKey = sharedKey;
   session.state = 'active';
 
@@ -254,6 +344,12 @@ export async function completeSession(myPeerId, theirPeerId, theirPublicKeyBase6
     publicKey: session.myKeyPair.publicKey,
     privateKey: null
   };
+
+  try {
+    await persistKeyRing(sessionId, session.keyRing);
+  } catch (err) {
+    console.error('persistKeyRing failed', err);
+  }
 
   return {
     sessionId,
@@ -295,7 +391,7 @@ export function closeAllSessions() {
  */
 export async function encryptForSession(sessionId, plaintext) {
   const session = activeSessions.get(sessionId);
-  if (!session || session.state !== 'active') throw new Error(`No active session for ${sessionId}`);
+  if (!session || session.state !== 'active' || !session.sharedKey) throw new Error(`No active session for ${sessionId}`);
   return await encryptMessage(session.sharedKey, plaintext);
 }
 
@@ -308,5 +404,17 @@ export async function encryptForSession(sessionId, plaintext) {
 export async function decryptForSession(sessionId, ciphertext, iv) {
   const session = activeSessions.get(sessionId);
   if (!session || session.state !== 'active') throw new Error(`No active session for ${sessionId}`);
-  return await decryptMessage(session.sharedKey, ciphertext, iv);
+  const ring = Array.isArray(session.keyRing) ? session.keyRing : [];
+  if (ring.length === 0) throw new Error(`No active session for ${sessionId}`);
+
+  /** @type {any} */
+  let lastErr = null;
+  for (const entry of ring) {
+    try {
+      return await decryptMessage(entry.key, ciphertext, iv);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr ?? new Error('Decrypt failed');
 }

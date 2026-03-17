@@ -89,6 +89,7 @@ vi.mock('$lib/services/crypto.js', () => {
   return {
     buildSessionId,
     isSessionActive: vi.fn().mockReturnValue(false),
+    resumeSession: vi.fn().mockResolvedValue(false),
     createSession: vi.fn().mockResolvedValue({ sessionId: buildSessionId('a', 'b'), publicKeyBase64: 'PUB' }),
     completeSession: vi.fn().mockResolvedValue({ sessionId: buildSessionId('a', 'b'), publicKeyBase64: 'PUB2' }),
     encryptForSession: vi.fn().mockResolvedValue({ ciphertext: 'C', iv: 'I' }),

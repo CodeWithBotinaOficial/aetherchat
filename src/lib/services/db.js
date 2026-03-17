@@ -80,6 +80,15 @@ import Dexie from 'dexie';
  * @property {number} timestamp
  */
 
+/**
+ * Persisted private chat session key ring (local-only).
+ * Keys are stored so received messages remain decryptable across browser restarts and re-keys.
+ * @typedef {Object} SessionKeyRing
+ * @property {string} id
+ * @property {{ keyBase64: string, createdAt: number }[]} keys
+ * @property {number} updatedAt
+ */
+
 class AetherChatDB extends Dexie {
   /** @type {Dexie.Table<User, number>} */ users;
   /** @type {Dexie.Table<GlobalMessage, string>} */ globalMessages;
@@ -89,6 +98,8 @@ class AetherChatDB extends Dexie {
   /** @type {Dexie.Table<UsernameRegistryEntry, number>} */ usernameRegistry;
   /** @type {Dexie.Table<PeerIdEntry, string>} */ peerIds;
   /** @type {Dexie.Table<QueuedMessage, string>} */ queuedMessages;
+  /** @type {Dexie.Table<{ id: string, chatId: string, timestamp: number, plaintext: string }, string>} */ sentMessagesPlaintext;
+  /** @type {Dexie.Table<SessionKeyRing, string>} */ sessionKeys;
 
   constructor() {
     super('AetherChatDB');
@@ -182,21 +193,36 @@ class AetherChatDB extends Dexie {
 		      queuedMessages: 'id, chatId, theirPeerId, timestamp'
 		    });
 
-		    // Phase 8: keep a local plaintext copy of SENT private messages for sender readability
-		    // across session key rotation (forward secrecy).
-		    this.version(9).stores({
-		      users: 'id, username, createdAt',
-		      globalMessages: 'id, timestamp, peerId, username',
-		      privateChats: 'id, myPeerId, theirPeerId, theirUsername, createdAt, lastActivity',
-		      privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
-		      knownPeers: '++id, peerId, lastSeen, username',
-		      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
-		      peerIds: 'username, peerId',
-		      queuedMessages: 'id, chatId, theirPeerId, timestamp',
-		      sentMessagesPlaintext: 'id, chatId, timestamp'
-		    });
-		  }
-		}
+			    // Phase 8: keep a local plaintext copy of SENT private messages for sender readability
+			    // across session key rotation (forward secrecy).
+			    this.version(9).stores({
+			      users: 'id, username, createdAt',
+			      globalMessages: 'id, timestamp, peerId, username',
+			      privateChats: 'id, myPeerId, theirPeerId, theirUsername, createdAt, lastActivity',
+			      privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+			      knownPeers: '++id, peerId, lastSeen, username',
+			      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+			      peerIds: 'username, peerId',
+			      queuedMessages: 'id, chatId, theirPeerId, timestamp',
+			      sentMessagesPlaintext: 'id, chatId, timestamp'
+			    });
+
+			    // Phase 9: persist private chat session keys (local-only) so received messages
+			    // stay decryptable across browser restarts and session re-keys.
+			    this.version(10).stores({
+			      users: 'id, username, createdAt',
+			      globalMessages: 'id, timestamp, peerId, username',
+			      privateChats: 'id, myPeerId, theirPeerId, theirUsername, createdAt, lastActivity',
+			      privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+			      knownPeers: '++id, peerId, lastSeen, username',
+			      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+			      peerIds: 'username, peerId',
+			      queuedMessages: 'id, chatId, theirPeerId, timestamp',
+			      sentMessagesPlaintext: 'id, chatId, timestamp',
+			      sessionKeys: 'id, updatedAt'
+			    });
+			  }
+			}
 
 export const db = new AetherChatDB();
 
@@ -490,13 +516,60 @@ export async function getPrivateChat(chatId) {
  */
 export async function deletePrivateChat(chatId) {
   try {
-    await db.transaction('rw', db.privateChats, db.privateMessages, db.sentMessagesPlaintext, async () => {
+    await db.transaction('rw', db.privateChats, db.privateMessages, db.sentMessagesPlaintext, db.sessionKeys, async () => {
       await db.privateMessages.where('chatId').equals(chatId).delete();
       await db.sentMessagesPlaintext.where('chatId').equals(chatId).delete();
+      await db.sessionKeys.delete(chatId);
       await db.privateChats.delete(chatId);
     });
   } catch (err) {
     console.error('deletePrivateChat failed', err);
+    throw err;
+  }
+}
+
+/**
+ * Persist the session key ring for a private chat (local-only).
+ * @param {string} chatId
+ * @param {{ keyBase64: string, createdAt: number }[]} keys
+ */
+export async function saveSessionKeyRing(chatId, keys) {
+  try {
+    const id = String(chatId ?? '').trim();
+    if (!id) return;
+    const list = Array.isArray(keys) ? keys.filter((k) => typeof k?.keyBase64 === 'string' && typeof k?.createdAt === 'number') : [];
+    await db.sessionKeys.put({ id, keys: list, updatedAt: Date.now() });
+  } catch (err) {
+    console.error('saveSessionKeyRing failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} chatId
+ * @returns {Promise<SessionKeyRing|null>}
+ */
+export async function getSessionKeyRing(chatId) {
+  try {
+    const id = String(chatId ?? '').trim();
+    if (!id) return null;
+    return (await db.sessionKeys.get(id)) ?? null;
+  } catch (err) {
+    console.error('getSessionKeyRing failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} chatId
+ */
+export async function deleteSessionKeyRing(chatId) {
+  try {
+    const id = String(chatId ?? '').trim();
+    if (!id) return;
+    await db.sessionKeys.delete(id);
+  } catch (err) {
+    console.error('deleteSessionKeyRing failed', err);
     throw err;
   }
 }

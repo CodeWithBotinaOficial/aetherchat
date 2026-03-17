@@ -14,14 +14,14 @@ import {
 import {
   buildSessionId,
   closeAllSessions,
-  closeSession,
   completeSession,
   createSession,
   decryptForSession,
   encryptForSession,
   exportPublicKey,
   generateKeyPair,
-  isSessionActive
+  isSessionActive,
+  resumeSession
 } from '$lib/services/crypto.js';
 import {
   addIncomingMessage,
@@ -773,14 +773,31 @@ export async function flushQueueForPeer(theirPeerId) {
   }
 }
 
-function getCurrentPeerList(profile) {
+function getNetworkPeerList(profile) {
+  // When acting as lobby host, discovery must not depend on direct mesh links.
+  // Use the lobby join roster as the baseline, then overlay any fresher info we
+  // already have from direct connections.
   const state = get(peerStore);
-  const peers = [];
-  if (state.peerId) peers.push({ peerId: state.peerId, username: profile.username, color: profile.color, age: profile.age });
-  for (const [peerId, info] of state.connectedPeers.entries()) {
-    peers.push({ peerId, username: info.username, color: info.color, age: info.age });
+  const map = new Map();
+
+  // Include any known lobby-joined peers.
+  for (const p of lobbyPeerList.values()) {
+    if (!p?.peerId) continue;
+    map.set(p.peerId, { peerId: p.peerId, username: p.username, color: p.color, age: p.age });
   }
-  return peers;
+
+  // Ensure self is present (some edge flows can call before lobbyPeerList is seeded).
+  if (state.peerId) {
+    map.set(state.peerId, { peerId: state.peerId, username: profile.username, color: profile.color, age: profile.age });
+  }
+
+  // Overlay direct connection info (more up-to-date than initial LOBBY_JOIN payloads).
+  for (const [peerId, info] of state.connectedPeers.entries()) {
+    if (!peerId) continue;
+    map.set(peerId, { peerId, username: info.username, color: info.color, age: info.age });
+  }
+
+  return Array.from(map.values());
 }
 
 async function setupLobbyHostHandlers(hostPeer, localPeer, profile) {
@@ -790,6 +807,13 @@ async function setupLobbyHostHandlers(hostPeer, localPeer, profile) {
   }
 
   hostPeer.on('connection', (conn) => {
+    conn.on('close', () => {
+      // Clean up lobby roster entry for this join connection.
+      const pid = conn?.metadata?.peerId;
+      if (typeof pid === 'string' && pid.length > 0) {
+        lobbyPeerList.delete(pid);
+      }
+    });
     conn.on('data', (msg) => {
       (async () => {
         if (!validateProtocolMessage(msg)) return;
@@ -797,9 +821,16 @@ async function setupLobbyHostHandlers(hostPeer, localPeer, profile) {
 
         const newPeer = msg.from;
         lobbyPeerList.set(newPeer.peerId, { peerId: newPeer.peerId, username: newPeer.username, color: newPeer.color, age: newPeer.age });
+        // Stamp the join connection with the main peerId so conn.on('close') can
+        // remove it from the roster (PeerJS DataConnection doesn't expose `from`).
+        try {
+          conn.metadata = { ...(conn.metadata ?? {}), peerId: newPeer.peerId };
+        } catch {
+          // ignore
+        }
 
         const [peerList, usernameRegistry, globalHistory] = await Promise.all([
-          getCurrentPeerList(profile),
+          getNetworkPeerList(profile),
           getFullUsernameRegistry(),
           getGlobalMessages(100)
         ]);
@@ -817,6 +848,17 @@ async function setupLobbyHostHandlers(hostPeer, localPeer, profile) {
           payload: { newPeer },
           timestamp: Date.now()
         });
+
+        // Critical for guest reconnection: proactively form a direct mesh link to
+        // the joining peer. Guests should not have to "poke" the network to be seen.
+        // Delay slightly to reduce connection-collision thrash when both sides reconnect.
+        setTimeout(() => {
+          try {
+            connectToPeerIfUnknown(newPeer, profile);
+          } catch (err) {
+            console.error('lobby host connect-back failed', err);
+          }
+        }, 350);
       })().catch((err) => console.error('lobby host handler failed', err));
     });
   });
@@ -1025,7 +1067,23 @@ export function handleIncomingConnection(conn, profile) {
       const existingChat = get(privateChatStore).chats.get(chatId);
       if (!existingChat) return;
       if (existingChat.keyExchangeState !== 'idle') return;
-      if (isSessionActive(chatId)) return;
+
+      // Phase 9: If we have a persisted key ring for this chat, resume it and decrypt
+      // sealed history immediately (no need to re-key just to read old messages).
+      if (!isSessionActive(chatId)) {
+        try {
+          await resumeSession(chatId);
+        } catch {
+          // ignore
+        }
+      }
+      if (isSessionActive(chatId)) {
+        setKeyExchangeState(chatId, 'active');
+        await decryptSealedMessages(chatId, chatId);
+        void flushQueueForPeer(remotePeerId);
+        return;
+      }
+
       if (!userProfileRef) return;
 
       try {
@@ -1600,10 +1658,13 @@ export async function handleMessage(msg, fromConn, profile) {
       lastActivity: msg.timestamp ?? now
     });
 
-    let text = '🔒 Encrypted message';
+    let sealed = true;
+    /** @type {string|null} */
+    let text = null;
     if (isSessionActive(chatId)) {
       try {
         text = await decryptForSession(chatId, ciphertext, iv);
+        sealed = false;
       } catch {
         // keep placeholder
       }
@@ -1623,7 +1684,7 @@ export async function handleMessage(msg, fromConn, profile) {
       console.error('savePrivateMessage failed', err);
     }
 
-    addIncomingMessage(chatId, { id: messageId, text, timestamp: msg.timestamp ?? now });
+    addIncomingMessage(chatId, { id: messageId, text, ciphertext, iv, sealed, timestamp: msg.timestamp ?? now });
 
     try {
       // Persist a best-effort preview + unread count so it survives reload.
@@ -2077,16 +2138,30 @@ export async function sendPrivateMessage(theirPeerId, plaintext) {
 export async function closePrivateChat(theirPeerId) {
   const state = get(peerStore);
   const myPeerId = state.peerId;
-  if (!myPeerId) return;
   if (!theirPeerId) return;
-  if (!cachedProfile) return;
 
-  const chatId = buildSessionId(myPeerId, theirPeerId);
-  closeSession(chatId);
+  // Local deletion must work even if PeerJS is still initializing/offline.
+  // Prefer the deterministic chatId when we have our peerId; otherwise fall back
+  // to looking up the chat entry by theirPeerId.
+  let chatId = myPeerId ? buildSessionId(myPeerId, theirPeerId) : null;
+  if (!chatId) {
+    try {
+      for (const [id, chat] of get(privateChatStore).chats.entries()) {
+        if (chat?.theirPeerId === theirPeerId) {
+          chatId = id;
+          break;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  if (!chatId) return;
 
   await deleteChatFromStore(chatId);
 
-  if (state.connectedPeers.has(theirPeerId)) {
+  // Best-effort remote notification (only if we have enough state to send).
+  if (myPeerId && cachedProfile && state.connectedPeers.has(theirPeerId)) {
     sendToPeer(theirPeerId, buildDirectMessage('PRIVATE_CHAT_CLOSED', myPeerId, cachedProfile, theirPeerId, { chatId }, Date.now()));
   }
 }

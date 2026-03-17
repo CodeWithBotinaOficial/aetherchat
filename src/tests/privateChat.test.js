@@ -7,7 +7,8 @@ const hoisted = vi.hoisted(() => {
   return {
     isSessionActiveMock: vi.fn(),
     decryptForSessionMock: vi.fn(),
-    closeSessionMock: vi.fn()
+    closeSessionMock: vi.fn(),
+    resumeSessionMock: vi.fn().mockResolvedValue(false)
   };
 });
 
@@ -15,7 +16,8 @@ vi.mock('$lib/services/crypto.js', () => {
   return {
     isSessionActive: (...args) => hoisted.isSessionActiveMock(...args),
     decryptForSession: (...args) => hoisted.decryptForSessionMock(...args),
-    closeSession: (...args) => hoisted.closeSessionMock(...args)
+    closeSession: (...args) => hoisted.closeSessionMock(...args),
+    resumeSession: (...args) => hoisted.resumeSessionMock(...args)
   };
 });
 
@@ -43,35 +45,38 @@ async function clearAllTables() {
     db.users,
     db.globalMessages,
     db.privateChats,
-    db.privateMessages,
-    db.sentMessagesPlaintext,
-    db.queuedMessages,
-    db.knownPeers,
-    db.usernameRegistry,
-    db.peerIds,
-    async () => {
-      await Promise.all([
-        db.users.clear(),
-        db.globalMessages.clear(),
-        db.privateChats.clear(),
-        db.privateMessages.clear(),
-        db.sentMessagesPlaintext.clear(),
-        db.queuedMessages.clear(),
-        db.knownPeers.clear(),
-        db.usernameRegistry.clear(),
-        db.peerIds.clear()
-      ]);
-    }
-  );
+	    db.privateMessages,
+	    db.sentMessagesPlaintext,
+	    db.sessionKeys,
+	    db.queuedMessages,
+	    db.knownPeers,
+	    db.usernameRegistry,
+	    db.peerIds,
+	    async () => {
+	      await Promise.all([
+	        db.users.clear(),
+	        db.globalMessages.clear(),
+	        db.privateChats.clear(),
+	        db.privateMessages.clear(),
+	        db.sentMessagesPlaintext.clear(),
+	        db.sessionKeys.clear(),
+	        db.queuedMessages.clear(),
+	        db.knownPeers.clear(),
+	        db.usernameRegistry.clear(),
+	        db.peerIds.clear()
+	      ]);
+	    }
+	  );
 }
 
-beforeEach(async () => {
-  hoisted.isSessionActiveMock.mockReset();
-  hoisted.decryptForSessionMock.mockReset();
-  hoisted.closeSessionMock.mockReset();
-  await clearAllTables();
-  privateChatStore.set({ chats: new Map(), activeChatId: null, pendingKeyExchanges: new Map() });
-});
+	beforeEach(async () => {
+	  hoisted.isSessionActiveMock.mockReset();
+	  hoisted.decryptForSessionMock.mockReset();
+	  hoisted.closeSessionMock.mockReset();
+	  hoisted.resumeSessionMock.mockReset();
+	  await clearAllTables();
+	  privateChatStore.set({ chats: new Map(), activeChatId: null, pendingKeyExchanges: new Map() });
+	});
 
 it('loadPrivateChats populates store from DB', async () => {
   const now = Date.now();
@@ -577,7 +582,7 @@ it('decryptSealedMessages marks old-session failures with placeholder text', asy
   await decryptSealedMessages('a:b', 'a:b');
   const chat = get(privateChatStore).chats.get('a:b');
   expect(chat.messages[0].text).toMatch(/previous session/i);
-  expect(chat.messages[0].sealed).toBe(false);
+  expect(chat.messages[0].sealed).toBe(true);
 });
 
 it('ConfirmDialog handles keydown and does not throw after destruction', async () => {
