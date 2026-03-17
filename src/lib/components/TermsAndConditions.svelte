@@ -1,5 +1,5 @@
 <script>
-  import { onDestroy, onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
 
   const LAST_UPDATED = 'March 17, 2026';
 
@@ -7,11 +7,12 @@
   let scroller = null;
   let progress = 0;
 
-  function computeProgress() {
+  async function computeProgress() {
     if (!scroller) {
       progress = 0;
       return;
     }
+    await tick();
     const max = scroller.scrollHeight - scroller.clientHeight;
     if (max <= 0) {
       progress = 0;
@@ -21,35 +22,29 @@
   }
 
   onMount(() => {
-    computeProgress();
-    const onScroll = () => computeProgress();
+    void computeProgress();
     const onResize = () => computeProgress();
-
-    scroller?.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('resize', onResize, { passive: true });
 
     return () => {
-      scroller?.removeEventListener('scroll', onScroll);
       window.removeEventListener('resize', onResize);
     };
   });
-
-  onDestroy(() => {});
 </script>
 
-<div class="terms h-full flex flex-col">
-  <div class="progress-track" aria-hidden="true">
-    <div class="progress-bar" style={`transform: scaleX(${progress});`}></div>
-  </div>
-
-  <header class="terms-header">
-    <div class="header-inner">
-      <div class="title">Terms of Service and Privacy Policy</div>
-      <div class="updated">Last updated: {LAST_UPDATED}</div>
+<div class="terms h-full">
+  <div bind:this={scroller} class="terms-scroll scroll-container" on:scroll={() => void computeProgress()}>
+    <div class="progress-track" aria-hidden="true">
+      <div class="progress-bar" style={`transform: scaleX(${progress});`}></div>
     </div>
-  </header>
 
-  <div bind:this={scroller} class="terms-body scroll-container">
+    <header class="terms-header">
+      <div class="header-inner">
+        <div class="title">Terms of Service and Privacy Policy</div>
+        <div class="updated">Last updated: {LAST_UPDATED}</div>
+      </div>
+    </header>
+
     <article class="doc" aria-label="Terms of Service and Privacy Policy">
       <h1 class="h1">TERMS OF SERVICE AND PRIVACY POLICY</h1>
       <p class="meta">
@@ -325,6 +320,11 @@
   .terms {
     background: var(--bg-base);
     color: var(--text-primary);
+    height: 100%;
+  }
+
+  .terms-scroll {
+    height: 100%;
   }
 
   .progress-track {
@@ -374,16 +374,10 @@
     white-space: nowrap;
   }
 
-  .terms-body {
-    flex: 1;
-    min-height: 0;
-    padding: 16px;
-  }
-
   .doc {
     max-width: 720px;
     margin: 0 auto;
-    padding: 8px 0 48px;
+    padding: 16px 16px 48px;
     color: var(--text-secondary);
     line-height: 1.65;
   }

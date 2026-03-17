@@ -16,7 +16,7 @@
   }
 </script>
 
-<nav class="bottom-nav-bar bottom-nav" aria-label="Bottom navigation">
+<nav class="bottom-nav-bar" aria-label="Bottom navigation">
   <button
     class={`nav-btn ${isActive('global') ? 'active' : ''}`}
     on:click={() => select('global')}
@@ -59,7 +59,9 @@
     bottom: 0;
     left: 0;
     right: 0;
-    min-height: calc(56px + env(safe-area-inset-bottom, 0px));
+    box-sizing: border-box;
+    height: calc(56px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
     z-index: 50;
     border-top: 1px solid var(--border);
     background: color-mix(in srgb, var(--bg-surface) 92%, transparent);

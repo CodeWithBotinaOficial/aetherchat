@@ -15,7 +15,7 @@
         : 'Running offline';
 </script>
 
-<header class="top-bar-bar top-bar" aria-label="App top bar">
+<header class="top-bar-bar" aria-label="App top bar">
   <div class="top-bar-inner">
     <div class="left">
       <div class="wordmark">AetherChat</div>
@@ -37,7 +37,9 @@
     top: 0;
     left: 0;
     right: 0;
-    min-height: calc(48px + env(safe-area-inset-top, 0px));
+    box-sizing: border-box;
+    height: calc(48px + env(safe-area-inset-top, 0px));
+    padding-top: env(safe-area-inset-top, 0px);
     z-index: 50;
     border-bottom: 1px solid var(--border);
     background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
