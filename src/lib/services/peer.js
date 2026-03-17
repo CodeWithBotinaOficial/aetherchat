@@ -80,6 +80,36 @@ const JOIN_LOBBY_TIMEOUT_MS = 6000;
 // First attempts stay under ~5s total, then continue backing off to avoid thrashing.
 const UNAVAILABLE_ID_RETRY_DELAYS_MS = [250, 500, 900, 1500, 2200, 3500, 5500, 8500, 13000];
 
+// Avoid repeatedly trying to connect to peer IDs that just failed.
+// This reduces noisy PeerJS console errors when the lobby roster contains stale IDs.
+const CONNECT_FAIL_COOLDOWN_MS = 2 * 60 * 1000;
+/** @type {Map<string, { lastFailedAt: number, count: number }>} */
+const recentConnectFailures = new Map();
+
+function isInConnectCooldown(peerId) {
+  const key = String(peerId ?? '').trim();
+  if (!key) return false;
+  const entry = recentConnectFailures.get(key);
+  if (!entry) return false;
+  return Date.now() - entry.lastFailedAt < CONNECT_FAIL_COOLDOWN_MS;
+}
+
+function noteConnectFailure(peerId) {
+  const key = String(peerId ?? '').trim();
+  if (!key) return;
+  const prev = recentConnectFailures.get(key);
+  recentConnectFailures.set(key, {
+    lastFailedAt: Date.now(),
+    count: (prev?.count ?? 0) + 1
+  });
+}
+
+function noteConnectSuccess(peerId) {
+  const key = String(peerId ?? '').trim();
+  if (!key) return;
+  recentConnectFailures.delete(key);
+}
+
 let registrySyncResolve = null;
 export let registrySyncReady = new Promise((resolve) => {
   registrySyncResolve = resolve;
@@ -625,6 +655,7 @@ function connectToPeer(peerId, profile) {
   // attempting to create a DataConnection while `peer.disconnected === true`.
   if (mainPeer.destroyed || mainPeer.disconnected) return null;
   if (!peerId || peerId === mainPeer.id) return null;
+  if (isInConnectCooldown(peerId)) return null;
 
   const state = get(peerStore);
   if (state.connectedPeers.has(peerId)) return state.connectedPeers.get(peerId)?.connection ?? null;
@@ -776,6 +807,12 @@ function getNetworkPeerList(profile) {
   // Include any known lobby-joined peers.
   for (const p of lobbyPeerList.values()) {
     if (!p?.peerId) continue;
+    // Only advertise peers that still have an open lobby join connection.
+    // Direct mesh peers will be overlaid below.
+    if (p.peerId !== state.peerId) {
+      const joinConn = lobbyConnections.get(p.peerId);
+      if (!joinConn || joinConn.open === false) continue;
+    }
     map.set(p.peerId, { peerId: p.peerId, username: p.username, color: p.color, age: p.age });
   }
 
@@ -804,6 +841,14 @@ async function setupLobbyHostHandlers(hostPeer, localPeer, profile) {
       // Clean up lobby roster entry for this join connection.
       const pid = conn?.metadata?.peerId;
       if (typeof pid === 'string' && pid.length > 0) {
+        lobbyConnections.delete(pid);
+        lobbyPeerList.delete(pid);
+      }
+    });
+    conn.on('error', () => {
+      const pid = conn?.metadata?.peerId;
+      if (typeof pid === 'string' && pid.length > 0) {
+        lobbyConnections.delete(pid);
         lobbyPeerList.delete(pid);
       }
     });
@@ -814,6 +859,7 @@ async function setupLobbyHostHandlers(hostPeer, localPeer, profile) {
 
         const newPeer = msg.from;
         lobbyPeerList.set(newPeer.peerId, { peerId: newPeer.peerId, username: newPeer.username, color: newPeer.color, age: newPeer.age });
+        lobbyConnections.set(newPeer.peerId, conn);
         // Stamp the join connection with the main peerId so conn.on('close') can
         // remove it from the roster (PeerJS DataConnection doesn't expose `from`).
         try {
@@ -1041,6 +1087,7 @@ export function handleIncomingConnection(conn, profile) {
 
   conn.on('open', () => {
     (async () => {
+      noteConnectSuccess(remotePeerId);
       // Replace stale connection entry on open as well (covers both incoming + outgoing).
       const prev = get(peerStore).connectedPeers.get(remotePeerId);
       if (prev?.connection && prev.connection !== conn) {
@@ -1081,6 +1128,7 @@ export function handleIncomingConnection(conn, profile) {
   });
 
   conn.on('error', (err) => {
+    noteConnectFailure(remotePeerId);
     console.error('Peer connection error', err);
     setChatOnlineStatus(remotePeerId, false);
     peerStore.update((s) => {
@@ -1145,6 +1193,7 @@ async function handleNetworkState(payload, profile) {
 function connectToPeerIfUnknown(peerInfo, profile) {
   const pid = peerInfo?.peerId;
   if (!pid || pid === get(peerStore).peerId) return;
+  if (isInConnectCooldown(pid)) return;
   const state = get(peerStore);
   const existing = state.connectedPeers.get(pid);
   if (existing) {
