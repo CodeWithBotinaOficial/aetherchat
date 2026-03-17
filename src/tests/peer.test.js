@@ -33,6 +33,8 @@ class MockPeer {
   constructor(id, options) {
     this.id = id;
     this.options = options;
+    this.disconnected = false;
+    this.destroyed = false;
     this._handlers = new Map();
     this._connections = [];
     this.destroy = vi.fn();
@@ -637,6 +639,38 @@ it('PRESENCE_ANNOUNCE updates connectedPeers and triggers re-key for idle privat
   expect(entry.connection.send).toHaveBeenCalled();
   const sent = entry.connection.send.mock.calls.map((c) => c[0]).find((m) => m.type === 'PRIVATE_KEY_EXCHANGE');
   expect(sent).toBeTruthy();
+});
+
+it('does not attempt outgoing connections while PeerJS is disconnected', async () => {
+  const main = new MockPeer('local', {});
+  main.disconnected = true;
+  const connectSpy = vi.spyOn(main, 'connect');
+
+  peerTest.setLocalPeerRefForTest(main);
+  peerStore.set({
+    peerId: 'local',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    connectedPeers: new Map()
+  });
+
+  await handleMessage(
+    {
+      type: 'NEW_PEER',
+      from: { peerId: 'host', username: 'host', color: 'hsl(3, 65%, 65%)', age: 1 },
+      payload: { newPeer: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33 } },
+      timestamp: 1
+    },
+    null,
+    me
+  );
+
+  expect(connectSpy).not.toHaveBeenCalled();
 });
 
 it('initiatePrivateChat calls createSession and sends PRIVATE_KEY_EXCHANGE', async () => {

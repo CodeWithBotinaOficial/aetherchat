@@ -639,14 +639,22 @@ async function getKnownUsernamesList() {
 
 function connectToPeer(peerId, profile) {
   if (!mainPeer) return null;
+  // PeerJS throws "Cannot connect to new Peer after disconnecting from server." when
+  // attempting to create a DataConnection while `peer.disconnected === true`.
+  if (mainPeer.destroyed || mainPeer.disconnected) return null;
   if (!peerId || peerId === mainPeer.id) return null;
 
   const state = get(peerStore);
   if (state.connectedPeers.has(peerId)) return state.connectedPeers.get(peerId)?.connection ?? null;
 
-  const conn = mainPeer.connect(peerId);
-  handleIncomingConnection(conn, profile);
-  return conn;
+  try {
+    const conn = mainPeer.connect(peerId);
+    handleIncomingConnection(conn, profile);
+    return conn;
+  } catch (err) {
+    console.error('connectToPeer failed', err);
+    return null;
+  }
 }
 
 async function sendHandshake(conn, profile) {
@@ -1127,6 +1135,9 @@ function connectToPeerIfUnknown(peerInfo, profile) {
 
 async function reconnectToKnownPeers(profile) {
   try {
+    // If we're not connected to the PeerJS server, do not attempt to open new DataConnections.
+    if (!mainPeer || mainPeer.destroyed || mainPeer.disconnected) return;
+
     const known = await getKnownPeers();
     const myPeerId = get(peerStore).peerId;
     const connected = get(peerStore).connectedPeers;
