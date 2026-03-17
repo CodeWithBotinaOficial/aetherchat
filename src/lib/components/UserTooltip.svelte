@@ -53,9 +53,10 @@
   async function handleStartPrivateChat() {
     if (!user) return;
     try {
+      const u = user;
       dispatch('close');
-      if (!user.peerId) return;
-      await initiatePrivateChat(user.peerId, user.username, user.color, user.avatarBase64 ?? null);
+      if (!u?.peerId) return;
+      await initiatePrivateChat(u.peerId, u.username, u.color, u.avatarBase64 ?? null);
     } catch (err) {
       console.error('initiatePrivateChat failed', err);
     }

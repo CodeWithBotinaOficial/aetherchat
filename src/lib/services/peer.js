@@ -1398,8 +1398,6 @@ export async function initPeer(profile) {
     });
 
     mainPeer.on('error', (err) => {
-      console.error('PeerJS error:', err?.type, err?.message);
-
       switch (err?.type) {
         case 'peer-unavailable':
           // Expected: lobby not found -> host election logic handles this on the connection error path.
@@ -1411,17 +1409,20 @@ export async function initPeer(profile) {
         case 'server-error':
         case 'socket-error':
         case 'socket-closed':
+          console.error('PeerJS error:', err?.type, err?.message);
           void handlePeerDisconnect();
           return;
         case 'browser-incompatible':
         case 'ssl-unavailable':
         case 'invalid-id':
         case 'invalid-key':
+          console.error('PeerJS error:', err?.type, err?.message);
           peerStore.update((s) => ({ ...s, connectionState: 'failed' }));
           return;
         default:
           // When we're the first peer, connecting to the lobby ID is expected to fail.
           if (isLobbyUnavailableError(err)) return;
+          console.error('PeerJS error:', err?.type, err?.message);
           console.warn('Unhandled PeerJS error type:', err?.type);
           peerStore.update((s) => ({ ...s, error: err?.type ?? 'peer-error' }));
       }
