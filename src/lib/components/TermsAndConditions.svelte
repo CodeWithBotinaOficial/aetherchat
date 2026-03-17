@@ -53,8 +53,10 @@
         <strong>Last updated:</strong> {LAST_UPDATED}<br />
         <strong>Operated by:</strong> CodeWithBotinaOficial<br />
         <strong>Contact:</strong>
+        <a class="link" href="mailto:support@codewithbotina.com">support@codewithbotina.com</a>
+        <span class="meta-sep">·</span>
         <a class="link" href="https://github.com/CodeWithBotinaOficial/aetherchat" target="_blank" rel="noreferrer">
-          https://github.com/CodeWithBotinaOficial/aetherchat
+          GitHub (source code)
         </a>
       </p>
 
@@ -323,17 +325,20 @@
     background: var(--bg-base);
     color: var(--text-primary);
     height: 100%;
+    overflow: hidden;
   }
 
   .terms-scroll {
     height: 100%;
+    display: flex;
+    flex-direction: column;
   }
 
   .progress-track {
     position: sticky;
     top: 0;
     height: 3px;
-    background: color-mix(in srgb, var(--border) 70%, transparent);
+    background: var(--bg-surface);
     z-index: 5;
   }
 
@@ -349,8 +354,7 @@
     top: 3px;
     z-index: 4;
     border-bottom: 1px solid var(--border);
-    background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
-    backdrop-filter: blur(10px);
+    background: var(--bg-surface);
   }
 
   .header-inner {
@@ -379,9 +383,10 @@
   .doc {
     max-width: 720px;
     margin: 0 auto;
-    padding: 16px 16px 48px;
+    padding: 26px 18px 72px;
     color: var(--text-secondary);
-    line-height: 1.65;
+    line-height: 1.75;
+    letter-spacing: 0.001em;
   }
 
   .h1,
@@ -394,6 +399,7 @@
     font-size: 1.35rem;
     font-weight: 900;
     letter-spacing: -0.02em;
+    margin-top: 0;
   }
 
   .h2 {
@@ -404,11 +410,16 @@
   }
 
   p {
-    margin: 10px 0 0;
+    margin: 0.9em 0;
   }
 
   .meta {
     margin-top: 10px;
+  }
+
+  .meta-sep {
+    margin: 0 8px;
+    opacity: 0.7;
   }
 
   .rule {
@@ -420,8 +431,12 @@
   }
 
   .list {
-    margin: 10px 0 0;
-    padding-left: 18px;
+    margin: 0.85em 0;
+    padding-left: 20px;
+  }
+
+  .list li {
+    margin: 0.45em 0 0;
   }
 
   .callout {

@@ -51,7 +51,27 @@ import {
 
 // PeerJS public server has limitations (roughly ~50 connections per peer ID).
 // This MVP uses it for discovery and direct browser-to-browser messaging.
-export const LOBBY_PEER_ID = 'aetherchat-lobby-v1';
+export const LOBBY_ID_PREFIX = 'aetherchat-lobby-v1';
+const LOBBY_SHARDS = 4;
+
+function getLobbyPeerId(index) {
+  const i = Number(index);
+  if (!Number.isFinite(i)) return `${LOBBY_ID_PREFIX}-0`;
+  return `${LOBBY_ID_PREFIX}-${Math.max(0, Math.min(LOBBY_SHARDS - 1, i))}`;
+}
+
+function getLobbyIdCandidates(seed) {
+  // Stable order: always try shard 0 first (better testability + easier debugging),
+  // then fall back to other shards when needed.
+  void seed;
+  return Array.from({ length: LOBBY_SHARDS }, (_, i) => getLobbyPeerId(i));
+}
+
+// Back-compat: keep the original exported constant for tests and logs.
+export const LOBBY_PEER_ID = getLobbyPeerId(0);
+
+/** @type {string|null} */
+let activeLobbyId = null;
 
 export const PEERJS_CONFIG = {
   host: '0.peerjs.com',
@@ -86,12 +106,74 @@ const CONNECT_FAIL_COOLDOWN_MS = 2 * 60 * 1000;
 /** @type {Map<string, { lastFailedAt: number, count: number }>} */
 const recentConnectFailures = new Map();
 
+const CONNECT_PENDING_TIMEOUT_MS = 15_000;
+/** @type {Map<string, number>} */
+const pendingConnectAttempts = new Map();
+
+const MAX_DIRECT_PEERS = 10;
+
+function hashStringToUint(seed) {
+  const s = String(seed ?? '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h >>> 0;
+}
+
+function hashStringToIndex(seed, mod) {
+  const m = Number(mod);
+  if (!Number.isFinite(m) || m <= 0) return 0;
+  return hashStringToUint(seed) % m;
+}
+
+function countOpenDirectPeers() {
+  const state = get(peerStore);
+  let n = 0;
+  for (const entry of state.connectedPeers.values()) {
+    if (entry?.connection?.open === false) continue;
+    n += 1;
+  }
+  return n;
+}
+
+function pickPeersToConnect(peers, limit, seed) {
+  const list = Array.isArray(peers) ? peers.filter((p) => p?.peerId) : [];
+  if (list.length <= limit) return list;
+  // Deterministic selection based on seed so not every peer chooses the same first N.
+  const start = hashStringToIndex(seed ?? '', list.length);
+  const rotated = list.slice(start).concat(list.slice(0, start));
+  return rotated.slice(0, limit);
+}
+
 function isInConnectCooldown(peerId) {
   const key = String(peerId ?? '').trim();
   if (!key) return false;
   const entry = recentConnectFailures.get(key);
   if (!entry) return false;
   return Date.now() - entry.lastFailedAt < CONNECT_FAIL_COOLDOWN_MS;
+}
+
+function isConnectPending(peerId) {
+  const key = String(peerId ?? '').trim();
+  if (!key) return false;
+  const t = pendingConnectAttempts.get(key);
+  if (!t) return false;
+  if (Date.now() - t > CONNECT_PENDING_TIMEOUT_MS) {
+    pendingConnectAttempts.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function noteConnectPending(peerId) {
+  const key = String(peerId ?? '').trim();
+  if (!key) return;
+  pendingConnectAttempts.set(key, Date.now());
+}
+
+function clearConnectPending(peerId) {
+  const key = String(peerId ?? '').trim();
+  if (!key) return;
+  pendingConnectAttempts.delete(key);
 }
 
 function noteConnectFailure(peerId) {
@@ -102,12 +184,14 @@ function noteConnectFailure(peerId) {
     lastFailedAt: Date.now(),
     count: (prev?.count ?? 0) + 1
   });
+  clearConnectPending(key);
 }
 
 function noteConnectSuccess(peerId) {
   const key = String(peerId ?? '').trim();
   if (!key) return;
   recentConnectFailures.delete(key);
+  clearConnectPending(key);
 }
 
 function generateEphemeralPeerId() {
@@ -435,7 +519,7 @@ function isLobbyUnavailableError(err) {
   const type = err?.type;
   const msg = String(err?.message ?? '');
   // Some PeerJS builds omit `type` but include a helpful message string.
-  return (type === 'peer-unavailable' || !type) && msg.includes(LOBBY_PEER_ID);
+  return (type === 'peer-unavailable' || !type) && msg.includes(LOBBY_ID_PREFIX);
 }
 
 async function ensurePeerCtor() {
@@ -580,7 +664,7 @@ function electNewLobbyHost() {
   const allPeerIds = [ourId, ...state.connectedPeers.keys()].sort();
   if (allPeerIds[0] !== ourId) return;
 
-  becomeLobbyHost(mainPeer, cachedProfile).catch((err) => console.error('electNewLobbyHost failed', err));
+  becomeLobbyHost(mainPeer, cachedProfile, 0, activeLobbyId).catch((err) => console.error('electNewLobbyHost failed', err));
 }
 
 function safeSend(conn, msg) {
@@ -663,17 +747,21 @@ function connectToPeer(peerId, profile) {
   // PeerJS throws "Cannot connect to new Peer after disconnecting from server." when
   // attempting to create a DataConnection while `peer.disconnected === true`.
   if (mainPeer.destroyed || mainPeer.disconnected) return null;
+  if (countOpenDirectPeers() >= MAX_DIRECT_PEERS) return null;
   if (!peerId || peerId === mainPeer.id) return null;
   if (isInConnectCooldown(peerId)) return null;
+  if (isConnectPending(peerId)) return null;
 
   const state = get(peerStore);
   if (state.connectedPeers.has(peerId)) return state.connectedPeers.get(peerId)?.connection ?? null;
 
   try {
+    noteConnectPending(peerId);
     const conn = mainPeer.connect(peerId);
     handleIncomingConnection(conn, profile);
     return conn;
   } catch (err) {
+    noteConnectFailure(peerId);
     console.error('connectToPeer failed', err);
     return null;
   }
@@ -902,7 +990,7 @@ async function setupLobbyHostHandlers(hostPeer, localPeer, profile) {
         // Delay slightly to reduce connection-collision thrash when both sides reconnect.
         setTimeout(() => {
           try {
-            connectToPeerIfUnknown(newPeer, profile);
+            if (countOpenDirectPeers() < MAX_DIRECT_PEERS) connectToPeerIfUnknown(newPeer, profile);
           } catch (err) {
             console.error('lobby host connect-back failed', err);
           }
@@ -943,78 +1031,144 @@ export async function joinLobby(localPeer, profile, attempt = 0) {
       return;
     }
 
-    /** @type {any} */
-    let conn;
-    try {
-      // Attempt to connect to the existing lobby host.
-      conn = localPeer.connect(LOBBY_PEER_ID, {
-        reliable: true,
-        metadata: { type: 'lobby-join' }
-      });
-    } catch (err) {
-      // PeerJS throws when trying to connect while the peer is in a disconnected state.
-      console.error('joinLobby: connect failed', err);
-      resolveRegistrySync('timeout');
-      void handlePeerDisconnect();
-      resolve({ role: 'standalone' });
-      return;
+    const candidates = getLobbyIdCandidates(localPeer.id ?? '');
+    const preferred = candidates[0] ?? getLobbyPeerId(0);
+    const perAttemptMs = Math.max(250, Math.ceil(JOIN_LOBBY_TIMEOUT_MS / Math.max(1, candidates.length)));
+
+    let idx = 0;
+    let settled = false;
+    let finalizing = false;
+    /** @type {any|null} */
+    let activeConn = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let overallTimer = null;
+
+    function cleanupOverallTimer() {
+      if (!overallTimer) return;
+      clearTimeout(overallTimer);
+      overallTimer = null;
     }
 
-    if (!conn || typeof conn.on !== 'function') {
-      // Defensive: some PeerJS failure modes return undefined instead of throwing.
-      resolveRegistrySync('timeout');
-      void handlePeerDisconnect();
-      resolve({ role: 'standalone' });
-      return;
+    function finish(result) {
+      if (settled) return;
+      settled = true;
+      cleanupOverallTimer();
+      resolve(result);
     }
 
-    // IMPORTANT: this connection is not part of our direct-peer mesh, but it *must*
-    // receive NETWORK_STATE so guests can learn the peer list and sync history.
-    conn.on('data', (data) => {
-      (async () => {
-        await handleMessage(data, conn, profile);
-      })().catch((err) => console.error('lobbyConn handleMessage failed', err));
-    });
-
-    const timeout = setTimeout(() => {
+    function finalizeAsHost() {
+      if (finalizing || settled) return;
+      finalizing = true;
+      cleanupOverallTimer();
       resolveRegistrySync('timeout');
-      safeClose(conn);
-      becomeLobbyHost(localPeer, profile, attempt).then(resolve);
+      becomeLobbyHost(localPeer, profile, attempt, preferred).then(finish);
+    }
+
+    // One overall watchdog timer (fake-timer friendly; avoids Date.now() loops in tests).
+    overallTimer = setTimeout(() => {
+      safeClose(activeConn);
+      finalizeAsHost();
     }, JOIN_LOBBY_TIMEOUT_MS);
 
-    conn.on('open', () => {
-      clearTimeout(timeout);
-      lobbyConn = conn;
-
-      safeSend(conn, {
-        type: 'LOBBY_JOIN',
-        from: buildFromProfile(profile, localPeer.id),
-        payload: {},
-        timestamp: Date.now()
-      });
-
-      peerStore.update((s) => ({ ...s, isLobbyHost: false }));
-      resolve({ role: 'guest', lobbyConn: conn });
-    });
-
-    conn.on('error', (err) => {
-      clearTimeout(timeout);
-      safeClose(conn);
-      // If we're disconnected from the PeerJS server, don't try to claim the lobby yet.
-      if (err?.type === 'disconnected') {
-        resolveRegistrySync('timeout');
-        void handlePeerDisconnect();
-        resolve({ role: 'standalone' });
+    const tryConnect = () => {
+      const lobbyId = candidates[idx++];
+      if (!lobbyId) {
+        finalizeAsHost();
         return;
       }
-      becomeLobbyHost(localPeer, profile, attempt).then(resolve);
-    });
 
-    conn.on('close', () => {
-      if (lobbyConn === conn) lobbyConn = null;
-      // If the lobby peer disappears, elect a new host so newcomers can join.
-      setTimeout(electNewLobbyHost, 2000);
-    });
+      /** @type {any} */
+      let conn;
+      try {
+        // Attempt to connect to an existing lobby host (sharded).
+        conn = localPeer.connect(lobbyId, {
+          reliable: true,
+          metadata: { type: 'lobby-join' }
+        });
+      } catch (err) {
+        // PeerJS throws when trying to connect while the peer is in a disconnected state.
+        console.error('joinLobby: connect failed', err);
+        resolveRegistrySync('timeout');
+        void handlePeerDisconnect();
+        finish({ role: 'standalone' });
+        return;
+      }
+
+      if (!conn || typeof conn.on !== 'function') {
+        // Defensive: some PeerJS failure modes return undefined instead of throwing.
+        resolveRegistrySync('timeout');
+        void handlePeerDisconnect();
+        finish({ role: 'standalone' });
+        return;
+      }
+
+      activeConn = conn;
+
+      // IMPORTANT: this connection is not part of our direct-peer mesh, but it *must*
+      // receive NETWORK_STATE so guests can learn the peer list and sync history.
+      conn.on('data', (data) => {
+        (async () => {
+          await handleMessage(data, conn, profile);
+        })().catch((err) => console.error('lobbyConn handleMessage failed', err));
+      });
+
+      const timeout = setTimeout(() => {
+        safeClose(conn);
+        if (settled || finalizing) return;
+        if (idx < candidates.length) tryConnect();
+        else finalizeAsHost();
+      }, perAttemptMs);
+
+      conn.on('open', () => {
+        clearTimeout(timeout);
+        lobbyConn = conn;
+        activeLobbyId = lobbyId;
+        cleanupOverallTimer();
+
+        safeSend(conn, {
+          type: 'LOBBY_JOIN',
+          from: buildFromProfile(profile, localPeer.id),
+          payload: {},
+          timestamp: Date.now()
+        });
+
+        peerStore.update((s) => ({ ...s, isLobbyHost: false }));
+        finish({ role: 'guest', lobbyConn: conn });
+      });
+
+      conn.on('error', (err) => {
+        clearTimeout(timeout);
+        safeClose(conn);
+        if (settled || finalizing) return;
+
+        // If we're disconnected from the PeerJS server, don't try to claim the lobby yet.
+        if (err?.type === 'disconnected') {
+          resolveRegistrySync('timeout');
+          void handlePeerDisconnect();
+          finish({ role: 'standalone' });
+          return;
+        }
+
+        // If no lobby exists, claim the preferred lobby immediately.
+        if (err?.type === 'peer-unavailable' || isLobbyUnavailableError(err)) {
+          finalizeAsHost();
+          return;
+        }
+
+        // Try next lobby shard; fall back to host after exhausting candidates.
+        if (idx < candidates.length) tryConnect();
+        else finalizeAsHost();
+      });
+
+      conn.on('close', () => {
+        clearTimeout(timeout);
+        if (lobbyConn === conn) lobbyConn = null;
+        // If the lobby peer disappears, elect a new host so newcomers can join.
+        setTimeout(electNewLobbyHost, 2000);
+      });
+    };
+
+    tryConnect();
   });
 }
 
@@ -1025,15 +1179,18 @@ export async function joinLobby(localPeer, profile, attempt = 0) {
  * @param {number} [attempt=0]
  * @returns {Promise<{ role: 'host', lobbyPeer: any } | { role: 'guest', lobbyConn: any } | { role: 'standalone' }>}
  */
-export async function becomeLobbyHost(localPeer, profile, attempt = 0) {
+export async function becomeLobbyHost(localPeer, profile, attempt = 0, lobbyId = null) {
   return await new Promise((resolve) => {
     /** @type {any} */
     const mod = globalThis._PeerJS;
     const Peer = mod?.Peer ?? mod?.default ?? PeerCtor;
-    const hostPeer = new Peer(LOBBY_PEER_ID, PEERJS_CONFIG);
+    const desired = String(lobbyId ?? activeLobbyId ?? getLobbyIdCandidates(localPeer?.id ?? '')[0] ?? getLobbyPeerId(0));
+    const debug = import.meta.env?.DEV ? 2 : 0;
+    const hostPeer = new Peer(desired, { ...PEERJS_CONFIG, debug });
 
     hostPeer.on('open', () => {
       lobbyPeer = hostPeer;
+      activeLobbyId = desired;
       resolveRegistrySync('first-peer');
       peerStore.update((s) => ({
         ...s,
@@ -1085,6 +1242,7 @@ export function handleIncomingConnection(conn, profile) {
   if (!conn) return;
   const remotePeerId = conn.peer;
   const effectiveProfile = profile ?? userProfileRef ?? cachedProfile;
+  let opened = false;
 
   // If we already have a connection for this peerId (stale), close it and replace.
   const existing = get(peerStore).connectedPeers.get(remotePeerId);
@@ -1097,6 +1255,7 @@ export function handleIncomingConnection(conn, profile) {
   conn.on('open', () => {
     (async () => {
       noteConnectSuccess(remotePeerId);
+      opened = true;
       // Replace stale connection entry on open as well (covers both incoming + outgoing).
       const prev = get(peerStore).connectedPeers.get(remotePeerId);
       if (prev?.connection && prev.connection !== conn) {
@@ -1121,6 +1280,8 @@ export function handleIncomingConnection(conn, profile) {
   });
 
   conn.on('close', () => {
+    clearConnectPending(remotePeerId);
+    if (!opened) noteConnectFailure(remotePeerId);
     setChatOnlineStatus(remotePeerId, false);
     peerStore.update((s) => {
       const next = new Map(s.connectedPeers);
@@ -1189,10 +1350,12 @@ async function handleNetworkState(payload, profile) {
   // 4. Connect to all peers in the list.
   const localPeerId = get(peerStore).peerId;
   const connectedIds = new Set(get(peerStore).connectedPeers.keys());
-  for (const p of peers) {
+  const candidates = pickPeersToConnect(peers, Math.max(0, MAX_DIRECT_PEERS - connectedIds.size), localPeerId ?? '');
+  for (const p of candidates) {
     if (!p?.peerId) continue;
     if (p.peerId === localPeerId) continue;
     if (connectedIds.has(p.peerId)) continue;
+    if (countOpenDirectPeers() >= MAX_DIRECT_PEERS) break;
     connectToPeerIfUnknown(p, profile);
   }
 
@@ -1203,6 +1366,7 @@ function connectToPeerIfUnknown(peerInfo, profile) {
   const pid = peerInfo?.peerId;
   if (!pid || pid === get(peerStore).peerId) return;
   if (isInConnectCooldown(pid)) return;
+  if (isConnectPending(pid)) return;
   const state = get(peerStore);
   const existing = state.connectedPeers.get(pid);
   if (existing) {
@@ -1222,12 +1386,18 @@ async function reconnectToKnownPeers(profile) {
     const known = await getKnownPeers();
     const myPeerId = get(peerStore).peerId;
     const connected = get(peerStore).connectedPeers;
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
 
-    for (const p of known) {
+    const remainingSlots = Math.max(0, MAX_DIRECT_PEERS - countOpenDirectPeers());
+    const candidates = pickPeersToConnect(known, remainingSlots, myPeerId ?? '');
+
+    for (const p of candidates) {
       if (!p?.peerId) continue;
       if (p.peerId === myPeerId) continue;
+      if (typeof p.lastSeen === 'number' && p.lastSeen < cutoff) continue;
       const existing = connected.get(p.peerId);
       if (existing?.connection?.open) continue;
+      if (countOpenDirectPeers() >= MAX_DIRECT_PEERS) break;
       connectToPeerIfUnknown({ peerId: p.peerId }, profile);
     }
   } catch (err) {
@@ -1473,7 +1643,9 @@ export async function handleMessage(msg, fromConn, profile) {
   }
 
   if (msg.type === 'NEW_PEER') {
-    await connectToPeerIfUnknown(msg.payload?.newPeer, profile);
+    if (countOpenDirectPeers() < MAX_DIRECT_PEERS) {
+      await connectToPeerIfUnknown(msg.payload?.newPeer, profile);
+    }
     return;
   }
 
