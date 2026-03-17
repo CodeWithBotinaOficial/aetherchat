@@ -110,6 +110,15 @@ function noteConnectSuccess(peerId) {
   recentConnectFailures.delete(key);
 }
 
+function generateEphemeralPeerId() {
+  try {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  } catch {
+    // ignore
+  }
+  return `peer-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 let registrySyncResolve = null;
 export let registrySyncReady = new Promise((resolve) => {
   registrySyncResolve = resolve;
@@ -1901,15 +1910,12 @@ export async function initPeer(profile) {
     // Keep PeerJS internal logs quiet in prod; allow some verbosity in dev.
     const debug = import.meta.env?.DEV ? 2 : 0;
 
-    // IMPORTANT: Do not request a specific PeerJS ID on load.
-    // Some browsers keep the old websocket alive briefly on refresh, and requesting any explicit ID
-    // can get stuck in "unavailable-id" loops. Let the server assign a free ID each time.
-    if (forcedPeerId) {
-      mainPeer = new Peer(forcedPeerId, { ...PEERJS_CONFIG, debug });
-      forcedPeerId = null;
-    } else {
-      mainPeer = new Peer({ ...PEERJS_CONFIG, debug });
-    }
+    // IMPORTANT: Do not rely on the PeerJS cloud `/id` endpoint.
+    // Some browsers (or networks) block cross-origin fetches in a way that causes
+    // "Error retrieving ID". Generate an ID locally and ask the server to register it.
+    const localId = forcedPeerId || generateEphemeralPeerId();
+    forcedPeerId = null;
+    mainPeer = new Peer(localId, { ...PEERJS_CONFIG, debug });
 
     const thisPeer = mainPeer;
     localPeerRef = mainPeer;
