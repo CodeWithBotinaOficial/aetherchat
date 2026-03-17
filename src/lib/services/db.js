@@ -239,7 +239,13 @@ class AetherChatDB extends Dexie {
 				        sessionKeys: 'id, updatedAt'
 				      })
 				      .upgrade(async (tx) => {
-				        const user = await tx.table('users').get(1);
+				        // Do not assume the user row has primary key = 1. Some browsers/older builds
+				        // may store it under a different key.
+				        const users = await tx.table('users').toArray();
+				        const user =
+				          users.find((u) => typeof u?.username === 'string' && u.username.trim().length > 0) ??
+				          users[0] ??
+				          null;
 				        const myUsername = user?.username;
 				        if (typeof myUsername !== 'string' || myUsername.trim().length === 0) return;
 

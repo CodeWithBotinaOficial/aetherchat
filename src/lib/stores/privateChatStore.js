@@ -1,13 +1,16 @@
 import { derived, get, writable } from 'svelte/store';
 import { tick } from 'svelte';
-import { closeSession, decryptForSession, isSessionActive, resumeSession } from '$lib/services/crypto.js';
+import { buildSessionId, closeSession, decryptForSession, isSessionActive, resumeSession } from '$lib/services/crypto.js';
 import {
   clearQueuedMessagesForChat,
   deletePrivateChat,
+  deleteSessionKeyRing,
+  getSessionKeyRing,
   getSentMessagesPlaintext,
   getPrivateChats,
   getPrivateMessages,
   getQueuedMessagesForChat,
+  saveSessionKeyRing,
   updateChatMeta
 } from '$lib/services/db.js';
 
@@ -56,6 +59,28 @@ export async function loadPrivateChats(myPeerId) {
   const chatMap = new Map();
 
   for (const c of chats) {
+    // Best-effort migration: older builds stored session keys under a peerId-based sessionId.
+    // When chat IDs became username-based, those keys may still exist but be unreachable, causing
+    // "Encrypted in a previous session" forever after restart. If we detect such a legacy ring,
+    // copy it to the current chatId once.
+    try {
+      if (typeof c?.id === 'string' && c.id.includes(':') && c.myPeerId && c.theirPeerId) {
+        const legacyId = buildSessionId(c.myPeerId, c.theirPeerId);
+        if (legacyId && legacyId !== c.id) {
+          const currentRing = await getSessionKeyRing(c.id);
+          if (!currentRing?.keys?.length) {
+            const legacyRing = await getSessionKeyRing(legacyId);
+            if (legacyRing?.keys?.length) {
+              await saveSessionKeyRing(c.id, legacyRing.keys);
+              await deleteSessionKeyRing(legacyId);
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore (migration is best-effort)
+    }
+
     const dbMessages = await getPrivateMessages(c.id, 50);
     const sentPlain = await getSentMessagesPlaintext(c.id);
     const sentPlainMap = new Map(sentPlain.map((m) => [m.id, m.plaintext]));

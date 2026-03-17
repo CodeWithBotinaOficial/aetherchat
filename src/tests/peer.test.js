@@ -33,16 +33,22 @@ class MockPeer {
   static ctorCalls = [];
   static instances = [];
 
-  constructor(id, options) {
-    this.id = id;
-    this.options = options;
+  constructor(idOrOptions, optionsMaybe) {
+    // PeerJS constructor supports both:
+    // 1) new Peer(id, options)
+    // 2) new Peer(options) -> server assigns an ID
+    const calledWithOptionsOnly =
+      typeof optionsMaybe === 'undefined' && idOrOptions && typeof idOrOptions === 'object' && !Array.isArray(idOrOptions);
+
+    this.id = calledWithOptionsOnly ? undefined : idOrOptions;
+    this.options = calledWithOptionsOnly ? idOrOptions : optionsMaybe;
     this.disconnected = false;
     this.destroyed = false;
     this._handlers = new Map();
     this._connections = [];
     this.destroy = vi.fn();
     this.reconnect = vi.fn();
-    MockPeer.ctorCalls.push({ id, options });
+    MockPeer.ctorCalls.push({ id: this.id, options: this.options });
     MockPeer.instances.push(this);
   }
 

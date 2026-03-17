@@ -399,15 +399,6 @@ function isLobbyUnavailableError(err) {
   return (type === 'peer-unavailable' || !type) && msg.includes(LOBBY_PEER_ID);
 }
 
-function randomPeerId() {
-  try {
-    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  } catch {
-    // ignore
-  }
-  return `peer-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
 async function ensurePeerCtor() {
   if (PeerCtor) return PeerCtor;
   // In Vitest, accessing a missing named export can throw (ESM proxy behavior),
@@ -1858,39 +1849,43 @@ export async function initPeer(profile) {
 
     const Peer = await ensurePeerCtor();
 
-    // Keep PeerJS internal logs quiet; use the in-app debug panel in dev instead (Phase 3).
-    const debug = 0;
+    // Keep PeerJS internal logs quiet in prod; allow some verbosity in dev.
+    const debug = import.meta.env?.DEV ? 2 : 0;
 
-			    // PeerJS IDs are ephemeral: browsers often keep the previous socket alive briefly on refresh,
-			    // causing "unavailable-id". Use a new random ID each session and rely on username identity.
-			    const peerId = forcedPeerId ?? randomPeerId();
-			    forcedPeerId = null;
-			    mainPeer = new Peer(peerId, { ...PEERJS_CONFIG, debug });
-		    const thisPeer = mainPeer;
-		    localPeerRef = mainPeer;
-		    // Set peerId immediately so local-only features (DB queries, offline queueing) can
-		    // function before the PeerJS 'open' event fires.
-		    peerStore.update((s) => ({ ...s, peerId }));
+    // IMPORTANT: Do not request a specific PeerJS ID on load.
+    // Some browsers keep the old websocket alive briefly on refresh, and requesting any explicit ID
+    // can get stuck in "unavailable-id" loops. Let the server assign a free ID each time.
+    if (forcedPeerId) {
+      mainPeer = new Peer(forcedPeerId, { ...PEERJS_CONFIG, debug });
+      forcedPeerId = null;
+    } else {
+      mainPeer = new Peer({ ...PEERJS_CONFIG, debug });
+    }
 
-	    if (typeof window !== 'undefined' && !unloadHookInstalled) {
-	      unloadHookInstalled = true;
-	      window.addEventListener(
-	        'beforeunload',
-	        () => {
-	          try {
-	            localPeerRef?.destroy?.();
-	          } catch {
-	            // ignore
-	          }
-	          try {
-	            lobbyPeer?.destroy?.();
-	          } catch {
-	            // ignore
-	          }
-	        },
-	        { once: true }
-	      );
-	    }
+    const thisPeer = mainPeer;
+    localPeerRef = mainPeer;
+    // PeerJS ID is only known after 'open'. Clear stale IDs immediately to avoid UI/DB using an old value.
+    peerStore.update((s) => ({ ...s, peerId: null }));
+
+    if (typeof window !== 'undefined' && !unloadHookInstalled) {
+      unloadHookInstalled = true;
+      const cleanup = () => {
+        try {
+          localPeerRef?.destroy?.();
+        } catch {
+          // ignore
+        }
+        try {
+          lobbyPeer?.destroy?.();
+        } catch {
+          // ignore
+        }
+      };
+
+      // `pagehide` fires more reliably than `beforeunload` on mobile and some browsers.
+      window.addEventListener('pagehide', cleanup, { once: true });
+      window.addEventListener('beforeunload', cleanup, { once: true });
+    }
 
     mainPeer.on('open', (id) => {
       if (localPeerRef !== thisPeer) return; // stale peer instance
@@ -1966,17 +1961,18 @@ export async function initPeer(profile) {
 	        case 'peer-unavailable':
 	          // Expected: lobby not found -> host election logic handles this on the connection error path.
 	          return;
-			        case 'unavailable-id': {
-				          // PeerJS refused our requested ID. IDs are ephemeral; rotate immediately and retry with backoff.
-				          console.error('PeerJS error:', err?.type, err?.message);
-			          if (unavailableIdAttempts >= UNAVAILABLE_ID_RETRY_DELAYS_MS.length) {
-			            peerStore.update((s) => ({ ...s, error: err?.type ?? 'peer-error', connectionState: 'failed' }));
-			            return;
-			          }
-				          const delay = UNAVAILABLE_ID_RETRY_DELAYS_MS[unavailableIdAttempts] ?? 500;
-				          unavailableIdAttempts += 1;
-				          forcedPeerId = randomPeerId();
-				          peerStore.update((s) => ({ ...s, connectionState: 'reconnecting', isConnected: false, error: null }));
+        case 'unavailable-id': {
+          // PeerJS refused our requested ID. IDs are ephemeral; rotate immediately and retry with backoff.
+          console.error('PeerJS error:', err?.type, err?.message);
+          if (unavailableIdAttempts >= UNAVAILABLE_ID_RETRY_DELAYS_MS.length) {
+            peerStore.update((s) => ({ ...s, error: err?.type ?? 'peer-error', connectionState: 'failed' }));
+            return;
+          }
+          const delay = UNAVAILABLE_ID_RETRY_DELAYS_MS[unavailableIdAttempts] ?? 500;
+          unavailableIdAttempts += 1;
+          // Retry without forcing an ID so the server can pick a free one.
+          forcedPeerId = null;
+          peerStore.update((s) => ({ ...s, connectionState: 'reconnecting', isConnected: false, error: null }));
 
 			          // Avoid concurrent retry timers (multiple error events can fire per failure).
 			          if (unavailableIdRetryTimer) {
@@ -2301,51 +2297,84 @@ export async function sendPrivateMessage(chatId, theirPeerId, plaintext) {
 export async function closePrivateChat(chatIdOrTheirPeerId) {
   const state = get(peerStore);
   const myPeerId = state.peerId;
-  const raw = String(chatIdOrTheirPeerId ?? '').trim();
-  if (!raw) return;
+  const rawValue = chatIdOrTheirPeerId;
+  const rawStr = String(chatIdOrTheirPeerId ?? '').trim();
+  if (!rawStr) return;
 
   // Local deletion must work even if PeerJS is still initializing/offline.
   // Prefer deleting by the actual chatId (stable, persisted) rather than recomputing it
   // from the current peerId (which may differ if the user hit an unavailable-id flow).
-	  /** @type {string|null} */
-	  let chatId = null;
-	  /** @type {string|null|undefined} */
-	  let theirPeerId;
+  /** @type {any|null} */
+  let chatId = null;
+  /** @type {string|null|undefined} */
+  let theirPeerId;
 
-  if (raw.includes(':')) {
-    chatId = raw;
-    const entry = get(privateChatStore).chats.get(chatId);
-    theirPeerId = entry?.theirPeerId ?? null;
-    if (!theirPeerId) {
-      try {
-        const dbChat = await getPrivateChat(chatId);
+  // 1) Treat input as a chatId if it matches an in-memory chat (supports legacy numeric IDs too).
+  try {
+    const storeChats = get(privateChatStore).chats;
+    if (storeChats?.has?.(rawValue)) {
+      const entry = storeChats.get(rawValue);
+      chatId = rawValue;
+      theirPeerId = entry?.theirPeerId ?? null;
+    } else if (storeChats?.has?.(rawStr)) {
+      const entry = storeChats.get(rawStr);
+      chatId = rawStr;
+      theirPeerId = entry?.theirPeerId ?? null;
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2) Treat input as a chatId if it exists in IndexedDB.
+  if (!chatId) {
+    try {
+      const dbChat = await getPrivateChat(rawStr);
+      if (dbChat) {
+        chatId = rawStr;
         theirPeerId = dbChat?.theirPeerId ?? null;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  if (!chatId) {
+    // Legacy numeric chat IDs: attempt number lookup as a last resort.
+    const maybeNum = Number(rawStr);
+    if (Number.isFinite(maybeNum)) {
+      try {
+        const dbChat = await getPrivateChat(maybeNum);
+        if (dbChat) {
+          chatId = maybeNum;
+          theirPeerId = dbChat?.theirPeerId ?? null;
+        }
       } catch {
         // ignore
       }
     }
-	  } else {
-	    theirPeerId = raw;
-	    // Fallback: locate the persisted chat by theirPeerId (PeerJS IDs can change across refreshes).
-	    try {
-	      for (const [id, chat] of get(privateChatStore).chats.entries()) {
-	        if (chat?.theirPeerId === theirPeerId) {
-	          chatId = id;
-	          break;
-	        }
-	      }
-	    } catch {
-	      // ignore
-	    }
-	    if (!chatId) {
-	      try {
-	        const row = await db.privateChats.where('theirPeerId').equals(theirPeerId).first();
-	        if (row?.id) chatId = row.id;
-	      } catch {
-	        // ignore
-	      }
-	    }
-	  }
+  }
+
+  // 3) Fallback: treat input as theirPeerId and locate the chat by that.
+  if (!chatId) {
+    theirPeerId = rawStr;
+    try {
+      for (const [id, chat] of get(privateChatStore).chats.entries()) {
+        if (chat?.theirPeerId === theirPeerId) {
+          chatId = id;
+          break;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    if (!chatId) {
+      try {
+        const row = await db.privateChats.where('theirPeerId').equals(theirPeerId).first();
+        if (row?.id) chatId = row.id;
+      } catch {
+        // ignore
+      }
+    }
+  }
   if (!chatId) return;
 
   await deleteChatFromStore(chatId);
