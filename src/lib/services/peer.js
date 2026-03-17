@@ -556,6 +556,12 @@ function electNewLobbyHost() {
 }
 
 function safeSend(conn, msg) {
+  // PeerJS DataConnection throws if you send before the `open` event.
+  // This can happen transiently during reconnect when we have entries in the map
+  // for connections that are still negotiating.
+  // Note: some unit tests stub connections without an `open` boolean; in that case
+  // we treat it as sendable. PeerJS always exposes `open` (false until ready).
+  if (!conn || conn.open === false) return;
   try {
     conn?.send?.(msg);
   } catch (err) {
@@ -690,21 +696,24 @@ function sendToPeer(peerId, envelope) {
   const state = get(peerStore);
   const entry = state.connectedPeers.get(peerId);
   if (!entry) return;
+  if (entry.connection?.open === false) return;
   safeSend(entry.connection, envelope);
 }
 
 function flushGlobalOutbox() {
   const state = get(peerStore);
-  if (state.connectedPeers.size === 0) return;
+  const openPeers = [...state.connectedPeers.values()].filter((e) => e.connection?.open !== false);
+  if (openPeers.length === 0) return;
   for (const [msgId, env] of pendingGlobalOutbox.entries()) {
-    for (const entry of state.connectedPeers.values()) safeSend(entry.connection, env);
+    for (const entry of openPeers) safeSend(entry.connection, env);
     pendingGlobalOutbox.delete(msgId);
   }
 }
 
 export async function flushQueueForPeer(theirPeerId) {
   const state = get(peerStore);
-  if (!theirPeerId || !state.connectedPeers.has(theirPeerId)) return;
+  const entry = theirPeerId ? state.connectedPeers.get(theirPeerId) : null;
+  if (!theirPeerId || !entry || entry.connection?.open === false) return;
   const myPeerId = state.peerId;
   const profile = userProfileRef ?? cachedProfile;
   if (!myPeerId || !profile) return;
@@ -1846,8 +1855,9 @@ export async function broadcastGlobalMessage(text, profile) {
   await addGlobalMessage(localMessage);
 
   const stateAfter = get(peerStore);
-  if (stateAfter.connectedPeers.size === 0) {
-    // No peers yet (still connecting/reconnecting). Queue and flush when a peer connects.
+  const hasOpenPeer = [...stateAfter.connectedPeers.values()].some((e) => e.connection?.open !== false);
+  if (!hasOpenPeer) {
+    // No open peers yet (still connecting/reconnecting). Queue and flush when a peer connects.
     pendingGlobalOutbox.set(msgId, envelope);
     return;
   }
@@ -1964,7 +1974,7 @@ export async function initiatePrivateChat(theirPeerId, theirUsername, theirColor
   }
 
   // If the target peer isn't currently connected, defer key exchange until they reconnect.
-  if (!state.connectedPeers.has(theirPeerId)) {
+  if (state.connectedPeers.get(theirPeerId)?.connection?.open === false) {
     setKeyExchangeState(chatId, 'idle');
     return;
   }
@@ -2022,7 +2032,7 @@ export async function sendPrivateMessage(theirPeerId, plaintext) {
   addOutgoingMessage(chatId, { id: messageId, text: trimmed, timestamp });
 
   const sessionActive = isSessionActive(chatId);
-  const peerOnline = state.connectedPeers.has(theirPeerId);
+  const peerOnline = state.connectedPeers.get(theirPeerId)?.connection?.open !== false;
 
   if (sessionActive && peerOnline) {
     // Encrypt and send immediately.

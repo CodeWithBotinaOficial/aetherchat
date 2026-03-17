@@ -9,6 +9,7 @@ class MockConn {
   constructor(peerId, options) {
     this.peer = peerId;
     this.options = options;
+    this.open = false;
     this.send = vi.fn();
     this.close = vi.fn();
     this._handlers = new Map();
@@ -21,6 +22,8 @@ class MockConn {
   }
 
   emit(event, payload) {
+    if (event === 'open') this.open = true;
+    if (event === 'close') this.open = false;
     const arr = this._handlers.get(event) ?? [];
     for (const cb of arr) cb(payload);
   }
@@ -453,6 +456,7 @@ it('Lobby host sends NETWORK_STATE on receiving LOBBY_JOIN', async () => {
 
   // Simulate a guest connecting to the lobby peer.
   const guestConn = new MockConn('guest-main', {});
+  guestConn.open = true;
   hostPeer.emit('connection', guestConn);
 
   const joinMsg = {
@@ -484,7 +488,9 @@ it('Lobby host broadcasts NEW_PEER to existing peers', async () => {
     isLobbyHost: false,
     lobbyPeer: null,
     currentLobbyHostId: null,
-    connectedPeers: new Map([['p2', { username: 'carol', color: 'hsl(10, 65%, 65%)', age: 44, connection: { send: existingSend } }]])
+    connectedPeers: new Map([
+      ['p2', { username: 'carol', color: 'hsl(10, 65%, 65%)', age: 44, connection: { open: true, send: existingSend } }]
+    ])
   });
 
   const promise = becomeLobbyHost(localPeer, me, 0);
@@ -493,6 +499,7 @@ it('Lobby host broadcasts NEW_PEER to existing peers', async () => {
   await promise;
 
   const guestConn = new MockConn('guest-main', {});
+  guestConn.open = true;
   hostPeer.emit('connection', guestConn);
   guestConn.emit('data', {
     type: 'LOBBY_JOIN',
@@ -611,7 +618,9 @@ it('PRESENCE_ANNOUNCE updates connectedPeers and triggers re-key for idle privat
     isLobbyHost: false,
     lobbyPeer: null,
     currentLobbyHostId: null,
-    connectedPeers: new Map([['p2', { username: 'bob', color: 'x', age: 1, connection: new MockConn('p2', {}) }]])
+    connectedPeers: new Map([
+      ['p2', { username: 'bob', color: 'x', age: 1, connection: Object.assign(new MockConn('p2', {}), { open: true }) }]
+    ])
   });
 
   // Seed an idle chat so PRESENCE_ANNOUNCE auto re-keys.
@@ -620,6 +629,7 @@ it('PRESENCE_ANNOUNCE updates connectedPeers and triggers re-key for idle privat
   hoisted.privateChatStoreState.chats.set(chatId, { id: chatId, theirPeerId: 'p2', keyExchangeState: 'idle' });
 
   const p2Conn = new MockConn('p2', {});
+  p2Conn.open = true;
   await handleMessage(
     {
       type: 'PRESENCE_ANNOUNCE',
