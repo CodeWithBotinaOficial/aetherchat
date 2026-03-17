@@ -10,20 +10,25 @@
 
   const dispatch = createEventDispatcher();
 
+  let destroyed = false;
+
   /** @type {HTMLButtonElement|null} */
   let cancelBtn = null;
   /** @type {HTMLButtonElement|null} */
   let confirmBtn = null;
 
   function confirm() {
+    if (destroyed) return;
     dispatch('confirm');
   }
 
   function cancel() {
+    if (destroyed) return;
     dispatch('cancel');
   }
 
   function onKeydown(e) {
+    if (destroyed) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       cancel();
@@ -56,15 +61,17 @@
   }
 
   onMount(async () => {
-    document.addEventListener('keydown', onKeydown, true);
     await tick();
+    if (destroyed) return;
     cancelBtn?.focus?.();
   });
 
   onDestroy(() => {
-    document.removeEventListener('keydown', onKeydown, true);
+    destroyed = true;
   });
 </script>
+
+<svelte:window on:keydown|capture={onKeydown} />
 
 <div class="fixed inset-0 z-80 grid place-items-center bg-[color-mix(in_srgb,var(--bg-overlay)_75%,transparent)] backdrop-blur">
   <button

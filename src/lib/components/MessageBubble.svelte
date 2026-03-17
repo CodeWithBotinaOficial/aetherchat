@@ -3,17 +3,20 @@
 	  import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
 	  import { formatMessageTime } from '$lib/utils/time.js';
 
-  /**
-   * @typedef {Object} Message
-   * @property {string} [id]
-   * @property {string} [peerId]
-   * @property {string} username
-   * @property {number} age
-   * @property {string} color
-   * @property {string} text
-   * @property {number} timestamp
-   * @property {string|null} [avatarBase64]
-   */
+	  /**
+	   * @typedef {Object} Message
+	   * @property {string} [id]
+	   * @property {string} [peerId]
+	   * @property {string} username
+	   * @property {number} age
+	   * @property {string} color
+	   * @property {string} text
+	   * @property {number} timestamp
+	   * @property {string|null} [avatarBase64]
+	   * @property {'sent'|'received'} [direction]
+	   * @property {boolean} [delivered]
+	   * @property {boolean} [queued]
+	   */
 
   /** @type {{ message: Message, isOwn: boolean }} */
   export let message;
@@ -108,6 +111,15 @@
 	        <div class="truncate font-600 text-[var(--text-primary)]">{message.username}</div>
 	        <div class="text-[var(--font-size-xs)] text-[var(--text-muted)]" title={new Date(message.timestamp).toLocaleString()}>
 	          {message.age} · {displayTime}
+	          {#if isOwn}
+	            {#if message.queued}
+	              <span class="ml-[var(--space-xs)]" title="Will be sent when peer reconnects">⏳</span>
+	            {:else if message.delivered === true}
+	              <span class="ml-[var(--space-xs)]" title="Delivered">✓</span>
+	            {:else if message.delivered === false}
+	              <span class="ml-[var(--space-xs)]" title="Sent">○</span>
+	            {/if}
+	          {/if}
 	        </div>
 	      </div>
 	    </div>

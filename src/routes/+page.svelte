@@ -1,18 +1,19 @@
 <script>
   import { onDestroy, onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import AppShell from '$lib/components/AppShell.svelte';
   import BootScreen from '$lib/components/BootScreen.svelte';
   import RegisterModal from '$lib/components/RegisterModal.svelte';
-  import { cleanOldGlobalMessages, cleanOldPrivateChats } from '$lib/services/db.js';
+  import { cleanOldGlobalMessages, cleanOldPrivateChats, getStoredPeerId, getUser } from '$lib/services/db.js';
   import { disconnectPeer, initPeer, registrySyncReady } from '$lib/services/peer.js';
-  import { peer } from '$lib/stores/peerStore.js';
   import { loadPrivateChats } from '$lib/stores/privateChatStore.js';
   import { isRegistered, user } from '$lib/stores/userStore.js';
 
   let cleanupTimer = null;
-  let peerStarted = false;
+  let appReady = false;
   let registryReady = false;
-  let privateBootedPeerId = null;
+  let bootedUsername = '';
+  let registrationHydrating = false;
 
   async function boot() {
     try {
@@ -25,30 +26,52 @@
     }
   }
 
-  async function startPeer(profile) {
-    try {
-      await initPeer(profile);
-    } catch (err) {
-      console.error('Peer init failed', err);
-    }
+  async function hydrateLocalData(u) {
+    const username = u?.username ?? '';
+    const storedPeerId = username ? await getStoredPeerId(username) : null;
+    await loadPrivateChats(storedPeerId ?? '');
+    await cleanOldGlobalMessages();
+    await cleanOldPrivateChats();
   }
 
   onMount(() => {
     void boot();
-    if (peerStarted) return;
-    peerStarted = true;
-
-    // Start P2P immediately so new users can sync the username registry before registering.
-    void startPeer({ username: 'pre-registration', color: 'hsl(0, 0%, 70%)', age: 0 });
 
     (async () => {
-      // Returning users should not be blocked by the sync gate.
-      if ($isRegistered) {
-        registryReady = true;
+      // STEP 1: Load user from DB (local, fast).
+      try {
+        const u = await getUser();
+        if (u) user.set(u);
+      } catch (err) {
+        console.error('getUser failed', err);
+      }
+
+      // STEP 2: If registered, hydrate local state BEFORE any P2P activity.
+      if (get(isRegistered)) {
+        const u = get(user);
+        bootedUsername = u?.username ?? '';
+        try {
+          await hydrateLocalData(u);
+        } catch (err) {
+          console.error('Local hydration failed', err);
+        }
+        appReady = true; // show AppShell immediately with local data
+
+        // STEP 3: Start P2P in background (do not block UI).
+        initPeer({
+          username: u.username,
+          color: u.color,
+          age: u.age,
+          avatarBase64: u.avatarBase64 ?? null,
+          createdAt: u.createdAt
+        }).catch((err) => console.error('PeerJS init failed:', err));
+
+        registryReady = true; // not needed for returning users
         return;
       }
 
-      // New users: wait for the registry sync (or its timeout/standalone fallback).
+      // New user: start P2P immediately so registry sync can happen.
+      initPeer(null).catch((err) => console.error('PeerJS init failed:', err));
       try {
         await registrySyncReady;
       } catch {
@@ -56,6 +79,38 @@
       }
       registryReady = true;
     })();
+
+    // If the user registers during this session, hydrate local data exactly once.
+    const unsub = user.subscribe((u) => {
+      if (!u) return;
+      if (appReady) return;
+      if (registrationHydrating) return;
+      if (!u.username) return;
+      if (u.username === bootedUsername) return;
+
+      bootedUsername = u.username;
+      registrationHydrating = true;
+
+      (async () => {
+        try {
+          await hydrateLocalData(u);
+        } catch (err) {
+          console.error('Local hydration after registration failed', err);
+        }
+        appReady = true;
+        initPeer({
+          username: u.username,
+          color: u.color,
+          age: u.age,
+          avatarBase64: u.avatarBase64 ?? null,
+          createdAt: u.createdAt
+        }).catch((err) => console.error('PeerJS init failed:', err));
+      })().finally(() => {
+        registrationHydrating = false;
+      });
+    });
+
+    return () => unsub();
   });
 
   onDestroy(() => {
@@ -63,37 +118,16 @@
     disconnectPeer();
   });
 
-  // When the user registers during this session (or when the DB-loaded user arrives),
-  // start the PeerJS stack exactly once.
-  $: if ($isRegistered && $user) {
-    void startPeer({
-      username: $user.username,
-      color: $user.color,
-      age: $user.age,
-      avatarBase64: $user.avatarBase64 ?? null,
-      createdAt: $user.createdAt
-    });
-  }
-
-  // Private chat initialization: load chat list and run cleanup once we have a local peerId.
-  $: if ($isRegistered && $peer.peerId && privateBootedPeerId !== $peer.peerId) {
-    // eslint-disable-next-line no-useless-assignment
-    privateBootedPeerId = $peer.peerId;
-    (async () => {
-      try {
-        await loadPrivateChats($peer.peerId);
-        await cleanOldPrivateChats();
-      } catch (err) {
-        console.error('Private chat boot failed', err);
-      }
-    })();
-  }
 </script>
 
-{#if !$isRegistered && !registryReady}
-  <BootScreen state="syncing" variant="registry" />
-{:else if !$isRegistered}
+{#if $isRegistered}
+  {#if appReady}
+    <AppShell />
+  {:else}
+    <BootScreen state="connecting" />
+  {/if}
+{:else if registryReady}
   <RegisterModal />
 {:else}
-  <AppShell />
+  <BootScreen state="syncing" variant="registry" />
 {/if}

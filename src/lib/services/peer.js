@@ -32,14 +32,17 @@ import {
   privateChatStore,
   setChatOnlineStatus,
   setKeyExchangeState,
+  updateMessageQueued,
   upsertChatEntry
 } from '$lib/stores/privateChatStore.js';
 import { activeTab } from '$lib/stores/navigationStore.js';
 import {
   getPrivateChat,
+  deleteQueuedMessage,
+  getQueuedMessagesForPeer,
   markMessageDelivered,
+  saveQueuedMessage,
   savePrivateMessage as saveEncryptedPrivateMessage,
-  updateChatLastActivity,
   updateChatMeta,
   upsertPrivateChat
 } from '$lib/services/db.js';
@@ -151,11 +154,6 @@ const lobbyConnections = new Map(); // peerId -> DataConnection (to lobby peer)
 const lobbyPeerList = new Map(); // peerId -> peer info (main peer IDs)
 
 let gossipIntervalId = null;
-
-// In-memory offline queue (peerId -> ProtocolEnvelope[]). This is best-effort:
-// queued payloads are already encrypted; if a new session key is negotiated before delivery,
-// the recipient may be unable to decrypt and will see a locked placeholder.
-const offlineMessageQueue = new Map();
 
 let reconnectAttempts = 0;
 let reconnectTimer = null;
@@ -366,6 +364,35 @@ function randomPeerId() {
     // ignore
   }
   return `peer-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function getOrCreatePeerId(username) {
+  const key = String(username ?? '').trim();
+  if (!key) return randomPeerId();
+  try {
+    const existing = await db.peerIds.get(key);
+    if (existing?.peerId) return existing.peerId;
+  } catch {
+    // ignore
+  }
+  const newId = randomPeerId();
+  try {
+    await db.peerIds.put({ username: key, peerId: newId });
+  } catch {
+    // ignore
+  }
+  return newId;
+}
+
+async function persistPeerIdForUsername(username, peerId) {
+  const key = String(username ?? '').trim();
+  const id = String(peerId ?? '').trim();
+  if (!key || !id) return;
+  try {
+    await db.peerIds.put({ username: key, peerId: id });
+  } catch {
+    // ignore
+  }
 }
 
 async function ensurePeerCtor() {
@@ -592,19 +619,61 @@ function sendToPeer(peerId, envelope) {
   safeSend(entry.connection, envelope);
 }
 
-function queueMessage(theirPeerId, envelope) {
-  if (!theirPeerId || !envelope) return;
-  const arr = offlineMessageQueue.get(theirPeerId) ?? [];
-  arr.push(envelope);
-  offlineMessageQueue.set(theirPeerId, arr);
-}
-
-export function flushQueueForPeer(theirPeerId) {
+export async function flushQueueForPeer(theirPeerId) {
   const state = get(peerStore);
   if (!theirPeerId || !state.connectedPeers.has(theirPeerId)) return;
-  const queued = offlineMessageQueue.get(theirPeerId) ?? [];
-  for (const env of queued) sendToPeer(theirPeerId, env);
-  offlineMessageQueue.delete(theirPeerId);
+  const myPeerId = state.peerId;
+  const profile = userProfileRef ?? cachedProfile;
+  if (!myPeerId || !profile) return;
+
+  /** @type {import('$lib/services/db.js').QueuedMessage[] | undefined} */
+  let queued;
+  try {
+    queued = await getQueuedMessagesForPeer(theirPeerId);
+  } catch (err) {
+    console.error('getQueuedMessagesForPeer failed', err);
+    return;
+  }
+  if (!queued || queued.length === 0) return;
+
+  const chatId = buildSessionId(myPeerId, theirPeerId);
+  const sessionActive = isSessionActive(chatId);
+
+  if (!sessionActive) {
+    // Need a session before we can encrypt and send.
+    try {
+      const { publicKeyBase64 } = await createSession(myPeerId, theirPeerId);
+      setKeyExchangeState(chatId, 'initiated');
+      sendToPeer(theirPeerId, buildDirectMessage('PRIVATE_KEY_EXCHANGE', myPeerId, profile, theirPeerId, { publicKeyBase64 }, Date.now()));
+    } catch (err) {
+      console.error('flushQueueForPeer key exchange init failed', err);
+    }
+    return;
+  }
+
+  // Session is active: encrypt and send each queued message, then remove it from the queue.
+  for (const msg of queued) {
+    try {
+      const { ciphertext, iv } = await encryptForSession(chatId, msg.plaintext);
+      await deleteQueuedMessage(msg.id);
+      await saveEncryptedPrivateMessage({
+        id: msg.id,
+        chatId,
+        direction: 'sent',
+        ciphertext,
+        iv,
+        timestamp: msg.timestamp,
+        delivered: false
+      });
+      updateMessageQueued(chatId, msg.id, false);
+      sendToPeer(
+        theirPeerId,
+        buildDirectMessage('PRIVATE_MSG', myPeerId, profile, theirPeerId, { ciphertext, iv, messageId: msg.id }, msg.timestamp)
+      );
+    } catch (err) {
+      console.error('Failed to flush queued message', err);
+    }
+  }
 }
 
 function getCurrentPeerList(profile) {
@@ -800,7 +869,7 @@ export function handleIncomingConnection(conn, profile) {
   conn.on('open', () => {
     (async () => {
       await sendHandshake(conn, profile);
-      flushQueueForPeer(remotePeerId);
+      void flushQueueForPeer(remotePeerId);
       setChatOnlineStatus(remotePeerId, true);
 
       // Auto-initiate key exchange for existing chats after reconnect (no UI side effects).
@@ -1179,6 +1248,7 @@ export async function handleMessage(msg, fromConn, profile) {
     sendToPeer(theirPeerId, buildDirectMessage('PRIVATE_KEY_EXCHANGE_ACK', myPeerId, profile, theirPeerId, { publicKeyBase64: ourPublicKeyBase64 }));
     setKeyExchangeState(chatId, 'active');
     await decryptSealedMessages(chatId, chatId);
+    await flushQueueForPeer(theirPeerId);
     return;
   }
 
@@ -1194,8 +1264,8 @@ export async function handleMessage(msg, fromConn, profile) {
     const chatId = buildSessionId(myPeerId, theirPeerId);
     await completeSession(myPeerId, theirPeerId, publicKeyBase64);
     setKeyExchangeState(chatId, 'active');
-    flushQueueForPeer(theirPeerId);
     await decryptSealedMessages(chatId, chatId);
+    await flushQueueForPeer(theirPeerId);
     return;
   }
 
@@ -1326,8 +1396,12 @@ export async function handleMessage(msg, fromConn, profile) {
 export async function initPeer(profile) {
   try {
     // Keep profile references set synchronously so UI actions can always access them.
-    cachedProfile = profile;
-    userProfileRef = profile;
+    // `userProfileRef` may be null during pre-registration.
+    userProfileRef = profile ?? null;
+    cachedProfile =
+      profile && profile.username
+        ? profile
+        : { username: 'pre-registration', color: 'hsl(0, 0%, 70%)', age: 0, avatarBase64: null, createdAt: Date.now() };
     setConnectionState('connecting', { error: null, reconnectAttempt: 0 });
 
     // If the peer already exists (e.g. we connected pre-registration), update cached profile
@@ -1336,6 +1410,7 @@ export async function initPeer(profile) {
       const shouldRefresh = Boolean(profile?.createdAt) && profile?.username && profile.username !== 'pre-registration';
       if (shouldRefresh) {
         const state = get(peerStore);
+        persistPeerIdForUsername(profile.username, state.peerId).catch(() => {});
         for (const entry of state.connectedPeers.values()) {
           sendHandshake(entry.connection, profile).catch((err) => console.error('refresh handshake failed', err));
         }
@@ -1352,9 +1427,13 @@ export async function initPeer(profile) {
     // Keep PeerJS internal logs quiet; use the in-app debug panel in dev instead (Phase 3).
     const debug = 0;
 
-    const peerId = randomPeerId();
-    mainPeer = new Peer(peerId, { ...PEERJS_CONFIG, debug });
-    localPeerRef = mainPeer;
+	    const effectiveUsername = profile?.username && profile.username !== 'pre-registration' ? profile.username : null;
+	    const peerId = effectiveUsername ? await getOrCreatePeerId(effectiveUsername) : randomPeerId();
+	    mainPeer = new Peer(peerId, { ...PEERJS_CONFIG, debug });
+	    localPeerRef = mainPeer;
+	    // Set peerId immediately so local-only features (DB queries, offline queueing) can
+	    // function before the PeerJS 'open' event fires.
+	    peerStore.update((s) => ({ ...s, peerId: s.peerId ?? peerId }));
 
     mainPeer.on('open', (id) => {
       reconnectAttempts = 0;
@@ -1369,6 +1448,9 @@ export async function initPeer(profile) {
         error: null,
         reconnectAttempt: 0
       }));
+      if (effectiveUsername) {
+        persistPeerIdForUsername(effectiveUsername, id).catch(() => {});
+      }
       // Register ourselves in the local username registry (for offline uniqueness checks).
       const shouldRegisterLocally = Boolean(profile?.createdAt) && Boolean(profile?.username) && profile.username !== 'pre-registration';
       if (shouldRegisterLocally) {
@@ -1380,7 +1462,7 @@ export async function initPeer(profile) {
         }).catch((err) => console.error('registerUsernameLocally failed', err));
       }
       (async () => {
-        const res = await joinLobby(mainPeer, profile);
+        const res = await joinLobby(mainPeer, cachedProfile);
         if (res.role === 'guest') {
           setConnectionState('syncing', { isConnected: true, isLobbyHost: false });
         } else if (res.role === 'host') {
@@ -1389,7 +1471,7 @@ export async function initPeer(profile) {
           setConnectionState('standalone', { isConnected: true, isLobbyHost: false });
         }
 
-        startGossipInterval(profile);
+        startGossipInterval(cachedProfile);
       })().catch((err) => console.error('joinLobby failed', err));
     });
 
@@ -1597,55 +1679,84 @@ export async function initiatePrivateChat(theirPeerId, theirUsername, theirColor
 
 export async function sendPrivateMessage(theirPeerId, plaintext) {
   const state = get(peerStore);
-  const myPeerId = state.peerId;
-  if (!myPeerId) throw new Error('Peer not initialized');
-  if (!theirPeerId) throw new Error('Missing target peer id');
-  if (!cachedProfile) throw new Error('Missing user profile');
+  let myPeerId = state.peerId;
+  const profile = userProfileRef ?? cachedProfile;
+  if (!theirPeerId) {
+    console.warn('sendPrivateMessage: missing target peer id');
+    return;
+  }
+  if (!profile) {
+    console.warn('sendPrivateMessage: missing user profile');
+    return;
+  }
+  if (!myPeerId) {
+    // PeerJS may not be fully connected yet; fall back to our stable peerId from IndexedDB.
+    // This enables offline queueing immediately on app boot.
+    const effectiveUsername = profile?.username && profile.username !== 'pre-registration' ? profile.username : null;
+    if (effectiveUsername) {
+      try {
+        myPeerId = await getOrCreatePeerId(effectiveUsername);
+        peerStore.update((s) => ({ ...s, peerId: s.peerId ?? myPeerId }));
+      } catch (err) {
+        console.error('sendPrivateMessage: getOrCreatePeerId failed', err);
+      }
+    }
+  }
+  if (!myPeerId) {
+    console.warn('sendPrivateMessage: peer not initialized');
+    return;
+  }
 
   const trimmed = String(plaintext ?? '').trim();
   if (!trimmed) return;
 
   const chatId = buildSessionId(myPeerId, theirPeerId);
-  if (!isSessionActive(chatId)) throw new Error('Encryption session is not active');
-
   const messageId = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `pm-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const timestamp = Date.now();
 
-  const { ciphertext, iv } = await encryptForSession(chatId, trimmed);
-
+  // Optimistic UI: show the plaintext immediately.
   addOutgoingMessage(chatId, { id: messageId, text: trimmed, timestamp });
 
-  await saveEncryptedPrivateMessage({
-    id: messageId,
-    chatId,
-    direction: 'sent',
-    ciphertext,
-    iv,
-    timestamp,
-    delivered: false
-  });
+  const sessionActive = isSessionActive(chatId);
+  const peerOnline = state.connectedPeers.has(theirPeerId);
 
-  try {
-    await updateChatLastActivity(chatId, timestamp);
-  } catch (err) {
-    console.error('updateChatLastActivity failed', err);
-  }
+  if (sessionActive && peerOnline) {
+    // Encrypt and send immediately.
+    const { ciphertext, iv } = await encryptForSession(chatId, trimmed);
+    await saveEncryptedPrivateMessage({
+      id: messageId,
+      chatId,
+      direction: 'sent',
+      ciphertext,
+      iv,
+      timestamp,
+      delivered: false
+    });
 
-  const envelope = buildDirectMessage(
-    'PRIVATE_MSG',
-    myPeerId,
-    cachedProfile,
-    theirPeerId,
-    { ciphertext, iv, messageId },
-    timestamp
-  );
+    updateChatMeta(chatId, { lastMessagePreview: trimmed.slice(0, 40), lastActivity: timestamp }).catch((err) =>
+      console.error('updateChatMeta failed', err)
+    );
 
-  if (!state.connectedPeers.has(theirPeerId)) {
-    queueMessage(theirPeerId, envelope);
+    sendToPeer(theirPeerId, buildDirectMessage('PRIVATE_MSG', myPeerId, profile, theirPeerId, { ciphertext, iv, messageId }, timestamp));
     return;
   }
 
-  sendToPeer(theirPeerId, envelope);
+  // Queue path: persist plaintext locally and mark message as queued in the UI.
+  try {
+    await saveQueuedMessage({ id: messageId, chatId, theirPeerId, plaintext: trimmed, timestamp });
+    updateMessageQueued(chatId, messageId, true);
+  } catch (err) {
+    console.error('saveQueuedMessage failed', err);
+  }
+
+  updateChatMeta(chatId, { lastMessagePreview: trimmed.slice(0, 40), lastActivity: timestamp }).catch((err) =>
+    console.error('updateChatMeta failed', err)
+  );
+
+  // If they're online but we don't have a session yet, initiate key exchange so the queue can flush.
+  if (peerOnline) {
+    void flushQueueForPeer(theirPeerId);
+  }
 }
 
 export async function closePrivateChat(theirPeerId) {
@@ -1709,7 +1820,6 @@ export function disconnectPeer() {
   PeerCtor = null;
 
   closeAllSessions();
-  offlineMessageQueue.clear();
   remoteIdentityKeys.clear();
   lobbyConnections.clear();
   lobbyPeerList.clear();

@@ -28,6 +28,17 @@
     ? ($activeChat.theirAvatarBase64 ?? $avatarCache.get($activeChat.theirPeerId) ?? null)
     : null;
 
+  $: keyState = $activeChat?.keyExchangeState ?? 'idle';
+  $: inputDisabled = keyState === 'initiated' || keyState === 'completing';
+  $: inputPlaceholder = getPlaceholder(keyState, $activeChat?.isOnline);
+
+  function getPlaceholder(state, isOnline) {
+    if (state === 'initiated' || state === 'completing') return 'Setting up encryption...';
+    if (!isOnline) return 'Message will be delivered when they reconnect...';
+    if (state === 'idle' || state === 'failed') return 'Message will be encrypted and sent when connected...';
+    return 'Message...';
+  }
+
   function scrollToBottom() {
     if (!listEl) return;
     listEl.scrollTop = listEl.scrollHeight;
@@ -258,10 +269,10 @@
       {/if}
     </div>
 
-    <div title={$activeChat.keyExchangeState !== 'active' ? 'Waiting for encryption setup...' : ''}>
+    <div title={inputDisabled ? 'Setting up encryption...' : ''}>
       <ChatInput
-        disabled={$activeChat.keyExchangeState !== 'active'}
-        placeholder={$activeChat.keyExchangeState !== 'active' ? 'Waiting for encryption setup...' : 'Write a private message...'}
+        disabled={inputDisabled}
+        placeholder={inputPlaceholder}
         on:send={onSend}
       />
     </div>

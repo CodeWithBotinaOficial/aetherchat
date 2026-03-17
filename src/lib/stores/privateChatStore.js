@@ -1,6 +1,14 @@
 import { derived, get, writable } from 'svelte/store';
-import { decryptForSession, isSessionActive } from '$lib/services/crypto.js';
-import { deletePrivateChat, getPrivateChats, getPrivateMessages, updateChatMeta } from '$lib/services/db.js';
+import { tick } from 'svelte';
+import { closeSession, decryptForSession, isSessionActive } from '$lib/services/crypto.js';
+import {
+  clearQueuedMessagesForPeer,
+  deletePrivateChat,
+  getPrivateChats,
+  getPrivateMessages,
+  getQueuedMessagesForPeer,
+  updateChatMeta
+} from '$lib/services/db.js';
 
 // ── State shape ──────────────────────────────────────────────────────────────
 // {
@@ -59,13 +67,28 @@ export async function loadPrivateChats(myPeerId) {
       sealed: true
     }));
 
+    const queuedMsgs = await getQueuedMessagesForPeer(c.theirPeerId);
+    const queuedInMemory = queuedMsgs.map((m) => ({
+      id: m.id,
+      direction: 'sent',
+      text: m.plaintext,
+      ciphertext: null,
+      iv: null,
+      timestamp: m.timestamp,
+      delivered: false,
+      queued: true,
+      sealed: false
+    }));
+
+    const allMessages = [...sealedMessages, ...queuedInMemory].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+
     chatMap.set(c.id, {
       id: c.id,
       theirPeerId: c.theirPeerId,
       theirUsername: c.theirUsername,
       theirColor: c.theirColor,
       theirAvatarBase64: c.theirAvatarBase64 ?? null,
-      messages: sealedMessages,
+      messages: allMessages,
       unreadCount: typeof c.unreadCount === 'number' ? c.unreadCount : 0,
       lastMessage: c.lastMessagePreview ?? null,
       lastActivity: c.lastActivity ?? c.createdAt ?? Date.now(),
@@ -174,7 +197,7 @@ export function addOutgoingMessage(chatId, { id, text, timestamp }) {
   withChat((chats) => {
     const chat = chats.get(chatId);
     if (!chat) return;
-    const messages = [...chat.messages, { id, direction: 'sent', text, timestamp, delivered: false, sealed: false }];
+    const messages = [...chat.messages, { id, direction: 'sent', text, timestamp, delivered: false, queued: false, sealed: false }];
     chats.set(chatId, { ...chat, messages, lastMessage: text, lastActivity: timestamp });
   });
 }
@@ -216,6 +239,15 @@ export function markDelivered(chatId, messageId) {
   });
 }
 
+export function updateMessageQueued(chatId, messageId, queued) {
+  withChat((chats) => {
+    const chat = chats.get(chatId);
+    if (!chat) return;
+    const messages = chat.messages.map((m) => (m.id === messageId ? { ...m, queued: Boolean(queued) } : m));
+    chats.set(chatId, { ...chat, messages });
+  });
+}
+
 export function setKeyExchangeState(chatId, state) {
   withChat((chats) => {
     const chat = chats.get(chatId);
@@ -250,13 +282,38 @@ export function upsertChatEntry(entry) {
 }
 
 export async function deleteChatFromStore(chatId) {
+  // Capture peerId BEFORE removing the chat from memory so we can clean its queue.
+  const chatEntry = get(privateChatStore).chats.get(chatId);
+  const theirPeerId = chatEntry?.theirPeerId ?? null;
+
+  // STEP 1: close the active chat first so derived stores compute null cleanly.
+  update((s) => ({ ...s, activeChatId: s.activeChatId === chatId ? null : s.activeChatId }));
+
+  // STEP 2: allow Svelte to flush before removing the chat from the Map.
+  await tick();
+
+  // STEP 3: remove from in-memory store.
   update((s) => {
     const next = new Map(s.chats);
     next.delete(chatId);
-    const activeChatId = s.activeChatId === chatId ? null : s.activeChatId;
-    return { ...s, chats: next, activeChatId };
+    return { ...s, chats: next };
   });
-  await deletePrivateChat(chatId);
+
+  // STEP 4: delete persisted data (best effort; never crash the UI on failure).
+  try {
+    await deletePrivateChat(chatId);
+    if (theirPeerId) await clearQueuedMessagesForPeer(theirPeerId);
+  } catch (err) {
+    console.error('Failed to delete private chat from DB', err);
+  }
+
+  // STEP 5: clear crypto session so GC can collect CryptoKey objects.
+  try {
+    closeSession(chatId);
+  } catch {
+    // Best-effort cleanup; ignore.
+    void 0;
+  }
 }
 
 export function markChatAsRead(chatId) {

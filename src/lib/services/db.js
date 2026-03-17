@@ -63,6 +63,23 @@ import Dexie from 'dexie';
  * @property {number} lastSeenAt
  */
 
+/**
+ * Stable peer ID storage (per username, per browser).
+ * @typedef {Object} PeerIdEntry
+ * @property {string} username
+ * @property {string} peerId
+ */
+
+/**
+ * Local-only queued private messages (plaintext, temporary).
+ * @typedef {Object} QueuedMessage
+ * @property {string} id
+ * @property {string} chatId
+ * @property {string} theirPeerId
+ * @property {string} plaintext
+ * @property {number} timestamp
+ */
+
 class AetherChatDB extends Dexie {
   /** @type {Dexie.Table<User, number>} */ users;
   /** @type {Dexie.Table<GlobalMessage, string>} */ globalMessages;
@@ -70,6 +87,8 @@ class AetherChatDB extends Dexie {
   /** @type {Dexie.Table<PrivateMessage, string>} */ privateMessages;
   /** @type {Dexie.Table<KnownPeer, number>} */ knownPeers;
   /** @type {Dexie.Table<UsernameRegistryEntry, number>} */ usernameRegistry;
+  /** @type {Dexie.Table<PeerIdEntry, string>} */ peerIds;
+  /** @type {Dexie.Table<QueuedMessage, string>} */ queuedMessages;
 
   constructor() {
     super('AetherChatDB');
@@ -133,25 +152,37 @@ class AetherChatDB extends Dexie {
       usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt'
     });
 
-    // Phase 6: persist private chat metadata (preview + unreadCount). Indexes unchanged.
-    this.version(7)
-      .stores({
-        users: 'id, username, createdAt',
-        globalMessages: 'id, timestamp, peerId, username',
-        privateChats: 'id, myPeerId, theirPeerId, theirUsername, createdAt, lastActivity',
-        privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
-        knownPeers: '++id, peerId, lastSeen, username',
-        usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt'
-      })
-      .upgrade(async (tx) => {
-        const table = tx.table('privateChats');
-        await table.toCollection().modify((chat) => {
-          if (typeof chat.unreadCount !== 'number') chat.unreadCount = 0;
-          if (!Object.prototype.hasOwnProperty.call(chat, 'lastMessagePreview')) chat.lastMessagePreview = null;
-        });
-      });
-  }
-}
+	    // Phase 6: persist private chat metadata (preview + unreadCount). Indexes unchanged.
+	    this.version(7)
+	      .stores({
+	        users: 'id, username, createdAt',
+	        globalMessages: 'id, timestamp, peerId, username',
+	        privateChats: 'id, myPeerId, theirPeerId, theirUsername, createdAt, lastActivity',
+	        privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+	        knownPeers: '++id, peerId, lastSeen, username',
+	        usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt'
+	      })
+	      .upgrade(async (tx) => {
+	        const table = tx.table('privateChats');
+	        await table.toCollection().modify((chat) => {
+	          if (typeof chat.unreadCount !== 'number') chat.unreadCount = 0;
+	          if (!Object.prototype.hasOwnProperty.call(chat, 'lastMessagePreview')) chat.lastMessagePreview = null;
+	        });
+	      });
+
+	    // Phase 7: stable peer IDs + persisted offline queue for private messages.
+	    this.version(8).stores({
+	      users: 'id, username, createdAt',
+	      globalMessages: 'id, timestamp, peerId, username',
+	      privateChats: 'id, myPeerId, theirPeerId, theirUsername, createdAt, lastActivity',
+	      privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+	      knownPeers: '++id, peerId, lastSeen, username',
+	      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+	      peerIds: 'username, peerId',
+	      queuedMessages: 'id, chatId, theirPeerId, timestamp'
+	    });
+	  }
+	}
 
 export const db = new AetherChatDB();
 
@@ -228,6 +259,93 @@ export async function getGlobalMessages(limit = 100) {
 }
 
 /**
+ * Get a stable (persisted) peerId for this username, or null if none exists yet.
+ * @param {string} username
+ * @returns {Promise<string|null>}
+ */
+export async function getStoredPeerId(username) {
+  try {
+    const key = String(username ?? '').trim();
+    if (!key) return null;
+    const entry = await db.peerIds.get(key);
+    return entry?.peerId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Offline Queue (Phase 7) ─────────────────────────────────────────────────
+//
+// Security note:
+// queuedMessages stores PLAINTEXT temporarily on the local device only.
+// This is intentional: we cannot encrypt private messages without an active
+// E2EE session key, and we cannot establish a session while offline.
+// These records are deleted as soon as they are encrypted and sent.
+
+/**
+ * @param {{ id: string, chatId: string, theirPeerId: string, plaintext: string, timestamp: number }} msg
+ */
+export async function saveQueuedMessage(msg) {
+  try {
+    if (!msg?.id) throw new Error('Missing queued message id');
+    await db.queuedMessages.put({
+      id: msg.id,
+      chatId: msg.chatId,
+      theirPeerId: msg.theirPeerId,
+      plaintext: msg.plaintext,
+      timestamp: msg.timestamp
+    });
+  } catch (err) {
+    console.error('saveQueuedMessage failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} theirPeerId
+ * @returns {Promise<QueuedMessage[]>}
+ */
+export async function getQueuedMessagesForPeer(theirPeerId) {
+  try {
+    const key = String(theirPeerId ?? '').trim();
+    if (!key) return [];
+    const rows = await db.queuedMessages.where('theirPeerId').equals(key).toArray();
+    return rows.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+  } catch (err) {
+    console.error('getQueuedMessagesForPeer failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} id
+ */
+export async function deleteQueuedMessage(id) {
+  try {
+    const key = String(id ?? '').trim();
+    if (!key) return;
+    await db.queuedMessages.delete(key);
+  } catch (err) {
+    console.error('deleteQueuedMessage failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} theirPeerId
+ */
+export async function clearQueuedMessagesForPeer(theirPeerId) {
+  try {
+    const key = String(theirPeerId ?? '').trim();
+    if (!key) return;
+    await db.queuedMessages.where('theirPeerId').equals(key).delete();
+  } catch (err) {
+    console.error('clearQueuedMessagesForPeer failed', err);
+    throw err;
+  }
+}
+
+/**
  * Delete global messages older than 24h.
  * @returns {Promise<number>} count deleted
  */
@@ -264,8 +382,17 @@ export async function upsertPrivateChat(chat) {
  */
 export async function getPrivateChats(myPeerId) {
   try {
-    const list = await db.privateChats.where('myPeerId').equals(myPeerId).toArray();
-    return list.sort((a, b) => (b.lastActivity ?? 0) - (a.lastActivity ?? 0));
+    const key = String(myPeerId ?? '').trim();
+    if (!key) {
+      const all = await db.privateChats.toArray();
+      return all.sort((a, b) => (b.lastActivity ?? 0) - (a.lastActivity ?? 0));
+    }
+    const list = await db.privateChats.where('myPeerId').equals(key).toArray();
+    if (list.length > 0) return list.sort((a, b) => (b.lastActivity ?? 0) - (a.lastActivity ?? 0));
+
+    // Fallback for legacy chats created before stable peerIds existed.
+    const all = await db.privateChats.toArray();
+    return all.sort((a, b) => (b.lastActivity ?? 0) - (a.lastActivity ?? 0));
   } catch (err) {
     console.error('getPrivateChats failed', err);
     throw err;

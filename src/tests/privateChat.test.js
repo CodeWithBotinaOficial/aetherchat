@@ -1,17 +1,21 @@
 import { get } from 'svelte/store';
-import { db, savePrivateMessage, upsertPrivateChat } from '$lib/services/db.js';
+import { db, deletePrivateChat, savePrivateMessage, upsertPrivateChat } from '$lib/services/db.js';
+import { fireEvent, render } from '@testing-library/svelte';
+import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 const hoisted = vi.hoisted(() => {
   return {
     isSessionActiveMock: vi.fn(),
-    decryptForSessionMock: vi.fn()
+    decryptForSessionMock: vi.fn(),
+    closeSessionMock: vi.fn()
   };
 });
 
 vi.mock('$lib/services/crypto.js', () => {
   return {
     isSessionActive: (...args) => hoisted.isSessionActiveMock(...args),
-    decryptForSession: (...args) => hoisted.decryptForSessionMock(...args)
+    decryptForSession: (...args) => hoisted.decryptForSessionMock(...args),
+    closeSession: (...args) => hoisted.closeSessionMock(...args)
   };
 });
 
@@ -39,16 +43,20 @@ async function clearAllTables() {
     db.globalMessages,
     db.privateChats,
     db.privateMessages,
+    db.queuedMessages,
     db.knownPeers,
     db.usernameRegistry,
+    db.peerIds,
     async () => {
       await Promise.all([
         db.users.clear(),
         db.globalMessages.clear(),
         db.privateChats.clear(),
         db.privateMessages.clear(),
+        db.queuedMessages.clear(),
         db.knownPeers.clear(),
-        db.usernameRegistry.clear()
+        db.usernameRegistry.clear(),
+        db.peerIds.clear()
       ]);
     }
   );
@@ -57,6 +65,7 @@ async function clearAllTables() {
 beforeEach(async () => {
   hoisted.isSessionActiveMock.mockReset();
   hoisted.decryptForSessionMock.mockReset();
+  hoisted.closeSessionMock.mockReset();
   await clearAllTables();
   privateChatStore.set({ chats: new Map(), activeChatId: null, pendingKeyExchanges: new Map() });
 });
@@ -292,8 +301,11 @@ it('setChatOnlineStatus updates isOnline by peerId', () => {
   expect(get(privateChatStore).chats.get('a:b').isOnline).toBe(true);
 });
 
-it('deleteChatFromStore removes entry from store and calls DB delete', async () => {
-  const spy = vi.spyOn(await import('$lib/services/db.js'), 'deletePrivateChat');
+it('deleteChatFromStore clears activeChatId before removing from Map, deletes DB rows, clears queue, and closes session', async () => {
+  const dbMod = await import('$lib/services/db.js');
+  const deleteSpy = vi.spyOn(dbMod, 'deletePrivateChat');
+  const clearQueueSpy = vi.spyOn(dbMod, 'clearQueuedMessagesForPeer');
+
   privateChatStore.set({
     chats: new Map([
       [
@@ -318,10 +330,60 @@ it('deleteChatFromStore removes entry from store and calls DB delete', async () 
     pendingKeyExchanges: new Map()
   });
 
-  await deleteChatFromStore('a:b');
+  const snapshots = [];
+  const unsub = privateChatStore.subscribe((s) => {
+    snapshots.push({ activeChatId: s.activeChatId, hasChat: s.chats.has('a:b') });
+  });
+
+  const p = deleteChatFromStore('a:b');
+  // First synchronous update should clear activeChatId but keep chat until after tick().
+  expect(get(privateChatStore).activeChatId).toBeNull();
+  expect(get(privateChatStore).chats.has('a:b')).toBe(true);
+
+  await p;
+  unsub();
+
   expect(get(privateChatStore).chats.has('a:b')).toBe(false);
   expect(get(privateChatStore).activeChatId).toBeNull();
-  expect(spy).toHaveBeenCalledWith('a:b');
+  expect(deleteSpy).toHaveBeenCalledWith('a:b');
+  expect(clearQueueSpy).toHaveBeenCalledWith('b');
+  expect(hoisted.closeSessionMock).toHaveBeenCalledWith('a:b');
+
+  // Ensure we had an intermediate state where the chat existed but activeChatId was already null.
+  expect(snapshots.some((s) => s.activeChatId === null && s.hasChat === true)).toBe(true);
+});
+
+it('deleteChatFromStore does not throw if DB delete fails', async () => {
+  const dbMod = await import('$lib/services/db.js');
+  vi.spyOn(dbMod, 'deletePrivateChat').mockRejectedValueOnce(new Error('boom'));
+
+  privateChatStore.set({
+    chats: new Map([
+      [
+        'a:b',
+        {
+          id: 'a:b',
+          theirPeerId: 'b',
+          theirUsername: 'bob',
+          theirColor: 'hsl(2, 65%, 65%)',
+          theirAvatarBase64: null,
+          messages: [],
+          unreadCount: 0,
+          lastMessage: null,
+          lastActivity: 0,
+          isOnline: false,
+          keyExchangeState: 'idle',
+          __loaded: true
+        }
+      ]
+    ]),
+    activeChatId: 'a:b',
+    pendingKeyExchanges: new Map()
+  });
+
+  await expect(deleteChatFromStore('a:b')).resolves.toBeUndefined();
+  expect(get(privateChatStore).activeChatId).toBeNull();
+  expect(get(privateChatStore).chats.has('a:b')).toBe(false);
 });
 
 it('totalUnread derived store sums unreadCounts correctly', () => {
@@ -383,4 +445,28 @@ it('loadChatMessages shows placeholder for undecryptable messages', async () => 
 
   const chat = get(privateChatStore).chats.get('a:b');
   expect(chat.messages[0].text).toMatch(/Encrypted message/i);
+});
+
+it('ConfirmDialog handles keydown and does not throw after destruction', async () => {
+  const { component, unmount } = render(ConfirmDialog, {
+    props: { title: 'Delete?', message: 'Sure?' }
+  });
+
+  const onConfirm = vi.fn();
+  const onCancel = vi.fn();
+  component.$on('confirm', onConfirm);
+  component.$on('cancel', onCancel);
+
+  await fireEvent.keyDown(window, { key: 'Enter' });
+  expect(onConfirm).toHaveBeenCalledTimes(1);
+
+  await fireEvent.keyDown(window, { key: 'Escape' });
+  expect(onCancel).toHaveBeenCalledTimes(1);
+
+  unmount();
+  await expect(fireEvent.keyDown(window, { key: 'Escape' })).resolves.toBe(true);
+});
+
+it('deletePrivateChat (db) does not throw for non-existent chatId', async () => {
+  await expect(deletePrivateChat('missing-chat')).resolves.toBeUndefined();
 });
