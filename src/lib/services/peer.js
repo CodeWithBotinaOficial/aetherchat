@@ -76,6 +76,7 @@ export const PEERJS_CONFIG = {
 const RECONNECT_DELAYS = [2000, 5000, 10000];
 const MAX_RECONNECT_ATTEMPTS = 3;
 const JOIN_LOBBY_TIMEOUT_MS = 6000;
+const UNAVAILABLE_ID_RETRY_DELAYS_MS = [250, 500, 900, 1500, 2200];
 
 let registrySyncResolve = null;
 export let registrySyncReady = new Promise((resolve) => {
@@ -950,7 +951,7 @@ export async function joinLobby(localPeer, profile, attempt = 0) {
 
       safeSend(conn, {
         type: 'LOBBY_JOIN',
-        from: buildFromProfile(profile, get(peerStore).peerId ?? localPeer.id),
+        from: buildFromProfile(profile, localPeer.id),
         payload: {},
         timestamp: Date.now()
       });
@@ -1791,11 +1792,11 @@ export async function initPeer(profile) {
 	    const effectiveUsername = profile?.username && profile.username !== 'pre-registration' ? profile.username : null;
 	    const peerId = forcedPeerId ?? (effectiveUsername ? await getOrCreatePeerId(effectiveUsername) : randomPeerId());
 	    forcedPeerId = null;
-	    mainPeer = new Peer(peerId, { ...PEERJS_CONFIG, debug });
-	    localPeerRef = mainPeer;
-	    // Set peerId immediately so local-only features (DB queries, offline queueing) can
-	    // function before the PeerJS 'open' event fires.
-	    peerStore.update((s) => ({ ...s, peerId: s.peerId ?? peerId }));
+		    mainPeer = new Peer(peerId, { ...PEERJS_CONFIG, debug });
+		    localPeerRef = mainPeer;
+		    // Set peerId immediately so local-only features (DB queries, offline queueing) can
+		    // function before the PeerJS 'open' event fires.
+		    peerStore.update((s) => ({ ...s, peerId }));
 
 	    if (typeof window !== 'undefined' && !unloadHookInstalled) {
 	      unloadHookInstalled = true;
@@ -1882,35 +1883,39 @@ export async function initPeer(profile) {
 	      handleIncomingConnection(conn, cachedProfile);
 	    });
 
-	    mainPeer.on('error', (err) => {
-	      switch (err?.type) {
+		    mainPeer.on('error', (err) => {
+		      switch (err?.type) {
 	        case 'peer-unavailable':
 	          // Expected: lobby not found -> host election logic handles this on the connection error path.
 	          return;
-	        case 'unavailable-id':
-	          // For main peers, this usually means the PeerJS server still thinks the ID is in use
-	          // (e.g. after a hard browser close). Treat as recoverable: rotate ID and retry init.
-	          console.error('PeerJS error:', err?.type, err?.message);
-	          if (unavailableIdAttempts >= 2) {
-	            peerStore.update((s) => ({ ...s, error: err?.type ?? 'peer-error', connectionState: 'failed' }));
-	            return;
-	          }
-	          unavailableIdAttempts += 1;
-	          forcedPeerId = randomPeerId();
-	          if (effectiveUsername) {
-	            persistPeerIdForUsername(effectiveUsername, forcedPeerId).catch(() => {});
-	          }
-	          try {
-	            mainPeer?.destroy?.();
-	          } catch {
-	            // ignore
-	          }
-	          mainPeer = null;
-	          localPeerRef = null;
-	          setTimeout(() => {
-	            initPeer(userProfileRef ?? cachedProfile).catch((e) => console.error('retry initPeer after unavailable-id failed', e));
-	          }, 250);
-	          return;
+			        case 'unavailable-id': {
+			          // PeerJS server still thinks this ID is in use (common after hard close / fast reopen).
+			          // Rotating peerId breaks identity (chatId/session keys). Prefer retrying the SAME peerId
+			          // with backoff so identity stays stable across reloads.
+			          console.error('PeerJS error:', err?.type, err?.message);
+			          if (unavailableIdAttempts >= UNAVAILABLE_ID_RETRY_DELAYS_MS.length) {
+			            peerStore.update((s) => ({ ...s, error: err?.type ?? 'peer-error', connectionState: 'failed' }));
+			            return;
+			          }
+			          const delay = UNAVAILABLE_ID_RETRY_DELAYS_MS[unavailableIdAttempts] ?? 500;
+			          unavailableIdAttempts += 1;
+			          // If we're registered, keep the same stable ID. If not, just rotate.
+			          forcedPeerId = effectiveUsername ? peerId : randomPeerId();
+			          peerStore.update((s) => ({ ...s, connectionState: 'reconnecting', isConnected: false, error: null }));
+			          try {
+			            mainPeer?.destroy?.();
+			          } catch {
+			            // ignore
+			          }
+			          mainPeer = null;
+			          localPeerRef = null;
+			          setTimeout(() => {
+			            initPeer(userProfileRef ?? cachedProfile).catch((e) =>
+			              console.error('retry initPeer after unavailable-id failed', e)
+			            );
+			          }, delay);
+			          return;
+			        }
 	        case 'disconnected':
 	          // Peer cannot open new connections while disconnected from the PeerJS server.
 	          console.error('PeerJS error:', err?.type, err?.message);
@@ -2204,25 +2209,51 @@ export async function sendPrivateMessage(theirPeerId, plaintext) {
   }
 }
 
-export async function closePrivateChat(theirPeerId) {
+export async function closePrivateChat(chatIdOrTheirPeerId) {
   const state = get(peerStore);
   const myPeerId = state.peerId;
-  if (!theirPeerId) return;
+  const raw = String(chatIdOrTheirPeerId ?? '').trim();
+  if (!raw) return;
 
   // Local deletion must work even if PeerJS is still initializing/offline.
-  // Prefer the deterministic chatId when we have our peerId; otherwise fall back
-  // to looking up the chat entry by theirPeerId.
-  let chatId = myPeerId ? buildSessionId(myPeerId, theirPeerId) : null;
-  if (!chatId) {
-    try {
-      for (const [id, chat] of get(privateChatStore).chats.entries()) {
-        if (chat?.theirPeerId === theirPeerId) {
-          chatId = id;
-          break;
-        }
+  // Prefer deleting by the actual chatId (stable, persisted) rather than recomputing it
+  // from the current peerId (which may differ if the user hit an unavailable-id flow).
+	  /** @type {string|null} */
+	  let chatId = null;
+	  /** @type {string|null|undefined} */
+	  let theirPeerId;
+
+  if (raw.includes(':')) {
+    chatId = raw;
+    const entry = get(privateChatStore).chats.get(chatId);
+    theirPeerId = entry?.theirPeerId ?? null;
+    if (!theirPeerId) {
+      try {
+        const dbChat = await getPrivateChat(chatId);
+        theirPeerId = dbChat?.theirPeerId ?? null;
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
+    }
+  } else {
+    theirPeerId = raw;
+    const computed = myPeerId ? buildSessionId(myPeerId, theirPeerId) : null;
+    if (computed && get(privateChatStore).chats.has(computed)) {
+      chatId = computed;
+    } else {
+      // Fallback: locate the persisted chat by theirPeerId (covers peerId changes / legacy ids).
+      try {
+        for (const [id, chat] of get(privateChatStore).chats.entries()) {
+          if (chat?.theirPeerId === theirPeerId) {
+            chatId = id;
+            break;
+          }
+        }
+      } catch {
+        // ignore
+      }
+      // As a last resort, attempt DB deletion using the computed id even if it's not in-memory.
+      if (!chatId && computed) chatId = computed;
     }
   }
   if (!chatId) return;
@@ -2230,7 +2261,7 @@ export async function closePrivateChat(theirPeerId) {
   await deleteChatFromStore(chatId);
 
   // Best-effort remote notification (only if we have enough state to send).
-  if (myPeerId && cachedProfile && state.connectedPeers.has(theirPeerId)) {
+  if (myPeerId && cachedProfile && theirPeerId && state.connectedPeers.has(theirPeerId)) {
     sendToPeer(theirPeerId, buildDirectMessage('PRIVATE_CHAT_CLOSED', myPeerId, cachedProfile, theirPeerId, { chatId }, Date.now()));
   }
 }

@@ -35,12 +35,12 @@
     pendingDelete = chat;
   }
 
-  async function confirmDelete() {
-    const chat = pendingDelete;
-    pendingDelete = null;
-    if (!chat) return;
-    await closePrivateChat(chat.theirPeerId);
-  }
+	  async function confirmDelete() {
+	    const chat = pendingDelete;
+	    pendingDelete = null;
+	    if (!chat) return;
+	    await closePrivateChat(chat.id);
+	  }
 
   function cancelDelete() {
     pendingDelete = null;

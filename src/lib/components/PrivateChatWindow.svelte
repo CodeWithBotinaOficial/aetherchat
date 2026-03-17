@@ -19,8 +19,8 @@
   let hasMore = true;
 
   let showDelete = false;
-  /** @type {{ theirPeerId: string, theirUsername: string } | null} */
-  let deleteTarget = null;
+	  /** @type {{ chatId: string, theirPeerId: string, theirUsername: string } | null} */
+	  let deleteTarget = null;
   let showActiveBanner = false;
   let bannerTimer = 0;
   let prevKeyState = '';
@@ -160,13 +160,13 @@
     };
   }
 
-  async function confirmDelete() {
-    showDelete = false;
-    const target = deleteTarget;
-    deleteTarget = null;
-    if (!target?.theirPeerId) return;
-    await closePrivateChat(target.theirPeerId);
-  }
+	  async function confirmDelete() {
+	    showDelete = false;
+	    const target = deleteTarget;
+	    deleteTarget = null;
+	    if (!target?.chatId) return;
+	    await closePrivateChat(target.chatId);
+	  }
 
   async function retryKeyExchange() {
     const chat = $activeChat;
@@ -209,13 +209,13 @@
 
       <button
         class="rounded-[var(--radius-md)] border border-[var(--border)] bg-transparent px-[var(--space-sm)] py-[6px] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
-        on:click={() => {
-          showDelete = true;
-          if ($activeChat) deleteTarget = { theirPeerId: $activeChat.theirPeerId, theirUsername: $activeChat.theirUsername };
-        }}
-        aria-label="Delete conversation"
-        title="Delete conversation"
-      >
+	        on:click={() => {
+	          showDelete = true;
+	          if ($activeChat) deleteTarget = { chatId: $activeChat.id, theirPeerId: $activeChat.theirPeerId, theirUsername: $activeChat.theirUsername };
+	        }}
+	        aria-label="Delete conversation"
+	        title="Delete conversation"
+	      >
         🗑️
       </button>
     </div>
