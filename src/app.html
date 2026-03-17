@@ -1,89 +1,86 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<style>
-			:root {
-				/* Backgrounds */
-				--bg-base: #0f1117;
-				--bg-surface: #1a1d27;
-				--bg-elevated: #22263a;
-				--bg-overlay: #2a2f47;
-				--bg-dim: rgba(15, 17, 23, 0.72);
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
 
-				/* Text */
-				--text-primary: #e8eaf0;
-				--text-secondary: #8b90a8;
-				--text-muted: #555b78;
+  <!-- Primary Meta Tags -->
+  <title>AetherChat — Decentralized P2P Chat</title>
+  <meta name="title" content="AetherChat — Decentralized P2P Chat" />
+  <meta name="description" content="AetherChat is a free, open-source, peer-to-peer chat platform. No servers. No tracking. End-to-end encrypted private messages. Connect globally without giving up your privacy." />
+  <meta name="keywords" content="p2p chat, decentralized chat, encrypted chat, private messaging, webrtc chat, anonymous chat, no server chat, open source chat" />
+  <meta name="author" content="CodeWithBotinaOficial" />
+  <meta name="robots" content="index, follow" />
+  <meta name="theme-color" content="#0f1117" />
 
-				/* Accent */
-				--accent: #6c8ef5;
-				--accent-hover: #8aaaf8;
-				--accent-subtle: #1e2d5a;
+  <!-- Canonical URL -->
+  <link rel="canonical" href="https://aetherchat.codewithbotina.com" />
 
-				/* Semantic */
-				--success: #4ade80;
-				--warning: #facc15;
-				--danger: #f87171;
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://aetherchat.codewithbotina.com" />
+  <meta property="og:title" content="AetherChat — Decentralized P2P Chat" />
+  <meta property="og:description" content="Free, open-source peer-to-peer chat. No servers, no tracking, end-to-end encrypted. Connect globally without giving up your privacy." />
+  <meta property="og:image" content="https://aetherchat.codewithbotina.com/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:site_name" content="AetherChat" />
 
-				/* Borders */
-				--border: #2e3350;
-				--border-focus: #6c8ef5;
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:url" content="https://aetherchat.codewithbotina.com" />
+  <meta name="twitter:title" content="AetherChat — Decentralized P2P Chat" />
+  <meta name="twitter:description" content="Free, open-source peer-to-peer chat. No servers, no tracking, end-to-end encrypted." />
+  <meta name="twitter:image" content="https://aetherchat.codewithbotina.com/og-image.png" />
 
-				/* Spacing scale */
-				--space-xs: 4px;
-				--space-sm: 8px;
-				--space-md: 16px;
-				--space-lg: 24px;
-				--space-xl: 40px;
-				--space-2xl: 64px;
+  <!-- PWA / App Meta -->
+  <meta name="application-name" content="AetherChat" />
+  <meta name="apple-mobile-web-app-title" content="AetherChat" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="format-detection" content="telephone=no" />
 
-				/* Typography */
-				--font-sans: 'Inter', system-ui, sans-serif;
-				--font-mono: 'JetBrains Mono', monospace;
-				--font-size-xs: 0.75rem;
-				--font-size-sm: 0.875rem;
-				--font-size-base: 1rem;
-				--font-size-lg: 1.125rem;
-				--font-size-xl: 1.25rem;
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
-				/* Radius */
-				--radius-sm: 6px;
-				--radius-md: 12px;
-				--radius-lg: 18px;
-				--radius-full: 9999px;
+  <!-- Structured Data (JSON-LD) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "AetherChat",
+    "url": "https://aetherchat.codewithbotina.com",
+    "description": "Decentralized peer-to-peer chat platform with end-to-end encryption. No servers, no tracking, no account required.",
+    "applicationCategory": "CommunicationApplication",
+    "operatingSystem": "Any (Browser-based)",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "author": {
+      "@type": "Organization",
+      "name": "CodeWithBotinaOficial",
+      "url": "https://github.com/CodeWithBotinaOficial"
+    },
+    "featureList": [
+      "Peer-to-peer communication",
+      "End-to-end encryption",
+      "No account required",
+      "No data collection",
+      "Open source"
+    ]
+  }
+  </script>
 
-				/* Shadows */
-				--shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
-				--shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
-				--shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
-			}
-
-			html,
-			body {
-				height: 100%;
-			}
-
-			body {
-				margin: 0;
-				background: var(--bg-base);
-				color: var(--text-primary);
-				font-family: var(--font-sans);
-				font-size: var(--font-size-base);
-			}
-
-			* {
-				box-sizing: border-box;
-			}
-
-			::selection {
-				background: var(--accent-subtle);
-			}
-		</style>
-		%sveltekit.head%
-	</head>
-	<body data-sveltekit-preload-data="hover">
-		<div style="display: contents">%sveltekit.body%</div>
-	</body>
+  %sveltekit.head%
+</head>
+<body data-sveltekit-preload-data="hover">
+  <div style="display: contents">%sveltekit.body%</div>
+</body>
 </html>

@@ -77,7 +77,7 @@
         </div>
         <div class="text-[var(--text-primary)] font-700">No private conversations yet.</div>
         <div class="mt-[var(--space-xs)] text-[var(--text-secondary)] text-[var(--font-size-sm)]">
-          Start one by hovering over a user in the Global Chat.
+          Start one by tapping a user in the Global Chat.
         </div>
       </div>
     </div>
@@ -163,8 +163,10 @@
     cursor: pointer;
   }
 
-  .chat-item:hover {
-    background: var(--bg-elevated);
+  @media (hover: hover) {
+    .chat-item:hover {
+      background: var(--bg-elevated);
+    }
   }
 
   .chat-item.active {

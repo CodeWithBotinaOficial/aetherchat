@@ -107,7 +107,7 @@
 
       <div class="mt-[var(--space-md)]">
         <button
-          class="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--accent)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-primary)] font-600 hover:bg-[var(--accent-hover)]"
+          class="start-btn w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--accent)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-primary)] font-600"
           on:click={handleStartPrivateChat}
         >
           Start Private Chat
@@ -116,3 +116,11 @@
     </div>
   </div>
 {/if}
+
+<style>
+  @media (hover: hover) {
+    .start-btn:hover {
+      background: var(--accent-hover);
+    }
+  }
+</style>

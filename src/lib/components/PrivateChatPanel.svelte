@@ -6,7 +6,7 @@
 
 <div class="h-full flex">
   <!-- Desktop/tablet: list + window side-by-side. Mobile: list OR window. -->
-  <div class={`w-full sm:w-[280px] border-r border-[var(--border)] ${$activeChat ? 'hidden sm:block' : ''}`}>
+  <div class={`w-full sm:w-[240px] lg:w-[280px] border-r border-[var(--border)] ${$activeChat ? 'hidden sm:block' : ''}`}>
     <PrivateChatList />
   </div>
 
@@ -16,8 +16,7 @@
     </div>
   {:else}
     <div class="hidden sm:grid flex-1 place-items-center text-[var(--text-muted)] text-[var(--font-size-sm)]">
-      <div>Select a conversation</div>
+      <div>Select a conversation to start chatting.</div>
     </div>
   {/if}
 </div>
-

@@ -1,0 +1,125 @@
+/* AetherChat global styles.
+ * Keep this file small and predictable; component-level styling should live with components.
+ */
+
+:root {
+  /* Breakpoints (Phase 10 spec) */
+  --bp-mobile: 640px; /* < 640px  = mobile  */
+  --bp-tablet: 1024px; /* 640–1024 = tablet  */
+  --bp-desktop: 1280px; /* 1024+    = desktop */
+  --bp-tv: 1920px; /* 1920+    = TV/wide */
+
+  /* Backgrounds */
+  --bg-base: #0f1117;
+  --bg-surface: #1a1d27;
+  --bg-elevated: #22263a;
+  --bg-overlay: #2a2f47;
+  --bg-dim: rgba(15, 17, 23, 0.72);
+
+  /* Text */
+  --text-primary: #e8eaf0;
+  --text-secondary: #8b90a8;
+  --text-muted: #555b78;
+
+  /* Accent */
+  --accent: #6c8ef5;
+  --accent-hover: #8aaaf8;
+  --accent-subtle: #1e2d5a;
+
+  /* Semantic */
+  --success: #4ade80;
+  --warning: #facc15;
+  --danger: #f87171;
+
+  /* Borders */
+  --border: #2e3350;
+  --border-focus: #6c8ef5;
+
+  /* Spacing scale */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 40px;
+  --space-2xl: 64px;
+
+  /* Typography */
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  overflow-x: hidden;
+}
+
+::selection {
+  background: var(--accent-subtle);
+}
+
+/* Prevent iOS input zoom */
+input,
+textarea,
+select {
+  font-size: 16px !important;
+}
+
+/* Safe area insets for notched phones */
+.bottom-nav {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.top-bar {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Scrollable containers */
+.scroll-container {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* Touch interactions */
+button,
+[role='button'],
+a {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+/* Avoid tap highlight where possible */
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+

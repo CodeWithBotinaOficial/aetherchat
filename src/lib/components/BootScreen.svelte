@@ -12,18 +12,18 @@
 
   $: title =
     variant === 'registry'
-      ? 'Checking username registry...'
+      ? 'Checking username availability...'
       : state === 'syncing'
-        ? 'Syncing messages...'
-        : state === 'reconnecting'
+        ? 'Almost ready...'
+      : state === 'reconnecting'
           ? 'Reconnecting...'
-          : state === 'standalone'
-            ? 'Running in offline mode.'
-            : 'Connecting to the network...';
+      : state === 'standalone'
+            ? 'Running offline'
+            : 'Joining the network...';
 
   $: subtitle =
     variant === 'registry'
-      ? 'Making sure your username will be unique across the network.'
+      ? 'This helps keep usernames unique across the network.'
       : 'Peer-to-peer. No servers. No tracking.';
 </script>
 

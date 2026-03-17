@@ -2,17 +2,21 @@
   import { onDestroy, onMount } from 'svelte';
   import { user } from '$lib/stores/userStore.js';
   import { activeTab } from '$lib/stores/navigationStore.js';
+  import { peer } from '$lib/stores/peerStore.js';
   import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
   import GlobalChat from '$lib/components/GlobalChat.svelte';
   import PrivateChatPanel from '$lib/components/PrivateChatPanel.svelte';
   import P2PDebugPanel from '$lib/components/P2PDebugPanel.svelte';
+  import TermsAndConditions from '$lib/components/TermsAndConditions.svelte';
+  import TopBar from '$lib/components/TopBar.svelte';
+  import BottomNav from '$lib/components/BottomNav.svelte';
   import { totalUnread, setChatOnlineStatus } from '$lib/stores/privateChatStore.js';
   import { flushQueueForPeer, onMessage } from '$lib/services/peer.js';
 
   const tabs = [
     { key: 'global', label: 'Global Chat', icon: 'globe' },
     { key: 'private', label: 'Private Chats', icon: 'lock' },
-    { key: 'terms', label: 'T&C', icon: 'doc' }
+    { key: 'terms', label: 'Terms & Conditions', icon: 'doc' }
   ];
 
   function iconPath(name) {
@@ -21,32 +25,21 @@
     return 'M7 2h7l5 5v15a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm7 1.5V8h4.5';
   }
 
-  function tabButtonClass(isActive) {
-    return [
-      'w-full flex items-center gap-[var(--space-sm)] px-[var(--space-md)] py-[var(--space-sm)] text-left transition-all duration-150 ease-in-out',
-      isActive
-        ? 'bg-[var(--accent-subtle)] text-[var(--text-primary)]'
-        : 'bg-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
-    ].join(' ');
-  }
+  /** @type {MediaQueryList | null} */
+  let mobileMq = null;
+  let isMobile = false;
 
-  function tabButtonStyle(isActive) {
-    return `border-left: 3px solid ${isActive ? 'var(--accent)' : 'transparent'};`;
-  }
-
-  function mobileTabClass(_isActive) {
-    return [
-      'rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] py-[var(--space-sm)] grid place-items-center transition-all duration-150 ease-in-out'
-    ].join(' ');
-  }
-
-  function mobileIconClass(isActive) {
-    return isActive ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]';
+  function setMobileFromMq() {
+    isMobile = Boolean(mobileMq?.matches);
   }
 
   let stopNetworkHooks = () => {};
 
   onMount(() => {
+    mobileMq = window.matchMedia?.('(max-width: 639px)') ?? null;
+    setMobileFromMq();
+    mobileMq?.addEventListener?.('change', setMobileFromMq);
+
     const unsub = [
       onMessage('HANDSHAKE', (msg) => {
         setChatOnlineStatus(msg.from.peerId, true);
@@ -66,40 +59,50 @@
 
   onDestroy(() => {
     stopNetworkHooks();
+    mobileMq?.removeEventListener?.('change', setMobileFromMq);
   });
+
+  $: connectedPeers = $peer?.connectedPeers?.size ?? 0;
+  $: topBarStatus = $peer?.connectionState === 'connected'
+    ? 'connected'
+    : $peer?.connectionState === 'connecting' || $peer?.connectionState === 'syncing' || $peer?.connectionState === 'reconnecting'
+      ? 'connecting'
+      : 'offline';
 </script>
 
-<div class="min-h-screen bg-[var(--bg-base)] text-[var(--text-primary)] min-[1920px]:text-[18px]">
-  <div class="mx-auto w-full h-screen min-[1920px]:max-w-[1440px] flex">
-    <!-- Sidebar (hidden on mobile, icon rail on tablet, full on desktop) -->
-    <aside
-      class="hidden sm:flex flex-col border-r border-[var(--border)] bg-[var(--bg-surface)] w-[56px] lg:w-[220px]"
-    >
-      <div class="px-[var(--space-md)] py-[var(--space-md)] border-b border-[var(--border)]">
-        <div class="font-800 tracking-tight">AetherChat</div>
-        <div class="mt-[2px] hidden lg:block text-[var(--font-size-xs)] text-[var(--text-muted)] font-mono">
-          decentralized browser chat
-        </div>
+<div class="shell">
+  {#if isMobile}
+    <TopBar
+      username={$user?.username ?? ''}
+      avatarBase64={$user?.avatarBase64 ?? null}
+      connectedPeers={connectedPeers}
+      status={topBarStatus}
+    />
+  {/if}
+
+  <div class="frame">
+    <aside class="sidebar" aria-label="Sidebar navigation">
+      <div class="brand">
+        <div class="brand-title">AetherChat</div>
+        <div class="brand-sub">decentralized browser chat</div>
       </div>
 
-      <div class="flex-1 py-[var(--space-md)]">
+      <div class="nav">
         {#each tabs as t (t.key)}
           <button
-            class={tabButtonClass($activeTab === t.key)}
-            style={tabButtonStyle($activeTab === t.key)}
+            class={`nav-btn ${$activeTab === t.key ? 'active' : ''}`}
             on:click={() => activeTab.set(t.key)}
+            aria-label={t.label}
+            aria-current={$activeTab === t.key ? 'page' : undefined}
             title={t.label}
           >
-            <svg class="h-[18px] w-[18px] flex-none" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d={iconPath(t.icon)} />
             </svg>
-            <span class="hidden lg:inline text-[var(--font-size-sm)]">
+            <span class="nav-label">
               {t.label}
               {#if t.key === 'private' && $totalUnread > 0}
-                <span
-                  class="ml-[var(--space-sm)] inline-flex items-center rounded-[var(--radius-full)] bg-[var(--accent-subtle)] px-[var(--space-sm)] py-[2px] text-[var(--font-size-xs)] text-[var(--text-primary)] border border-[var(--border)]"
-                  aria-label="Unread private messages"
-                >
+                <span class="nav-unread" aria-label="Unread private messages">
                   {$totalUnread > 99 ? '99+' : $totalUnread}
                 </span>
               {/if}
@@ -108,75 +111,247 @@
         {/each}
       </div>
 
-      <div class="border-t border-[var(--border)] p-[var(--space-md)]">
-        <div class="flex items-center gap-[var(--space-sm)]">
-          <AvatarDisplay username={$user?.username ?? ''} avatarBase64={$user?.avatarBase64 ?? null} size={36} showRing={true} />
-          <div class="min-w-0 hidden lg:block">
-            <div class="truncate font-700 text-[var(--text-primary)]">{$user?.username ?? '...'}</div>
-            <div class="text-[var(--font-size-xs)] text-[var(--text-muted)] font-mono">local</div>
+      <div class="profile">
+        <div class="profile-row">
+          <AvatarDisplay
+            username={$user?.username ?? ''}
+            avatarBase64={$user?.avatarBase64 ?? null}
+            size={36}
+            showRing={true}
+          />
+          <div class="profile-meta">
+            <div class="profile-name">{$user?.username ?? '...'}</div>
+            <div class="profile-status">
+              {topBarStatus === 'connected' ? 'Connected' : topBarStatus === 'connecting' ? 'Joining...' : 'Offline'}
+              <span class="sep">·</span>
+              {connectedPeers} peer{connectedPeers === 1 ? '' : 's'}
+            </div>
           </div>
         </div>
       </div>
     </aside>
 
-    <!-- Main -->
-    <main class="flex-1 min-w-0 flex flex-col">
-      <div class="flex-1 min-h-0">
+    <main class="main" aria-label="Main content">
+      <div class="view">
         {#if $activeTab === 'global'}
           <GlobalChat />
         {:else if $activeTab === 'private'}
           <PrivateChatPanel />
         {:else}
-          <div class="h-full overflow-y-auto px-[var(--space-lg)] py-[var(--space-lg)]">
-            <div class="max-w-[760px]">
-              <h2 class="m-0 text-[var(--font-size-xl)] font-800">Terms & Conditions</h2>
-              <p class="mt-[var(--space-sm)] text-[var(--text-secondary)]">
-                AetherChat is a peer-to-peer chat experiment. Messages and identity are stored locally in your browser.
-              </p>
-              <p class="text-[var(--text-secondary)]">
-                Do not share sensitive personal information. There is no central authority and no recovery mechanism.
-              </p>
-            </div>
-          </div>
+          <TermsAndConditions />
         {/if}
       </div>
-
-      <!-- Mobile bottom nav -->
-      <nav
-        class="sm:hidden fixed bottom-0 left-0 right-0 border-t border-[var(--border)] bg-[var(--bg-surface)] px-[var(--space-md)] py-[var(--space-sm)]"
-      >
-        <div class="grid grid-cols-3 gap-[var(--space-sm)]">
-          {#each tabs as t (t.key)}
-            <button
-              class={mobileTabClass($activeTab === t.key)}
-              on:click={() => activeTab.set(t.key)}
-              aria-label={t.label}
-              title={t.label}
-            >
-              <div class="relative">
-                <svg
-                  class={`h-[18px] w-[18px] ${mobileIconClass($activeTab === t.key)}`}
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  aria-hidden="true"
-                >
-                  <path d={iconPath(t.icon)} />
-                </svg>
-                {#if t.key === 'private' && $totalUnread > 0}
-                  <span
-                    class="absolute -right-[6px] -top-[6px] h-[10px] w-[10px] rounded-[var(--radius-full)] bg-[var(--accent)] border border-[var(--border)]"
-                    aria-hidden="true"
-                  ></span>
-                {/if}
-              </div>
-            </button>
-          {/each}
-        </div>
-      </nav>
     </main>
   </div>
+
+  {#if isMobile}
+    <BottomNav active={$activeTab} privateUnread={$totalUnread} on:select={(e) => activeTab.set(e.detail.key)} />
+  {/if}
 </div>
 
 {#if import.meta.env.DEV}
   <P2PDebugPanel />
 {/if}
+
+<style>
+  .shell {
+    height: 100dvh;
+    background: var(--bg-base);
+    color: var(--text-primary);
+  }
+
+  .frame {
+    height: 100%;
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    background: var(--bg-surface);
+    min-width: 0;
+  }
+
+  .brand {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .brand-title {
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+  }
+
+  .brand-sub {
+    margin-top: 2px;
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .nav {
+    flex: 1;
+    padding: 12px 8px;
+    display: grid;
+    gap: 4px;
+  }
+
+  .nav-btn {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: var(--text-secondary);
+    border-left: 3px solid transparent;
+    border-radius: var(--radius-md);
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+    min-height: 44px;
+  }
+
+  .nav-btn.active {
+    background: var(--accent-subtle);
+    border-left-color: var(--accent);
+    color: var(--text-primary);
+  }
+
+  .nav-ico {
+    width: 18px;
+    height: 18px;
+    flex: none;
+  }
+
+  .nav-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--font-size-sm);
+    min-width: 0;
+  }
+
+  .nav-unread {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border);
+    background: var(--accent-subtle);
+    color: var(--text-primary);
+    font-size: var(--font-size-xs);
+    font-family: var(--font-mono);
+    padding: 2px 8px;
+    line-height: 1;
+    flex: none;
+  }
+
+  .profile {
+    border-top: 1px solid var(--border);
+    padding: 14px 12px;
+  }
+
+  .profile-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .profile-meta {
+    min-width: 0;
+  }
+
+  .profile-name {
+    font-weight: 800;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .profile-status {
+    margin-top: 2px;
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sep {
+    opacity: 0.6;
+    margin: 0 6px;
+  }
+
+  .main {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .view {
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* Mobile: TopBar + BottomNav, no sidebar */
+  @media (max-width: 639px) {
+    .frame {
+      grid-template-columns: 1fr;
+    }
+
+    .sidebar {
+      display: none;
+    }
+
+    .main {
+      padding-top: calc(48px + env(safe-area-inset-top, 0px));
+      padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+    }
+  }
+
+  /* Tablet: icon rail */
+  @media (min-width: 640px) and (max-width: 1023px) {
+    .frame {
+      grid-template-columns: 56px 1fr;
+    }
+
+    .brand-sub,
+    .nav-label,
+    .profile-meta {
+      display: none;
+    }
+
+    .nav-btn {
+      justify-content: center;
+      padding: 10px 0;
+    }
+  }
+
+  /* TV / wide */
+  @media (min-width: 1920px) {
+    .frame {
+      max-width: 1440px;
+      grid-template-columns: 260px 1fr;
+    }
+
+    .shell {
+      font-size: 18px;
+    }
+  }
+
+  @media (hover: hover) {
+    .nav-btn:not(.active):hover {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+    }
+  }
+</style>

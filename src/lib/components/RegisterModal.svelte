@@ -27,6 +27,7 @@
   const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
   const USERNAME_ID = 'aetherchat-username';
   const AGE_ID = 'aetherchat-age';
+  const AVATAR_ID = 'aetherchat-avatar';
 
   function validateUsernameLocal(value) {
     if (!value || value.trim().length === 0) return 'Username is required.';
@@ -189,14 +190,14 @@
 </script>
 
 <div
-  class="fixed inset-0 z-50 grid place-items-center px-[var(--space-md)] py-[var(--space-lg)] bg-[var(--bg-dim)]"
+  class="modal-overlay fixed inset-0 z-50 grid place-items-center bg-[var(--bg-dim)]"
   aria-modal="true"
   role="dialog"
 >
   <div
-    class="w-full max-w-[560px] rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-surface)] shadow-[var(--shadow-lg)] overflow-hidden"
+    class="modal-shell w-full rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-surface)] shadow-[var(--shadow-lg)] overflow-hidden"
   >
-    <div class="px-[var(--space-lg)] pt-[var(--space-lg)] pb-[var(--space-md)]">
+    <div class="modal-header px-[var(--space-lg)] pt-[var(--space-lg)] pb-[var(--space-md)]">
       <div class="flex items-start justify-between gap-[var(--space-md)]">
         <div>
           <h2 class="m-0 text-[var(--font-size-xl)] font-700">Welcome to AetherChat</h2>
@@ -204,13 +205,10 @@
             Create a local identity. This stays in your browser.
           </p>
         </div>
-        <div class="hidden sm:block text-[var(--text-muted)] text-[var(--font-size-xs)] font-mono">
-          Phase 1
-        </div>
       </div>
 
       <div
-        class="mt-[var(--space-md)] rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--accent-subtle)] px-[var(--space-md)] py-[var(--space-sm)]"
+        class="privacy-banner mt-[var(--space-md)] rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--accent-subtle)] px-[var(--space-md)] py-[var(--space-sm)]"
       >
         <p class="m-0 text-[var(--font-size-sm)] text-[var(--text-primary)]">
           Do not use your real name or personal information as your username.
@@ -218,12 +216,12 @@
       </div>
     </div>
 
-    <div class="px-[var(--space-lg)] pb-[var(--space-lg)] grid gap-[var(--space-md)]">
+    <div class="modal-body px-[var(--space-lg)] pb-[var(--space-lg)] grid gap-[var(--space-md)] scroll-container">
       <div class="grid gap-[var(--space-sm)]">
         <label for={USERNAME_ID} class="text-[var(--font-size-sm)] text-[var(--text-secondary)]">Username</label>
         <input
           id={USERNAME_ID}
-          class="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-primary)] outline-none focus:border-[var(--border-focus)]"
+          class="w-full min-h-[44px] rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-primary)] outline-none focus:border-[var(--border-focus)]"
           type="text"
           bind:value={username}
           on:input={onUsernameInput}
@@ -243,7 +241,7 @@
             {#if takenSuggestion}
               <button
                 type="button"
-                class="ml-[var(--space-xs)] rounded-[var(--radius-full)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[10px] py-[2px] text-[var(--text-primary)] hover:bg-[var(--accent-subtle)]"
+                class="suggestion-btn ml-[var(--space-xs)] rounded-[var(--radius-full)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[10px] py-[2px] text-[var(--text-primary)]"
                 on:click={applySuggestion}
               >
                 {takenSuggestion}
@@ -256,7 +254,7 @@
             {#if takenSuggestion}
               <button
                 type="button"
-                class="ml-[var(--space-xs)] rounded-[var(--radius-full)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[10px] py-[2px] text-[var(--text-primary)] hover:bg-[var(--accent-subtle)]"
+                class="suggestion-btn ml-[var(--space-xs)] rounded-[var(--radius-full)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[10px] py-[2px] text-[var(--text-primary)]"
                 on:click={applySuggestion}
               >
                 {takenSuggestion}
@@ -278,7 +276,7 @@
         <label for={AGE_ID} class="text-[var(--font-size-sm)] text-[var(--text-secondary)]">Age</label>
         <input
           id={AGE_ID}
-          class="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-primary)] outline-none focus:border-[var(--border-focus)]"
+          class="w-full min-h-[44px] rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-primary)] outline-none focus:border-[var(--border-focus)]"
           type="number"
           min="0"
           max="120"
@@ -294,12 +292,10 @@
       <div class="grid gap-[var(--space-sm)]">
         <div class="flex items-center justify-between gap-[var(--space-md)]">
           <div class="text-[var(--font-size-sm)] text-[var(--text-secondary)]">Avatar (optional)</div>
-          <label
-            class="cursor-pointer text-[var(--font-size-xs)] text-[var(--accent)] hover:text-[var(--accent-hover)]"
-          >
+          <label class="upload-link cursor-pointer text-[var(--font-size-xs)] text-[var(--accent)]" for={AVATAR_ID}>
             Upload
-            <input class="hidden" type="file" accept="image/png,image/jpeg" on:change={onPickFile} />
           </label>
+          <input id={AVATAR_ID} class="hidden" type="file" accept="image/png,image/jpeg" on:change={onPickFile} />
         </div>
 
         <div class="grid grid-cols-[88px_1fr] items-center gap-[var(--space-md)]">
@@ -315,8 +311,9 @@
             {/if}
           </div>
 
-          <div
-            class="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-md)] py-[var(--space-md)] text-[var(--text-secondary)] text-[var(--font-size-sm)]"
+          <label
+            for={AVATAR_ID}
+            class="avatar-drop rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-md)] py-[var(--space-md)] text-[var(--text-secondary)] text-[var(--font-size-sm)]"
             role="group"
             aria-label="Avatar upload dropzone"
             on:dragover|preventDefault
@@ -328,13 +325,13 @@
                 {avatarError}
               </div>
             {/if}
-          </div>
+          </label>
         </div>
       </div>
 
       <div class="flex items-center justify-end gap-[var(--space-md)] pt-[var(--space-sm)]">
         <button
-          class="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--accent)] px-[var(--space-lg)] py-[var(--space-sm)] text-[var(--text-primary)] font-600 hover:bg-[var(--accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
+          class="submit-btn rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--accent)] px-[var(--space-lg)] py-[var(--space-sm)] text-[var(--text-primary)] font-600 disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={!canSubmit}
           on:click={submit}
         >
@@ -348,3 +345,76 @@
     </div>
   </div>
 </div>
+
+<style>
+  .modal-overlay {
+    padding: var(--space-lg) var(--space-md);
+  }
+
+  .modal-shell {
+    max-width: 480px;
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100dvh - (var(--space-lg) * 2));
+  }
+
+  .modal-body {
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* Mobile: full-screen modal (no card feel) */
+  @media (max-width: 639px) {
+    .modal-overlay {
+      padding: 0;
+      place-items: stretch;
+    }
+
+    .modal-shell {
+      height: 100dvh;
+      max-width: none;
+      border-radius: 0;
+      border: 0;
+      box-shadow: none;
+    }
+
+    .modal-header {
+      padding-top: calc(var(--space-lg) + env(safe-area-inset-top, 0px));
+    }
+
+    .modal-body {
+      padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom, 0px));
+    }
+
+    .avatar-drop {
+      min-height: 44px;
+    }
+
+    .upload-link {
+      padding: 10px 12px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+  }
+
+  @media (hover: hover) {
+    .suggestion-btn:hover {
+      background: var(--accent-subtle);
+    }
+
+    .upload-link:hover {
+      color: var(--accent-hover);
+      text-decoration: underline;
+    }
+
+    .submit-btn:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+  }
+</style>

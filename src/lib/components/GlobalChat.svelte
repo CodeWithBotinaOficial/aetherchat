@@ -151,10 +151,6 @@
     return () => unsubscribe();
   });
 
-  function onStartPrivateChat() {
-    // Phase 2.
-  }
-
   $: msgs = $globalMessages;
   $: windowed = msgs.length > 200;
   $: visibleMsgs = windowed ? msgs.slice(start, end) : msgs;
@@ -189,8 +185,8 @@
   let detachOutsideClose = () => {};
 </script>
 
-<div class="h-full flex flex-col">
-  <div class="flex-1 min-h-0">
+<div class="gc h-full flex flex-col">
+  <div class="gc-list flex-1 min-h-0">
     {#if $globalMessages.length === 0}
       <div class="h-full grid place-items-center px-[var(--space-lg)]">
         <div class="text-center">
@@ -203,7 +199,7 @@
     {:else}
       <div
         bind:this={listEl}
-        class="h-full overflow-y-auto px-[var(--space-md)] py-[var(--space-md)]"
+        class="h-full scroll-container px-[var(--space-md)] py-[var(--space-md)]"
         on:scroll={() => computeRange(msgs)}
       >
         <div style={`padding-top:${padTop}px; padding-bottom:${padBottom}px;`}>
@@ -226,13 +222,36 @@
     {/if}
   </div>
 
-  <ChatInput on:send={onSend} placeholder="Message the global room..." />
+  <div class="gc-input">
+    <ChatInput on:send={onSend} placeholder="Message the global room..." />
+  </div>
 
   <UserTooltip
     user={tooltipUser}
     position={tooltipPos}
     cancelHide={tooltipCancelHide}
     on:close={onTooltipClose}
-    on:startPrivateChat={onStartPrivateChat}
   />
 </div>
+
+<style>
+  @media (max-width: 639px) {
+    .gc-input {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+      z-index: 45;
+    }
+
+    .gc-list {
+      padding-bottom: 160px;
+    }
+  }
+
+  @media (min-width: 640px) {
+    .gc-input {
+      position: static;
+    }
+  }
+</style>

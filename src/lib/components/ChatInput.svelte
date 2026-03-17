@@ -68,7 +68,7 @@
     </div>
 
     <button
-      class="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--accent)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-primary)] font-600 hover:bg-[var(--accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
+      class="send-btn rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--accent)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-primary)] font-600 disabled:opacity-50 disabled:cursor-not-allowed"
       disabled={disabled || value.trim().length === 0}
       on:click={send}
       aria-label="Send"
@@ -78,3 +78,11 @@
     </button>
   </div>
 </div>
+
+<style>
+  @media (hover: hover) {
+    .send-btn:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+  }
+</style>

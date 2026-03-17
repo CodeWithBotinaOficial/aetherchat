@@ -46,35 +46,59 @@ const isVitest = Boolean(process.env.VITEST);
 const svelteClientEntry = path.resolve(__dirname, 'node_modules/svelte/src/index-client.js');
 const svelteStoreClientEntry = path.resolve(__dirname, 'node_modules/svelte/src/store/index-client.js');
 
-export default defineConfig({
-  resolve: {
-    // Vitest runs modules through Vite SSR in Node. We want the client runtime in jsdom tests.
-    alias: isVitest
-      ? [
-          { find: /^svelte$/, replacement: svelteClientEntry },
-          { find: /^svelte\/store$/, replacement: svelteStoreClientEntry }
+export default defineConfig(({ mode }) => {
+  const isTest = mode === 'test' || isVitest;
+
+  return {
+    resolve: {
+      // Vitest runs modules through Vite SSR in Node. We want the client runtime in jsdom tests.
+      alias: isTest
+        ? [
+            { find: /^svelte$/, replacement: svelteClientEntry },
+            { find: /^svelte\/store$/, replacement: svelteStoreClientEntry }
+          ]
+        : []
+    },
+
+    plugins: [
+      UnoCSS({
+        presets: [
+          presetUno(),
+          presetWebFonts({
+            provider: 'none',
+            fonts: { sans: 'Inter', mono: 'JetBrains Mono' }
+          })
         ]
-      : []
-  },
-  plugins: [
-    UnoCSS({
-      presets: [
-        presetUno(),
-        presetWebFonts({
-          provider: 'none',
-          fonts: {
-            sans: 'Inter',
-            mono: 'JetBrains Mono'
+      }),
+      sveltekit(),
+      forceBrowserConditionsForVitest()
+    ],
+
+    define: {
+      __DEV__: mode === 'development',
+      __PROD__: mode === 'production',
+      __APP_VERSION__: JSON.stringify(process.env.npm_package_version)
+    },
+
+    build: {
+      sourcemap: mode === 'development',
+      target: 'es2020',
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            // Object-form manualChunks breaks SSR builds when a dependency is externalized.
+            // Function-form only chunks modules that are actually bundled.
+            if (id.includes('/node_modules/peerjs/')) return 'peerjs';
+            if (id.includes('/node_modules/dexie/')) return 'dexie';
           }
-        })
-      ]
-    }),
-    sveltekit(),
-    forceBrowserConditionsForVitest()
-  ],
-  test: {
-    environment: 'jsdom',
-    globals: true,
-    setupFiles: ['./src/tests/setup.js']
-  }
+        }
+      }
+    },
+
+    test: {
+      environment: 'jsdom',
+      globals: true,
+      setupFiles: ['./src/tests/setup.js']
+    }
+  };
 });

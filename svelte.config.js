@@ -13,9 +13,12 @@ const config = {
       pages: 'build',
       assets: 'build',
       fallback: 'index.html',
-      precompress: false,
+      precompress: true,
       strict: true
-    })
+    }),
+    prerender: {
+      handleHttpError: 'warn'
+    }
   }
 };
 

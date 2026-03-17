@@ -1,5 +1,5 @@
 	<script>
-	  import { createEventDispatcher, onDestroy } from 'svelte';
+	  import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
 	  import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
 	  import { formatMessageTime } from '$lib/utils/time.js';
 
@@ -35,12 +35,58 @@
 	  }, 30000);
 	  onDestroy(() => clearInterval(timer));
 
+  /** @type {MediaQueryList|null} */
+  let mqMobile = null;
+  /** @type {MediaQueryList|null} */
+  let mqDesktop = null;
+  let isMobile = false;
+  let isDesktop = false;
+
+  /** @type {HTMLDivElement|null} */
+  let bubbleEl = null;
+  let isNarrow = false;
+
+  function updateMqFlags() {
+    isMobile = Boolean(mqMobile?.matches);
+    isDesktop = Boolean(mqDesktop?.matches);
+  }
+
+  async function updateNarrow() {
+    await tick();
+    if (!bubbleEl) return;
+    // On mobile, very short messages can be narrow enough that the username/age row feels cramped.
+    isNarrow = bubbleEl.clientWidth < 240;
+  }
+
+  onMount(() => {
+    mqMobile = window.matchMedia?.('(max-width: 639px)') ?? null;
+    mqDesktop = window.matchMedia?.('(min-width: 1024px)') ?? null;
+    updateMqFlags();
+    const onMobileChange = () => {
+      updateMqFlags();
+      void updateNarrow();
+    };
+    const onDesktopChange = () => updateMqFlags();
+    mqMobile?.addEventListener?.('change', onMobileChange);
+    mqDesktop?.addEventListener?.('change', onDesktopChange);
+
+    const onResize = () => void updateNarrow();
+    window.addEventListener('resize', onResize, { passive: true });
+    void updateNarrow();
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      mqMobile?.removeEventListener?.('change', onMobileChange);
+      mqDesktop?.removeEventListener?.('change', onDesktopChange);
+    };
+  });
+
   function getPositionFromEvent(e) {
+    const rect = e.currentTarget?.getBoundingClientRect?.();
+    if (rect) return { x: rect.left + rect.width / 2, y: rect.top };
     if (typeof e?.clientX === 'number' && typeof e?.clientY === 'number') {
       return { x: e.clientX, y: e.clientY };
     }
-    const rect = e.currentTarget?.getBoundingClientRect?.();
-    if (rect) return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     return { x: 0, y: 0 };
   }
 
@@ -89,11 +135,15 @@
   $: bubbleShadow = hovered
     ? `0 0 0 3px color-mix(in srgb, ${message.color} 15%, transparent)`
     : 'none';
+
+  $: avatarSize = isDesktop ? 36 : 28;
+  $: showMetaRow = !isMobile || !isNarrow || hovered || Boolean(tooltipId);
 </script>
 
 <div class={isOwn ? 'flex justify-end' : 'flex justify-start'}>
   <div
-    class="max-w-[min(720px,100%)] w-fit rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-surface)] px-[var(--space-md)] py-[var(--space-sm)]"
+    bind:this={bubbleEl}
+    class="bubble w-fit rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-surface)] px-[var(--space-md)] py-[var(--space-sm)]"
     style={`border-left: 3px solid ${message.color}; box-shadow: ${bubbleShadow};`}
     role="group"
     data-aether-bubble="true"
@@ -105,27 +155,70 @@
     on:pointerup={onPointerUp}
   >
     <div class="flex items-center gap-[var(--space-sm)]">
-      <AvatarDisplay username={message.username} avatarBase64={message.avatarBase64 ?? null} size={28} showRing={true} />
+      <AvatarDisplay username={message.username} avatarBase64={message.avatarBase64 ?? null} size={avatarSize} showRing={true} />
 
-      <div class="min-w-0 flex items-baseline gap-[var(--space-sm)]">
-	        <div class="truncate font-600 text-[var(--text-primary)]">{message.username}</div>
-	        <div class="text-[var(--font-size-xs)] text-[var(--text-muted)]" title={new Date(message.timestamp).toLocaleString()}>
-	          {message.age} · {displayTime}
-	          {#if isOwn}
-	            {#if message.queued}
-	              <span class="ml-[var(--space-xs)]" title="Will be sent when peer reconnects">⏳</span>
-	            {:else if message.delivered === true}
-	              <span class="ml-[var(--space-xs)]" title="Delivered">✓</span>
-	            {:else if message.delivered === false}
-	              <span class="ml-[var(--space-xs)]" title="Sent">○</span>
-	            {/if}
-	          {/if}
-	        </div>
-	      </div>
-	    </div>
+      {#if showMetaRow}
+        <div class="min-w-0 flex items-center gap-[var(--space-sm)]">
+          <div class="truncate font-700 text-[var(--text-primary)]">{message.username}</div>
+          <div class="age-badge" aria-label="User age">{message.age}</div>
+        </div>
+      {/if}
+    </div>
 
     <div class="mt-[var(--space-xs)] whitespace-pre-wrap break-words text-[var(--text-primary)]">
       {message.text}
     </div>
+
+    <div class="time-row" title={new Date(message.timestamp).toLocaleString()}>
+      <span class="time">{displayTime}</span>
+      {#if isOwn}
+        {#if message.queued}
+          <span class="status" title="Will be sent when peer reconnects">⏳</span>
+        {:else if message.delivered === true}
+          <span class="status" title="Delivered">✓</span>
+        {:else if message.delivered === false}
+          <span class="status" title="Sent">○</span>
+        {/if}
+      {/if}
+    </div>
   </div>
 </div>
+
+<style>
+  .bubble {
+    max-width: 85%;
+  }
+
+  .age-badge {
+    flex: none;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    padding: 2px 8px;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    line-height: 1.2;
+  }
+
+  .time-row {
+    margin-top: 6px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    align-items: center;
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .status {
+    color: var(--text-secondary);
+  }
+
+  @media (min-width: 1024px) {
+    .bubble {
+      max-width: 70%;
+    }
+  }
+</style>

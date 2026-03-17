@@ -23,7 +23,8 @@ vi.mock('$lib/services/peer.js', () => {
 vi.mock('$lib/services/db.js', () => {
   return {
     cleanOldGlobalMessages: vi.fn().mockResolvedValue(0),
-    cleanOldPrivateChats: vi.fn().mockResolvedValue(0)
+    cleanOldPrivateChats: vi.fn().mockResolvedValue(0),
+    getUser: vi.fn().mockResolvedValue(null)
   };
 });
 
@@ -50,7 +51,7 @@ vi.mock('$lib/stores/userStore.js', () => {
 it('RegisterModal is NOT rendered before registryReady is true', async () => {
   const Page = (await import('../routes/+page.svelte')).default;
   render(Page);
-  expect(screen.getByText(/Checking username registry/i)).toBeInTheDocument();
+  expect(screen.getByText(/Checking username availability/i)).toBeInTheDocument();
   expect(screen.queryByText(/Welcome to AetherChat/i)).toBeNull();
 });
 

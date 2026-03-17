@@ -184,12 +184,12 @@
     <div class="flex items-center justify-between gap-[var(--space-sm)] px-[var(--space-md)] py-[var(--space-md)] border-b border-[var(--border)] bg-[var(--bg-surface)]">
       <div class="flex items-center gap-[var(--space-sm)] min-w-0">
         <button
-          class="sm:hidden rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-sm)] py-[6px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          class="btn-back sm:hidden rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-sm)] py-[6px] text-[var(--text-secondary)]"
           on:click={closeChat}
           aria-label="Back"
           title="Back"
         >
-          ←
+          ← Back
         </button>
 
         <AvatarDisplay username={$activeChat.theirUsername} avatarBase64={theirAvatar} size={36} showRing={true} />
@@ -208,7 +208,7 @@
       </div>
 
       <button
-        class="rounded-[var(--radius-md)] border border-[var(--border)] bg-transparent px-[var(--space-sm)] py-[6px] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
+        class="btn-icon rounded-[var(--radius-md)] border border-[var(--border)] bg-transparent px-[var(--space-sm)] py-[6px] text-[var(--text-secondary)]"
 	        on:click={() => {
 	          showDelete = true;
 	          if ($activeChat) deleteTarget = { chatId: $activeChat.id, theirPeerId: $activeChat.theirPeerId, theirUsername: $activeChat.theirUsername };
@@ -241,7 +241,7 @@
       {#if hasMore && $activeChat.messages.length >= 100}
         <div class="mb-[var(--space-md)] grid place-items-center">
           <button
-            class="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-overlay)]"
+            class="btn-load rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-secondary)]"
             on:click={loadOlder}
             disabled={loadingOlder}
           >
@@ -289,6 +289,24 @@
     </div>
   </div>
 {/if}
+
+<style>
+  @media (hover: hover) {
+    .btn-back:hover {
+      color: var(--text-primary);
+    }
+
+    .btn-icon:hover {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+    }
+
+    .btn-load:hover:not(:disabled) {
+      background: var(--bg-overlay);
+      color: var(--text-primary);
+    }
+  }
+</style>
 
 {#if showDelete && deleteTarget}
   <ConfirmDialog
