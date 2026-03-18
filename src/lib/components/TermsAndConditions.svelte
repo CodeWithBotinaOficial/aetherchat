@@ -340,8 +340,10 @@
   .terms-scroll {
     flex: 1;
     min-height: 0;
-    /* Clear the sticky header for all viewport sizes (no hardcoded pixel value). */
-    padding-top: var(--header-h);
+    padding-top: 0; /* header already occupies space in the flex column */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
 
   .progress-track {
@@ -363,8 +365,6 @@
     z-index: 10;
     border-bottom: 1px solid var(--border);
     background: var(--bg-surface);
-    /* Make the header overlay the scroller; the scroller clears it via padding-top. */
-    margin-bottom: calc(-1 * var(--header-h));
   }
 
   .header-inner {
