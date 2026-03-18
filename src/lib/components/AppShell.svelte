@@ -153,20 +153,24 @@
   <P2PDebugPanel />
 {/if}
 
-<style>
-  .shell {
-    height: 100dvh;
-    background: var(--bg-base);
-    color: var(--text-primary);
-  }
+	<style>
+	  .shell {
+	    height: 100dvh;
+	    background: var(--bg-base);
+	    color: var(--text-primary);
+	    display: flex;
+	    flex-direction: column;
+	    overflow: hidden;
+	  }
 
-  .frame {
-    height: 100%;
-    display: grid;
-    grid-template-columns: 220px 1fr;
-    width: 100%;
-    margin: 0 auto;
-  }
+	  .frame {
+	    flex: 1;
+	    min-height: 0;
+	    display: grid;
+	    grid-template-columns: 220px 1fr;
+	    width: 100%;
+	    margin: 0 auto;
+	  }
 
   .sidebar {
     display: flex;
@@ -297,10 +301,14 @@
     flex-direction: column;
   }
 
-  .view {
-    flex: 1;
-    min-height: 0;
-  }
+	  .view {
+	    flex: 1;
+	    min-height: 0;
+	    height: 100%;
+	    overflow: hidden;
+	    display: flex;
+	    flex-direction: column;
+	  }
 
   /* Mobile: TopBar + BottomNav, no sidebar */
   @media (max-width: 639px) {
