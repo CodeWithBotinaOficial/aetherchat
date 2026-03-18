@@ -1,37 +1,20 @@
 <script>
-	  import { onMount, tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
 
-	  const LAST_UPDATED = 'March 17, 2026';
+  const LAST_UPDATED = 'March 17, 2026';
 
-	  /** @type {HTMLDivElement|null} */
-	  let scroller = null;
-	  /** @type {HTMLElement|null} */
-	  let headerEl = null;
-	  let headerHeight = 64;
-	  let headerOffset = 64;
-	  let progress = 0;
+  /** @type {HTMLDivElement|null} */
+  let scroller = null;
+  /** @type {HTMLElement|null} */
+  let headerEl = null;
+  let headerHeight = 0;
+  let progress = 0;
 
-	  async function computeHeaderOffset() {
-	    if (!scroller || !headerEl) {
-	      headerOffset = headerHeight || 64;
-	      return;
-	    }
-
-	    await tick();
-	    const headerRect = headerEl.getBoundingClientRect();
-	    const scrollerRect = scroller.getBoundingClientRect();
-
-	    // If the header overlays the scroller (overlap > 0), pad the scroller so content starts below it.
-	    // If they are already laid out in normal flow (overlap <= 0), no padding is needed.
-	    const overlap = Math.round(headerRect.bottom - scrollerRect.top);
-	    headerOffset = Math.max(0, overlap);
-	  }
-
-	  async function computeProgress() {
-	    if (!scroller) {
-	      progress = 0;
-	      return;
-	    }
+  async function computeProgress() {
+    if (!scroller) {
+      progress = 0;
+      return;
+    }
     await tick();
     const max = scroller.scrollHeight - scroller.clientHeight;
     if (max <= 0) {
@@ -41,40 +24,39 @@
     progress = Math.max(0, Math.min(1, scroller.scrollTop / max));
   }
 
-	  onMount(() => {
-	    void computeProgress();
-	    void computeHeaderOffset();
-	    const onResize = () => {
-	      void computeProgress();
-	      void computeHeaderOffset();
-	    };
-	    window.addEventListener('resize', onResize, { passive: true });
+  onMount(() => {
+    void computeProgress();
+    const onResize = () => computeProgress();
+    window.addEventListener('resize', onResize, { passive: true });
 
-	    return () => {
-	      window.removeEventListener('resize', onResize);
-	    };
-	  });
-	</script>
+    return () => {
+      window.removeEventListener('resize', onResize);
+    };
+  });
+</script>
 
-<div class="terms" style:--header-offset={`${headerOffset}px`}>
-	  <div class="progress-track" aria-hidden="true">
-	    <div class="progress-bar" style={`transform: scaleX(${progress});`}></div>
-	  </div>
+<div class="terms" style:--header-h={`${headerHeight}px`}>
+  <div class="progress-track" aria-hidden="true">
+    <div class="progress-bar" style={`transform: scaleX(${progress});`}></div>
+  </div>
 
-	  <header bind:this={headerEl} bind:clientHeight={headerHeight} class="terms-header">
-	    <div class="header-inner">
-	      <h1 class="title" id="terms-title">Terms of Service and Privacy Policy</h1>
-	      <div class="updated">Last updated: {LAST_UPDATED}</div>
-	    </div>
-	  </header>
+  <header bind:this={headerEl} bind:clientHeight={headerHeight} class="terms-header">
+    <div class="header-inner">
+      <div class="title">
+        <span class="title-full">Terms of Service and Privacy Policy</span>
+        <span class="title-short">Terms</span>
+      </div>
+      <div class="updated">Last updated: {LAST_UPDATED}</div>
+    </div>
+  </header>
 
-	  <div bind:this={scroller} class="terms-scroll scroll-container" on:scroll={() => void computeProgress()}>
-	    <article class="doc" aria-labelledby="terms-title">
-	      <h1 class="h1 doc-title">TERMS OF SERVICE AND PRIVACY POLICY</h1>
-	      <p class="meta">
-	        <strong>AetherChat</strong> —
-	        <a class="link" href="https://aetherchat.codewithbotina.com" target="_blank" rel="noreferrer">https://aetherchat.codewithbotina.com</a><br />
-	        <strong>Last updated:</strong> {LAST_UPDATED}<br />
+  <div bind:this={scroller} class="terms-scroll scroll-container" on:scroll={() => void computeProgress()}>
+    <article class="doc" aria-label="Terms of Service and Privacy Policy">
+      <h1 class="h1 doc-title">TERMS OF SERVICE AND PRIVACY POLICY</h1>
+      <p class="meta">
+        <strong>AetherChat</strong> —
+        <a class="link" href="https://aetherchat.codewithbotina.com" target="_blank" rel="noreferrer">https://aetherchat.codewithbotina.com</a><br />
+        <strong>Last updated:</strong> {LAST_UPDATED}<br />
         <strong>Operated by:</strong> CodeWithBotinaOficial<br />
         <strong>Contact:</strong>
         <a class="link" href="mailto:support@codewithbotina.com">support@codewithbotina.com</a>
@@ -344,22 +326,23 @@
   </div>
 </div>
 
-	<style>
-	  .terms {
-	    background: var(--bg-base);
-	    color: var(--text-primary);
-	    height: 100%;
-	    overflow: hidden;
-	    min-height: 0;
-	    display: flex;
-	    flex-direction: column;
-	  }
+<style>
+  .terms {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    height: 100%;
+    overflow: hidden;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
 
-	  .terms-scroll {
-	    flex: 1;
-	    min-height: 0;
-	    padding-top: var(--header-offset, 64px);
-	  }
+  .terms-scroll {
+    flex: 1;
+    min-height: 0;
+    /* Clear the sticky header for all viewport sizes (no hardcoded pixel value). */
+    padding-top: var(--header-h);
+  }
 
   .progress-track {
     height: 3px;
@@ -374,32 +357,52 @@
     background: var(--accent);
   }
 
-	  .terms-header {
-	    position: sticky;
-	    top: 0;
-	    z-index: 10;
-	    border-bottom: 1px solid var(--border);
-	    background: var(--bg-surface);
-	  }
+  .terms-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-surface);
+    /* Make the header overlay the scroller; the scroller clears it via padding-top. */
+    margin-bottom: calc(-1 * var(--header-h));
+  }
 
   .header-inner {
     max-width: 720px;
     margin: 0 auto;
     padding: 12px 16px;
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
     gap: 12px;
   }
 
-	  .title {
-	    font-weight: 800;
-	    color: var(--text-primary);
-	    letter-spacing: -0.01em;
-	    font-size: 1rem;
-	    line-height: 1.2;
-	    margin: 0;
-	  }
+  .title {
+    font-weight: 800;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+    font-size: 1rem;
+    line-height: 1.2;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .title-full {
+    display: inline;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .title-short {
+    display: none;
+  }
 
   .updated {
     font-size: var(--font-size-xs);
@@ -430,9 +433,9 @@
 	    margin-top: 0;
 	  }
 
-	  .doc-title {
-	    display: none;
-	  }
+  .doc-title {
+    display: none;
+  }
 
 	  .h2 {
 	    margin-top: 22px;
@@ -492,18 +495,38 @@
 	    }
 	  }
 
-	  /* Mobile: avoid spending vertical space on a sticky header. */
-	  @media (max-width: 639px) {
-	    .terms-header {
-	      display: none;
-	    }
+  @media (max-width: 639px) {
+    .terms-header {
+      height: 48px;
+      min-height: 48px;
+      max-height: 48px;
+      overflow: hidden;
+    }
 
-	    .terms-scroll {
-	      padding-top: 0;
-	    }
+    .header-inner {
+      height: 48px;
+      padding: 0 12px;
+    }
 
-	    .doc-title {
-	      display: block;
-	    }
-	  }
-	</style>
+    .title {
+      font-size: 0.95rem;
+      letter-spacing: -0.015em;
+    }
+
+    .title-full {
+      display: none;
+    }
+
+    .title-short {
+      display: inline;
+    }
+
+    .updated {
+      font-size: 0.7rem;
+    }
+
+    .doc-title {
+      display: block;
+    }
+  }
+</style>
