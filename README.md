@@ -10,6 +10,7 @@ AetherChat connects people across the globe using WebRTC (via PeerJS) so message
 
 - **Global Chat**: real-time public chat shared peer-to-peer between connected browsers.
 - **Private Chats (E2EE)**: end-to-end encrypted 1-to-1 messaging using ECDH (P-256) + HKDF-SHA256 + AES-GCM (256-bit).
+- **Message replies + multi-quote**: reply to one or more messages at once (Global + Private), with clickable quote cards that jump to the original.
 - **No centralized message server**: there is no backend that stores or processes chat content.
 - **Local-only identity**: profiles live in your browser storage; clearing site data resets identity and local history.
 - **Offline-first UX**: the UI loads and remains usable even when the network is unavailable (messages can be stored locally).
@@ -39,7 +40,21 @@ AetherChat connects people across the globe using WebRTC (via PeerJS) so message
 - **Discovery**: a lightweight lobby peer ID is used so newcomers can join a network and receive a snapshot of peers + registry state.
 - **Direct connections**: after discovery, the app forms a limited mesh of direct DataChannel connections to reduce spam and stay within PeerJS limits.
 - **Protocol messages**: peers exchange handshake metadata, public messages, private E2EE payloads, delivery acks, and network state digests.
+- **Replies (quotes)**: new messages can include a `replies` array referencing one or more earlier messages, plus a text snapshot captured at send time (private reply payloads are encrypted).
 - **Local storage**: chat history, registry state, and E2EE key rings (local-only) are persisted in IndexedDB using Dexie.
+
+---
+
+## 💬 Reply & Quote System
+
+AetherChat supports quoting one or more messages when composing a new message in both Global Chat and Private Chat.
+
+- Desktop: a reply button appears on hover beside each message bubble.
+- Mobile: swipe to reply (own messages swipe left; other messages swipe right) with a WhatsApp-style visual indicator.
+- The composer shows a pending replies area above the input; remove quotes individually or send to clear them.
+- Sent messages render quoted cards above the message text; clicking a quote scrolls to and highlights the original (and attempts to load older history if needed).
+
+Privacy note: for Private Chats, reply snapshots and reply metadata are encrypted along with the message payload (no plaintext reply metadata is stored or transmitted).
 
 ---
 
