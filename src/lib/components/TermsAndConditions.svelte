@@ -48,6 +48,7 @@
       </div>
       <div class="updated">Last updated: {LAST_UPDATED}</div>
     </div>
+    <div class="header-subtitle" aria-hidden="true">Terms of Service and Privacy Policy</div>
   </header>
 
   <div bind:this={scroller} class="terms-scroll scroll-container" on:scroll={() => void computeProgress()}>
@@ -377,6 +378,10 @@
     gap: 12px;
   }
 
+  .header-subtitle {
+    display: none;
+  }
+
   .title {
     font-weight: 800;
     color: var(--text-primary);
@@ -496,13 +501,6 @@
 	  }
 
   @media (max-width: 639px) {
-    .terms-header {
-      height: 48px;
-      min-height: 48px;
-      max-height: 48px;
-      overflow: hidden;
-    }
-
     .header-inner {
       height: 48px;
       padding: 0 12px;
@@ -526,7 +524,18 @@
     }
 
     .doc-title {
+      display: none;
+    }
+
+    .header-subtitle {
       display: block;
+      max-width: 720px;
+      margin: -4px auto 0;
+      padding: 0 12px 10px;
+      font-size: 0.8rem;
+      font-weight: 900;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
     }
   }
 </style>
