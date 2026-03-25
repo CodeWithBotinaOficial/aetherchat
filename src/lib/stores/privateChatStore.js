@@ -1,6 +1,7 @@
 import { derived, get, writable } from 'svelte/store';
 import { tick } from 'svelte';
 import { buildSessionId, closeSession, decryptForSession, isSessionActive, resumeSession } from '$lib/services/crypto.js';
+import { snapshotText } from '$lib/utils/replies.js';
 import {
   clearQueuedMessagesForChat,
   deletePrivateChat,
@@ -20,6 +21,10 @@ import {
 //   activeChatId: string | null
 //   pendingKeyExchanges: Map<peerId, 'waiting_ack'>
 // }
+
+/**
+ * @typedef {{ messageId: string, authorUsername: string, authorColor: string, textSnapshot: string }} PendingReply
+ */
 
 const initialState = {
   chats: new Map(),
@@ -85,6 +90,8 @@ export async function loadPrivateChats(myPeerId) {
     const sentPlain = await getSentMessagesPlaintext(c.id);
     const sentPlainMap = new Map(sentPlain.map((m) => [m.id, m.plaintext]));
     const messages = dbMessages.map((m) => {
+      const repliesCiphertext = typeof m?.replies?.ciphertext === 'string' ? m.replies.ciphertext : null;
+      const repliesIv = typeof m?.replies?.iv === 'string' ? m.replies.iv : null;
       if (m.direction === 'sent') {
         const plaintext = sentPlainMap.get(m.id);
         return {
@@ -93,6 +100,9 @@ export async function loadPrivateChats(myPeerId) {
           text: plaintext ?? '🔒 Sent message (plaintext not available)',
           ciphertext: m.ciphertext,
           iv: m.iv,
+          repliesCiphertext,
+          repliesIv,
+          replies: null,
           timestamp: m.timestamp,
           delivered: Boolean(m.delivered),
           sealed: false
@@ -104,6 +114,9 @@ export async function loadPrivateChats(myPeerId) {
         text: null,
         ciphertext: m.ciphertext,
         iv: m.iv,
+        repliesCiphertext,
+        repliesIv,
+        replies: null,
         timestamp: m.timestamp,
         delivered: Boolean(m.delivered),
         sealed: true
@@ -117,6 +130,18 @@ export async function loadPrivateChats(myPeerId) {
       text: m.plaintext,
       ciphertext: null,
       iv: null,
+      repliesCiphertext: null,
+      repliesIv: null,
+      replies: (() => {
+        const raw = m?.repliesJson;
+        if (typeof raw !== 'string' || raw.trim().length === 0) return null;
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed : null;
+        } catch {
+          return null;
+        }
+      })(),
       timestamp: m.timestamp,
       delivered: false,
       queued: true,
@@ -137,6 +162,7 @@ export async function loadPrivateChats(myPeerId) {
       lastActivity: c.lastActivity ?? c.createdAt ?? Date.now(),
       isOnline: false,
       keyExchangeState: 'idle',
+      pendingReplies: [],
       __loaded: true
     });
   }
@@ -186,17 +212,31 @@ export async function loadChatMessages(chatId, sessionId) {
   const decrypted = await Promise.all(
     rows.map(async (m) => {
       let text = '🔒 Encrypted message — start a new session to decrypt';
+      /** @type {any[]|null} */
+      let replies = null;
       if (canDecrypt) {
         try {
           text = await decryptForSession(sessionId, m.ciphertext, m.iv);
         } catch {
           // keep placeholder
         }
+        if (typeof m?.replies?.ciphertext === 'string' && typeof m?.replies?.iv === 'string') {
+          try {
+            const raw = await decryptForSession(sessionId, m.replies.ciphertext, m.replies.iv);
+            const parsed = JSON.parse(raw);
+            replies = Array.isArray(parsed) ? parsed : null;
+          } catch {
+            // ignore
+          }
+        }
       }
       return {
         id: m.id,
         direction: m.direction,
         text,
+        replies,
+        repliesCiphertext: typeof m?.replies?.ciphertext === 'string' ? m.replies.ciphertext : null,
+        repliesIv: typeof m?.replies?.iv === 'string' ? m.replies.iv : null,
         timestamp: m.timestamp,
         delivered: Boolean(m.delivered)
       };
@@ -231,14 +271,40 @@ export async function decryptSealedMessages(chatId, sessionId) {
   const decrypted = await Promise.all(
     chat.messages.map(async (m) => {
       // Only attempt to decrypt received sealed messages.
-      if (!m?.sealed || m.direction === 'sent') return m;
-      if (typeof m.ciphertext !== 'string' || typeof m.iv !== 'string') return m;
+      const hasRepliesCipher = typeof m?.repliesCiphertext === 'string' && typeof m?.repliesIv === 'string';
+
+      // Decrypt message text (received sealed) when possible.
+      if (m?.sealed && m.direction !== 'sent' && typeof m.ciphertext === 'string' && typeof m.iv === 'string') {
+        try {
+          const text = await decryptForSession(sessionId, m.ciphertext, m.iv);
+          // If we can decrypt the message, also try decrypting replies.
+          let replies = m?.replies ?? null;
+          if (hasRepliesCipher) {
+            try {
+              const raw = await decryptForSession(sessionId, m.repliesCiphertext, m.repliesIv);
+              const parsed = JSON.parse(raw);
+              replies = Array.isArray(parsed) ? parsed : null;
+            } catch {
+              // ignore
+            }
+          }
+          return { ...m, text, replies, sealed: false };
+        } catch {
+          // Keep sealed so we can retry later (e.g. after a key ring resumes from storage).
+          return { ...m, text: '🔒 Encrypted in a previous session', sealed: true };
+        }
+      }
+
+      // Decrypt replies for already-readable messages (sent plaintext copy, or received already decrypted).
+      if (m?.sealed) return m;
+      if (!hasRepliesCipher) return m;
       try {
-        const text = await decryptForSession(sessionId, m.ciphertext, m.iv);
-        return { ...m, text, sealed: false };
+        const raw = await decryptForSession(sessionId, m.repliesCiphertext, m.repliesIv);
+        const parsed = JSON.parse(raw);
+        const replies = Array.isArray(parsed) ? parsed : null;
+        return { ...m, replies };
       } catch {
-        // Keep sealed so we can retry later (e.g. after a key ring resumes from storage).
-        return { ...m, text: '🔒 Encrypted in a previous session', sealed: true };
+        return m;
       }
     })
   );
@@ -250,16 +316,19 @@ export async function decryptSealedMessages(chatId, sessionId) {
   });
 }
 
-export function addOutgoingMessage(chatId, { id, text, timestamp }) {
+export function addOutgoingMessage(chatId, { id, text, timestamp, replies = null }) {
   withChat((chats) => {
     const chat = chats.get(chatId);
     if (!chat) return;
-    const messages = [...chat.messages, { id, direction: 'sent', text, timestamp, delivered: false, queued: false, sealed: false }];
+    const messages = [
+      ...chat.messages,
+      { id, direction: 'sent', text, replies, timestamp, delivered: false, queued: false, sealed: false }
+    ];
     chats.set(chatId, { ...chat, messages, lastMessage: text, lastActivity: timestamp });
   });
 }
 
-export function addIncomingMessage(chatId, { id, text, timestamp, ciphertext = null, iv = null, sealed = false }) {
+export function addIncomingMessage(chatId, { id, text, timestamp, replies = null, ciphertext = null, iv = null, sealed = false, repliesCiphertext = null, repliesIv = null }) {
   update((s) => {
     const next = new Map(s.chats);
     const chat = next.get(chatId);
@@ -267,7 +336,7 @@ export function addIncomingMessage(chatId, { id, text, timestamp, ciphertext = n
 
     const messages = [
       ...chat.messages,
-      { id, direction: 'received', text, ciphertext, iv, timestamp, delivered: true, sealed: Boolean(sealed) }
+      { id, direction: 'received', text, replies, ciphertext, iv, repliesCiphertext, repliesIv, timestamp, delivered: true, sealed: Boolean(sealed) }
     ];
     const unreadInc = s.activeChatId === chatId ? 0 : 1;
     next.set(chatId, {
@@ -334,8 +403,11 @@ export function upsertChatEntry(entry) {
         lastMessage: null,
         isOnline: false,
         keyExchangeState: 'idle',
+        pendingReplies: [],
         __loaded: false
       }),
+      // Back-compat: ensure pendingReplies always exists so UI doesn't need null checks.
+      pendingReplies: Array.isArray(prev?.pendingReplies) ? prev.pendingReplies : [],
       ...entry
     });
   });
@@ -379,4 +451,62 @@ export function markChatAsRead(chatId) {
     chats.set(chatId, { ...chat, unreadCount: 0 });
   });
   updateChatMeta(chatId, { unreadCount: 0 }).catch((err) => console.error('updateChatMeta failed', err));
+}
+
+/**
+ * @param {string} chatId
+ * @param {{ id?: string, username?: string, color?: string, text?: string }} message
+ */
+export function addPendingReply(chatId, message) {
+  const cid = String(chatId ?? '').trim();
+  if (!cid) return;
+  const mid = String(message?.id ?? '').trim();
+  if (!mid) return;
+
+  withChat((chats) => {
+    const chat = chats.get(cid);
+    if (!chat) return;
+    /** @type {PendingReply[]} */
+    const cur = Array.isArray(chat.pendingReplies) ? chat.pendingReplies : [];
+    if (cur.some((r) => r.messageId === mid)) return;
+    const next = [
+      ...cur,
+      {
+        messageId: mid,
+        authorUsername: String(message?.username ?? '').trim() || 'unknown',
+        authorColor: String(message?.color ?? '').trim() || 'hsl(0, 0%, 65%)',
+        textSnapshot: snapshotText(message?.text, 120)
+      }
+    ];
+    chats.set(cid, { ...chat, pendingReplies: next });
+  });
+}
+
+/**
+ * @param {string} chatId
+ * @param {string} messageId
+ */
+export function removePendingReply(chatId, messageId) {
+  const cid = String(chatId ?? '').trim();
+  const mid = String(messageId ?? '').trim();
+  if (!cid || !mid) return;
+  withChat((chats) => {
+    const chat = chats.get(cid);
+    if (!chat) return;
+    const cur = Array.isArray(chat.pendingReplies) ? chat.pendingReplies : [];
+    chats.set(cid, { ...chat, pendingReplies: cur.filter((r) => r.messageId !== mid) });
+  });
+}
+
+/**
+ * @param {string} chatId
+ */
+export function clearPendingReplies(chatId) {
+  const cid = String(chatId ?? '').trim();
+  if (!cid) return;
+  withChat((chats) => {
+    const chat = chats.get(cid);
+    if (!chat) return;
+    chats.set(cid, { ...chat, pendingReplies: [] });
+  });
 }

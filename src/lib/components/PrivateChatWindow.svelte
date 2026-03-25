@@ -10,7 +10,16 @@
   import { avatarCache, closePrivateChat, initiatePrivateChat, sendPrivateMessage } from '$lib/services/peer.js';
   import { peer as peerStore } from '$lib/stores/peerStore.js';
   import { user } from '$lib/stores/userStore.js';
-  import { activeChat, closeChat, prependMessages } from '$lib/stores/privateChatStore.js';
+  import {
+    activeChat,
+    addPendingReply,
+    clearPendingReplies,
+    closeChat,
+    prependMessages,
+    removePendingReply
+  } from '$lib/stores/privateChatStore.js';
+  import { cssEscape } from '$lib/utils/replies.js';
+  import { showToast } from '$lib/stores/toastStore.js';
 
   /** @type {HTMLDivElement|null} */
   let listEl = null;
@@ -97,7 +106,23 @@
 	  async function onSend(e) {
 	    const chat = $activeChat;
 	    if (!chat) return;
-	    await sendPrivateMessage(chat.id, chat.theirPeerId, e.detail.text);
+
+      const rawPending = Array.isArray(e?.detail?.replies) ? e.detail.replies : [];
+      const byId = new Map((chat.messages ?? []).map((m) => [m?.id, m]));
+      const replies = rawPending.map((r) => {
+        const original = byId.get(r.messageId) ?? null;
+        return {
+          messageId: r.messageId,
+          authorUsername: r.authorUsername,
+          authorColor: r.authorColor,
+          textSnapshot: r.textSnapshot,
+          timestamp: typeof original?.timestamp === 'number' ? original.timestamp : 0
+        };
+      });
+      const safeReplies = replies.length > 0 ? replies : null;
+
+	    await sendPrivateMessage(chat.id, chat.theirPeerId, e.detail.text, safeReplies);
+      clearPendingReplies(chat.id);
 	  }
 
   async function loadOlder() {
@@ -119,14 +144,34 @@
     const decrypted = await Promise.all(
       page.map(async (m) => {
         let text = '🔒 Encrypted message — start a new session to decrypt';
+        /** @type {any[]|null} */
+        let replies = null;
         if (canDecrypt) {
           try {
             text = await decryptForSession(chat.id, m.ciphertext, m.iv);
           } catch {
             // keep placeholder
           }
+          if (typeof m?.replies?.ciphertext === 'string' && typeof m?.replies?.iv === 'string') {
+            try {
+              const raw = await decryptForSession(chat.id, m.replies.ciphertext, m.replies.iv);
+              const parsed = JSON.parse(raw);
+              replies = Array.isArray(parsed) ? parsed : null;
+            } catch {
+              // ignore
+            }
+          }
         }
-        return { id: m.id, direction: m.direction, text, timestamp: m.timestamp, delivered: Boolean(m.delivered) };
+        return {
+          id: m.id,
+          direction: m.direction,
+          text,
+          replies,
+          repliesCiphertext: typeof m?.replies?.ciphertext === 'string' ? m.replies.ciphertext : null,
+          repliesIv: typeof m?.replies?.iv === 'string' ? m.replies.iv : null,
+          timestamp: m.timestamp,
+          delivered: Boolean(m.delivered)
+        };
       })
     );
 
@@ -151,13 +196,50 @@
           ? '🔒 Encrypted in a previous session'
           : '🔒 Encrypted message';
     return {
+      id: m.id,
       username: isOwn ? (u?.username ?? 'me') : chat.theirUsername,
       age: isOwn ? (u?.age ?? 0) : (chat.theirAge ?? get(peerStore).connectedPeers.get(chat.theirPeerId)?.age ?? 0),
       color: isOwn ? (u?.color ?? 'hsl(0,0%,65%)') : chat.theirColor,
       avatarBase64: isOwn ? (u?.avatarBase64 ?? null) : theirAvatar,
       text: safeText,
+      replies: Array.isArray(m?.replies) && m.replies.length > 0 ? m.replies : null,
       timestamp: m.timestamp
     };
+  }
+
+  async function scrollToAndHighlight(messageId) {
+    const id = String(messageId ?? '').trim();
+    if (!id || !listEl) return;
+
+    const prefersReduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
+    const tryFindEl = () => listEl?.querySelector?.(`[data-message-id="${cssEscape(id)}"]`) ?? null;
+
+    let guard = 0;
+    while (!($activeChat?.messages ?? []).some((m) => m?.id === id) && hasMore && guard < 12) {
+      guard += 1;
+      await loadOlder();
+      await Promise.resolve();
+    }
+
+    if (!($activeChat?.messages ?? []).some((m) => m?.id === id)) {
+      showToast('Original message not available.');
+      return;
+    }
+
+    const el = tryFindEl();
+    if (!el) {
+      await Promise.resolve();
+    }
+    const el2 = tryFindEl();
+    if (!el2) {
+      showToast('Original message not available.');
+      return;
+    }
+
+    el2.scrollIntoView({ behavior: prefersReduced ? 'auto' : 'smooth', block: 'center' });
+    if (prefersReduced) return;
+    el2.classList.add('aether-highlight');
+    setTimeout(() => el2.classList.remove('aether-highlight'), 1500);
   }
 
 	  async function confirmDelete() {
@@ -268,7 +350,12 @@
         {#each $activeChat.messages as m (m.id)}
           <div class={m.direction === 'sent' ? 'flex flex-col items-end' : 'flex flex-col items-start'}>
             <div class="mb-[var(--space-sm)] w-full">
-              <MessageBubble message={msgToBubble(m, $activeChat)} isOwn={m.direction === 'sent'} />
+              <MessageBubble
+                message={msgToBubble(m, $activeChat)}
+                isOwn={m.direction === 'sent'}
+                on:reply={(ev) => addPendingReply($activeChat.id, ev.detail.message)}
+                on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
+              />
             </div>
             {#if m.direction === 'sent'}
               <div class="mt-[-10px] mb-[var(--space-sm)] pr-[var(--space-sm)] text-[var(--font-size-xs)] text-[var(--text-muted)] font-mono">
@@ -283,7 +370,10 @@
     <div title={inputDisabled ? 'Setting up encryption...' : ''}>
       <ChatInput
         disabled={inputDisabled}
+        pendingReplies={$activeChat.pendingReplies ?? []}
         placeholder={inputPlaceholder}
+        on:removePendingReply={(ev) => removePendingReply($activeChat.id, ev.detail.messageId)}
+        on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
         on:send={onSend}
       />
     </div>

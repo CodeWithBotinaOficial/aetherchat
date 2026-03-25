@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import { cleanOldGlobalMessages, getGlobalMessages, saveGlobalMessage } from '$lib/services/db.js';
+import { snapshotText } from '$lib/utils/replies.js';
 
 /**
  * @typedef {import('$lib/services/db.js').GlobalMessage} GlobalMessage
@@ -7,6 +8,14 @@ import { cleanOldGlobalMessages, getGlobalMessages, saveGlobalMessage } from '$l
 
 /** @type {import('svelte/store').Writable<GlobalMessage[]>} */
 export const globalMessages = writable([]);
+
+/**
+ * Pending reply items for the global chat composer.
+ * @typedef {{ messageId: string, authorUsername: string, authorColor: string, textSnapshot: string }} PendingReply
+ */
+
+/** @type {import('svelte/store').Writable<PendingReply[]>} */
+export const pendingReplies = writable([]);
 
 // Protect against an initial DB load overwriting messages added during that load.
 let globalMutation = 0;
@@ -79,4 +88,48 @@ export async function clearExpiredMessages() {
     console.error('clearExpiredMessages failed', err);
     throw err;
   }
+}
+
+/**
+ * Prepend/merge older messages into the in-memory list (used for scroll-to-original paging).
+ * @param {GlobalMessage[]} msgs
+ */
+export function prependGlobalMessages(msgs) {
+  globalMutation += 1;
+  const list = Array.isArray(msgs) ? msgs : [];
+  if (list.length === 0) return;
+  globalMessages.update((cur) => mergeMessages(list, cur));
+}
+
+/**
+ * @param {GlobalMessage} message
+ */
+export function addPendingReply(message) {
+  const id = String(message?.id ?? '').trim();
+  if (!id) return;
+  pendingReplies.update((arr) => {
+    if (arr.some((r) => r.messageId === id)) return arr;
+    return [
+      ...arr,
+      {
+        messageId: id,
+        authorUsername: String(message?.username ?? '').trim() || 'unknown',
+        authorColor: String(message?.color ?? '').trim() || 'hsl(0, 0%, 65%)',
+        textSnapshot: snapshotText(message?.text, 120)
+      }
+    ];
+  });
+}
+
+/**
+ * @param {string} messageId
+ */
+export function removePendingReply(messageId) {
+  const id = String(messageId ?? '').trim();
+  if (!id) return;
+  pendingReplies.update((arr) => arr.filter((r) => r.messageId !== id));
+}
+
+export function clearPendingReplies() {
+  pendingReplies.set([]);
 }

@@ -10,6 +10,7 @@
   import TermsAndConditions from '$lib/components/TermsAndConditions.svelte';
   import TopBar from '$lib/components/TopBar.svelte';
   import BottomNav from '$lib/components/BottomNav.svelte';
+  import ToastHost from '$lib/components/ToastHost.svelte';
   import { totalUnread, setChatOnlineStatus } from '$lib/stores/privateChatStore.js';
   import { flushQueueForPeer, onMessage } from '$lib/services/peer.js';
 
@@ -152,6 +153,8 @@
 {#if import.meta.env.DEV}
   <P2PDebugPanel />
 {/if}
+
+<ToastHost />
 
 	<style>
 	  .shell {

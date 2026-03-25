@@ -533,16 +533,19 @@ it('handleMessage routes GLOBAL_MSG to globalMessages store (via addGlobalMessag
   };
   await handleMessage(msg, conn, me);
   expect(hoisted.addGlobalMessageMock).toHaveBeenCalledTimes(1);
-  expect(hoisted.addGlobalMessageMock).toHaveBeenCalledWith({
-    id: 'm-1',
-    peerId: 'p2',
-    username: 'bob',
-    age: 33,
-    color: 'hsl(2, 65%, 65%)',
-    avatarBase64: null,
-    text: 'hi',
-    timestamp: 123
-  });
+  expect(hoisted.addGlobalMessageMock).toHaveBeenCalledWith(
+    expect.objectContaining({
+      id: 'm-1',
+      peerId: 'p2',
+      username: 'bob',
+      age: 33,
+      color: 'hsl(2, 65%, 65%)',
+      avatarBase64: null,
+      text: 'hi',
+      replies: null,
+      timestamp: 123
+    })
+  );
 });
 
 it('reconnectToKnownPeers connects to all peers in knownPeers DB (skips self + already connected)', async () => {
@@ -907,14 +910,17 @@ it('PRIVATE_MSG handler decrypts and calls addIncomingMessage (and sends ACK)', 
   );
 
   expect(cryptoMod.decryptForSession).toHaveBeenCalled();
-  expect(hoisted.addIncomingMessageMock).toHaveBeenCalledWith('alice:bob', {
-    id: 'm1',
-    text: 'hello',
-    ciphertext: 'CIPH',
-    iv: 'IV',
-    sealed: false,
-    timestamp: 2
-  });
+  expect(hoisted.addIncomingMessageMock).toHaveBeenCalledWith(
+    'alice:bob',
+    expect.objectContaining({
+      id: 'm1',
+      text: 'hello',
+      ciphertext: 'CIPH',
+      iv: 'IV',
+      sealed: false,
+      timestamp: 2
+    })
+  );
   const ack = send.mock.calls.map((c) => c[0]).find((m) => m.type === 'PRIVATE_MSG_ACK');
   expect(ack).toBeTruthy();
   expect(ack.payload.messageId).toBe('m1');
@@ -950,14 +956,17 @@ it('PRIVATE_MSG handler stores as unreadable if session not active', async () =>
   );
 
   expect(cryptoMod.decryptForSession).not.toHaveBeenCalled();
-  expect(hoisted.addIncomingMessageMock).toHaveBeenCalledWith('alice:bob', {
-    id: 'm2',
-    text: null,
-    ciphertext: 'CIPH',
-    iv: 'IV',
-    sealed: true,
-    timestamp: 2
-  });
+  expect(hoisted.addIncomingMessageMock).toHaveBeenCalledWith(
+    'alice:bob',
+    expect.objectContaining({
+      id: 'm2',
+      text: null,
+      ciphertext: 'CIPH',
+      iv: 'IV',
+      sealed: true,
+      timestamp: 2
+    })
+  );
 });
 
 it('PRIVATE_MSG_ACK handler calls markDelivered and markMessageDelivered', async () => {

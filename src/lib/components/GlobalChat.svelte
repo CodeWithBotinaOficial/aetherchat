@@ -1,9 +1,21 @@
 <script>
   import { onMount, tick } from 'svelte';
-  import { addGlobalMessage, globalMessages, loadGlobalMessages } from '$lib/stores/chatStore.js';
+  import {
+    addGlobalMessage,
+    addPendingReply,
+    clearPendingReplies,
+    globalMessages,
+    loadGlobalMessages,
+    pendingReplies,
+    prependGlobalMessages,
+    removePendingReply
+  } from '$lib/stores/chatStore.js';
   import { peer } from '$lib/stores/peerStore.js';
   import { user } from '$lib/stores/userStore.js';
   import { avatarCache, broadcastGlobalMessage } from '$lib/services/peer.js';
+  import { getGlobalMessagesPage } from '$lib/services/db.js';
+  import { cssEscape } from '$lib/utils/replies.js';
+  import { showToast } from '$lib/stores/toastStore.js';
 
   import ChatInput from '$lib/components/ChatInput.svelte';
   import MessageBubble from '$lib/components/MessageBubble.svelte';
@@ -22,6 +34,11 @@
   const bubbleRefs = Object.create(null);
   let isTouch = false;
   let outsideListenerAttached = false;
+
+  /** @type {HTMLDivElement|null} */
+  let composerEl = null;
+  let composerPad = 160;
+  let cleanupResize = () => {};
 
   // Simple windowed list for large histories.
   const EST_ITEM_H = 84;
@@ -104,6 +121,20 @@
     const u = $user;
     if (!u) return;
 
+    const rawPending = Array.isArray(e?.detail?.replies) ? e.detail.replies : [];
+    const byId = new Map(($globalMessages ?? []).map((m) => [m?.id, m]));
+    const replies = rawPending.map((r) => {
+      const original = byId.get(r.messageId) ?? null;
+      return {
+        messageId: r.messageId,
+        authorUsername: r.authorUsername,
+        authorColor: r.authorColor,
+        textSnapshot: r.textSnapshot,
+        timestamp: typeof original?.timestamp === 'number' ? original.timestamp : 0
+      };
+    });
+    const safeReplies = replies.length > 0 ? replies : null;
+
     if ($peer.peerId) {
       // Peer service handles optimistic add + network broadcast.
       await broadcastGlobalMessage(e.detail.text, {
@@ -111,7 +142,7 @@
         color: u.color,
         age: u.age,
         avatarBase64: u.avatarBase64
-      });
+      }, safeReplies);
     } else {
       // Offline fallback: local-only message.
       await addGlobalMessage({
@@ -121,16 +152,82 @@
         color: u.color,
         avatarBase64: u.avatarBase64 ?? null,
         text: e.detail.text,
+        replies: safeReplies,
         timestamp: Date.now()
       });
     }
 
+    clearPendingReplies();
     await scrollToBottom();
     computeRange($globalMessages);
   }
 
+  async function scrollToAndHighlight(messageId) {
+    const id = String(messageId ?? '').trim();
+    if (!id || !listEl) return;
+
+    const prefersReduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
+
+    const tryFindEl = () => listEl?.querySelector?.(`[data-message-id="${cssEscape(id)}"]`) ?? null;
+
+    // Ensure the message is in memory (page older messages if needed).
+    let guard = 0;
+    while (!($globalMessages ?? []).some((m) => m?.id === id) && guard < 12) {
+      guard += 1;
+      const oldest = $globalMessages?.[0]?.timestamp ?? Date.now();
+      const page = await getGlobalMessagesPage(oldest, 80);
+      if (!page || page.length === 0) break;
+      prependGlobalMessages(page);
+      await tick();
+    }
+
+    const idx = ($globalMessages ?? []).findIndex((m) => m?.id === id);
+    if (idx < 0) {
+      showToast('Original message not available.');
+      return;
+    }
+
+    if (windowed) {
+      listEl.scrollTop = Math.max(0, idx * EST_ITEM_H - EST_ITEM_H * 2);
+      computeRange($globalMessages);
+      await tick();
+    }
+
+    const el = tryFindEl();
+    if (!el) {
+      // One more range recompute pass after scrolling.
+      computeRange($globalMessages);
+      await tick();
+    }
+    const el2 = tryFindEl();
+    if (!el2) {
+      showToast('Original message not available.');
+      return;
+    }
+
+    el2.scrollIntoView({ behavior: prefersReduced ? 'auto' : 'smooth', block: 'center' });
+    if (prefersReduced) return;
+    el2.classList.add('aether-highlight');
+    setTimeout(() => el2.classList.remove('aether-highlight'), 1500);
+  }
+
   onMount(() => {
     isTouch = window.matchMedia?.('(hover: none)').matches || (navigator.maxTouchPoints ?? 0) > 0;
+
+    // Keep enough bottom padding so the fixed composer never covers messages on mobile.
+    try {
+      if (typeof ResizeObserver !== 'undefined') {
+        const ro = new ResizeObserver(() => {
+          if (!composerEl) return;
+          composerPad = composerEl.offsetHeight + 20;
+        });
+        if (composerEl) ro.observe(composerEl);
+        if (composerEl) composerPad = composerEl.offsetHeight + 20;
+        cleanupResize = () => ro.disconnect();
+      }
+    } catch {
+      cleanupResize = () => {};
+    }
 
     const unsubscribe = globalMessages.subscribe((msgs) => {
       computeRange(msgs);
@@ -148,7 +245,14 @@
       }
     })();
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      try {
+        cleanupResize();
+      } catch {
+        // ignore
+      }
+    };
   });
 
   $: msgs = $globalMessages;
@@ -185,7 +289,7 @@
   let detachOutsideClose = () => {};
 </script>
 
-<div class="gc h-full flex flex-col">
+<div class="gc h-full flex flex-col" style={`--composer-pad:${composerPad}px;`}>
   <div class="gc-list flex-1 min-h-0">
     {#if $globalMessages.length === 0}
       <div class="h-full grid place-items-center px-[var(--space-lg)]">
@@ -214,6 +318,8 @@
                 on:hoverEnter={onHoverEnter}
                 on:hoverMove={onHoverMove}
                 on:hoverLeave={onHoverLeave}
+                on:reply={(ev) => addPendingReply(ev.detail.message)}
+                on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
               />
             </div>
           {/each}
@@ -223,7 +329,15 @@
   </div>
 
   <div class="gc-input">
-    <ChatInput on:send={onSend} placeholder="Message the global room..." />
+    <div bind:this={composerEl}>
+      <ChatInput
+        pendingReplies={$pendingReplies}
+        on:removePendingReply={(ev) => removePendingReply(ev.detail.messageId)}
+        on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
+        on:send={onSend}
+        placeholder="Message the global room..."
+      />
+    </div>
   </div>
 
   <UserTooltip
@@ -245,7 +359,7 @@
     }
 
     .gc-list {
-      padding-bottom: 160px;
+      padding-bottom: var(--composer-pad, 160px);
     }
   }
 

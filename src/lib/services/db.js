@@ -18,6 +18,7 @@ import Dexie from 'dexie';
  * @property {number} age
  * @property {string} color
  * @property {string} text
+ * @property {{ messageId: string, authorUsername: string, authorColor: string, textSnapshot: string, timestamp: number }[] | null} [replies]
  * @property {number} timestamp
  */
 
@@ -43,6 +44,7 @@ import Dexie from 'dexie';
  * @property {'sent'|'received'} direction
  * @property {string} ciphertext
  * @property {string} iv
+ * @property {{ ciphertext: string, iv: string } | null} [replies] Encrypted replies bundle (never plaintext).
  * @property {number} timestamp
  * @property {boolean} delivered
  */
@@ -78,6 +80,7 @@ import Dexie from 'dexie';
  * @property {string} chatId
  * @property {string} theirPeerId
  * @property {string} plaintext
+ * @property {string|null} [repliesJson] Plaintext JSON string for replies (local-only, temporary).
  * @property {number} timestamp
  */
 
@@ -90,7 +93,7 @@ import Dexie from 'dexie';
  * @property {number} updatedAt
  */
 
-class AetherChatDB extends Dexie {
+export class AetherChatDB extends Dexie {
   /** @type {Dexie.Table<User, number>} */ users;
   /** @type {Dexie.Table<GlobalMessage, string>} */ globalMessages;
   /** @type {Dexie.Table<PrivateChat, string>} */ privateChats;
@@ -102,8 +105,11 @@ class AetherChatDB extends Dexie {
   /** @type {Dexie.Table<{ id: string, chatId: string, timestamp: number, plaintext: string }, string>} */ sentMessagesPlaintext;
   /** @type {Dexie.Table<SessionKeyRing, string>} */ sessionKeys;
 
-  constructor() {
-    super('AetherChatDB');
+  /**
+   * @param {string} [name='AetherChatDB']
+   */
+  constructor(name = 'AetherChatDB') {
+    super(name);
 
     this.version(1).stores({
       users: 'id, username, createdAt',
@@ -307,6 +313,33 @@ class AetherChatDB extends Dexie {
 				          await chatsTable.delete(chat.id);
 				        }
 				      });
+
+				    // Phase 11: add `replies` field to message tables (global + private).
+				    // - Global: replies are stored in plaintext (public chat).
+				    // - Private: replies are stored encrypted in the `privateMessages.replies` bundle.
+				    this.version(12)
+				      .stores({
+				        users: 'id, username, createdAt',
+				        globalMessages: 'id, timestamp, peerId, username',
+				        privateChats: 'id, myPeerId, myUsername, theirPeerId, theirUsername, createdAt, lastActivity',
+				        privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+				        knownPeers: '++id, peerId, lastSeen, username',
+				        usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+				        peerIds: 'username, peerId',
+				        queuedMessages: 'id, chatId, theirPeerId, timestamp',
+				        sentMessagesPlaintext: 'id, chatId, timestamp',
+				        sessionKeys: 'id, updatedAt'
+				      })
+				      .upgrade(async (tx) => {
+				        const globals = tx.table('globalMessages');
+				        const privates = tx.table('privateMessages');
+				        await globals.toCollection().modify((m) => {
+				          if (!Object.prototype.hasOwnProperty.call(m, 'replies')) m.replies = null;
+				        });
+				        await privates.toCollection().modify((m) => {
+				          if (!Object.prototype.hasOwnProperty.call(m, 'replies')) m.replies = null;
+				        });
+				      });
 				  }
 				}
 
@@ -385,6 +418,27 @@ export async function getGlobalMessages(limit = 100) {
 }
 
 /**
+ * Page older global messages before a timestamp, in ascending timestamp order.
+ * @param {number} beforeTimestamp
+ * @param {number} [limit=50]
+ * @returns {Promise<GlobalMessage[]>}
+ */
+export async function getGlobalMessagesPage(beforeTimestamp, limit = 50) {
+  try {
+    const before = Number(beforeTimestamp);
+    const n = Number(limit);
+    const cap = Number.isFinite(n) ? Math.max(1, Math.min(200, n)) : 50;
+    if (!Number.isFinite(before)) return [];
+
+    const latestFirst = await db.globalMessages.where('timestamp').below(before).reverse().limit(cap).toArray();
+    return latestFirst.reverse();
+  } catch (err) {
+    console.error('getGlobalMessagesPage failed', err);
+    throw err;
+  }
+}
+
+/**
  * Get a stable (persisted) peerId for this username, or null if none exists yet.
  * @param {string} username
  * @returns {Promise<string|null>}
@@ -409,7 +463,7 @@ export async function getStoredPeerId(username) {
 // These records are deleted as soon as they are encrypted and sent.
 
 /**
- * @param {{ id: string, chatId: string, theirPeerId: string, plaintext: string, timestamp: number }} msg
+ * @param {{ id: string, chatId: string, theirPeerId: string, plaintext: string, repliesJson?: string|null, timestamp: number }} msg
  */
 export async function saveQueuedMessage(msg) {
   try {
@@ -419,6 +473,7 @@ export async function saveQueuedMessage(msg) {
       chatId: msg.chatId,
       theirPeerId: msg.theirPeerId,
       plaintext: msg.plaintext,
+      repliesJson: Object.prototype.hasOwnProperty.call(msg, 'repliesJson') ? (msg.repliesJson ?? null) : null,
       timestamp: msg.timestamp
     });
   } catch (err) {

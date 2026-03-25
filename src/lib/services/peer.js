@@ -879,6 +879,16 @@ export async function flushQueueForPeer(theirPeerId) {
     for (const msg of queued) {
       try {
         const { ciphertext, iv } = await encryptForSession(chatId, msg.plaintext);
+        let repliesEnc = null;
+        if (typeof msg?.repliesJson === 'string' && msg.repliesJson.trim().length > 0) {
+          try {
+            const enc = await encryptForSession(chatId, msg.repliesJson);
+            repliesEnc = { ciphertext: enc.ciphertext, iv: enc.iv };
+          } catch (err) {
+            console.error('Failed to encrypt queued replies', err);
+            repliesEnc = null;
+          }
+        }
         await deleteQueuedMessage(msg.id);
         await saveEncryptedPrivateMessage({
           id: msg.id,
@@ -886,6 +896,7 @@ export async function flushQueueForPeer(theirPeerId) {
           direction: 'sent',
           ciphertext,
           iv,
+          replies: repliesEnc,
           timestamp: msg.timestamp,
           delivered: false
         });
@@ -894,7 +905,7 @@ export async function flushQueueForPeer(theirPeerId) {
         updateMessageQueued(chatId, msg.id, false);
         sendToPeer(
           theirPeerId,
-          buildDirectMessage('PRIVATE_MSG', myPeerId, profile, theirPeerId, { ciphertext, iv, messageId: msg.id }, msg.timestamp)
+          buildDirectMessage('PRIVATE_MSG', myPeerId, profile, theirPeerId, { ciphertext, iv, messageId: msg.id, replies: repliesEnc }, msg.timestamp)
         );
       } catch (err) {
         console.error('Failed to flush queued message', err);
@@ -1797,6 +1808,7 @@ export async function handleMessage(msg, fromConn, profile) {
     const incoming = msg.payload?.message;
     const text = typeof incoming?.text === 'string' ? incoming.text : msg.payload?.text;
     if (typeof text !== 'string' || text.trim().length === 0) return;
+    const replies = Array.isArray(incoming?.replies) ? incoming.replies : null;
 
     const incomingId = incoming?.id;
     const messageId =
@@ -1814,6 +1826,7 @@ export async function handleMessage(msg, fromConn, profile) {
       color: msg.from.color,
       avatarBase64: get(avatarCache).get(msg.from.peerId) ?? null,
       text: text.trim(),
+      replies,
       timestamp: typeof incoming?.timestamp === 'number' ? incoming.timestamp : msg.timestamp
     });
     return;
@@ -1936,6 +1949,7 @@ export async function handleMessage(msg, fromConn, profile) {
     const ciphertext = msg.payload?.ciphertext;
     const iv = msg.payload?.iv;
     const messageId = msg.payload?.messageId;
+    const repliesEnc = msg.payload?.replies ?? null;
     if (typeof ciphertext !== 'string' || typeof iv !== 'string') return;
     if (typeof messageId !== 'string' || messageId.length === 0) return;
 
@@ -1975,12 +1989,25 @@ export async function handleMessage(msg, fromConn, profile) {
     let sealed = true;
     /** @type {string|null} */
     let text = null;
+    /** @type {any[]|null} */
+    let replies = null;
+    const repliesCiphertext = typeof repliesEnc?.ciphertext === 'string' ? repliesEnc.ciphertext : null;
+    const repliesIv = typeof repliesEnc?.iv === 'string' ? repliesEnc.iv : null;
     if (isSessionActive(chatId)) {
       try {
         text = await decryptForSession(chatId, ciphertext, iv);
         sealed = false;
       } catch {
         // keep placeholder
+      }
+      if (!sealed && repliesCiphertext && repliesIv) {
+        try {
+          const raw = await decryptForSession(chatId, repliesCiphertext, repliesIv);
+          const parsed = JSON.parse(raw);
+          replies = Array.isArray(parsed) ? parsed : null;
+        } catch {
+          // ignore
+        }
       }
     }
 
@@ -1991,6 +2018,7 @@ export async function handleMessage(msg, fromConn, profile) {
         direction: 'received',
         ciphertext,
         iv,
+        replies: repliesCiphertext && repliesIv ? { ciphertext: repliesCiphertext, iv: repliesIv } : null,
         timestamp: msg.timestamp ?? now,
         delivered: true
       });
@@ -1998,7 +2026,17 @@ export async function handleMessage(msg, fromConn, profile) {
       console.error('savePrivateMessage failed', err);
     }
 
-    addIncomingMessage(chatId, { id: messageId, text, ciphertext, iv, sealed, timestamp: msg.timestamp ?? now });
+    addIncomingMessage(chatId, {
+      id: messageId,
+      text,
+      replies,
+      ciphertext,
+      iv,
+      repliesCiphertext,
+      repliesIv,
+      sealed,
+      timestamp: msg.timestamp ?? now
+    });
 
     try {
       // Persist a best-effort preview + unread count so it survives reload.
@@ -2281,7 +2319,7 @@ export async function attemptReconnect() {
   await handlePeerDisconnect();
 }
 
-export async function broadcastGlobalMessage(text, profile) {
+export async function broadcastGlobalMessage(text, profile, replies = null) {
   const state = get(peerStore);
   const id = state.peerId;
   if (!id) return;
@@ -2299,6 +2337,7 @@ export async function broadcastGlobalMessage(text, profile) {
     age: profile.age,
     color: profile.color,
     text: trimmed,
+    replies: Array.isArray(replies) && replies.length > 0 ? replies : null,
     timestamp
   };
 
@@ -2451,7 +2490,7 @@ export async function initiatePrivateChat(theirPeerId, theirUsername, theirColor
   }
 }
 
-export async function sendPrivateMessage(chatId, theirPeerId, plaintext) {
+export async function sendPrivateMessage(chatId, theirPeerId, plaintext, replies = null) {
   const state = get(peerStore);
   const myPeerId = state.peerId;
   const profile = userProfileRef ?? cachedProfile;
@@ -2480,12 +2519,15 @@ export async function sendPrivateMessage(chatId, theirPeerId, plaintext) {
   const trimmed = String(plaintext ?? '').trim();
   if (!trimmed) return;
 
+  /** @type {any[]|null} */
+  const safeReplies = Array.isArray(replies) && replies.length > 0 ? replies : null;
+
   // chatId/sessionId is derived from usernames, not PeerJS IDs.
   const messageId = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `pm-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const timestamp = Date.now();
 
   // Optimistic UI: show the plaintext immediately.
-  addOutgoingMessage(cid, { id: messageId, text: trimmed, timestamp });
+  addOutgoingMessage(cid, { id: messageId, text: trimmed, timestamp, replies: safeReplies });
 
   const sessionActive = isSessionActive(cid);
   const peerOnline = state.connectedPeers.get(theirPeerId)?.connection?.open === true;
@@ -2493,12 +2535,24 @@ export async function sendPrivateMessage(chatId, theirPeerId, plaintext) {
   if (sessionActive && peerOnline) {
     // Encrypt and send immediately.
     const { ciphertext, iv } = await encryptForSession(cid, trimmed);
+    let repliesEnc = null;
+    if (safeReplies) {
+      try {
+        const raw = JSON.stringify(safeReplies);
+        const enc = await encryptForSession(cid, raw);
+        repliesEnc = { ciphertext: enc.ciphertext, iv: enc.iv };
+      } catch (err) {
+        console.error('encrypt replies failed', err);
+        repliesEnc = null;
+      }
+    }
     await saveEncryptedPrivateMessage({
       id: messageId,
       chatId: cid,
       direction: 'sent',
       ciphertext,
       iv,
+      replies: repliesEnc,
       timestamp,
       delivered: false
     });
@@ -2508,13 +2562,23 @@ export async function sendPrivateMessage(chatId, theirPeerId, plaintext) {
       console.error('updateChatMeta failed', err)
     );
 
-    sendToPeer(theirPeerId, buildDirectMessage('PRIVATE_MSG', myPeerId, profile, theirPeerId, { ciphertext, iv, messageId }, timestamp));
+    sendToPeer(
+      theirPeerId,
+      buildDirectMessage('PRIVATE_MSG', myPeerId, profile, theirPeerId, { ciphertext, iv, messageId, replies: repliesEnc }, timestamp)
+    );
     return;
   }
 
   // Queue path: persist plaintext locally and mark message as queued in the UI.
   try {
-    await saveQueuedMessage({ id: messageId, chatId: cid, theirPeerId, plaintext: trimmed, timestamp });
+    await saveQueuedMessage({
+      id: messageId,
+      chatId: cid,
+      theirPeerId,
+      plaintext: trimmed,
+      repliesJson: safeReplies ? JSON.stringify(safeReplies) : null,
+      timestamp
+    });
     updateMessageQueued(cid, messageId, true);
   } catch (err) {
     console.error('saveQueuedMessage failed', err);

@@ -1,9 +1,11 @@
 <script>
   import { createEventDispatcher, onMount } from 'svelte';
+  import { previewText } from '$lib/utils/replies.js';
 
   export let placeholder = 'Write a message...';
   export let disabled = false;
   export let maxLength = 500;
+  export let pendingReplies = [];
 
   const dispatch = createEventDispatcher();
 
@@ -24,7 +26,7 @@
   function send() {
     const text = value.trim();
     if (!text) return;
-    dispatch('send', { text });
+    dispatch('send', { text, replies: Array.isArray(pendingReplies) ? pendingReplies : [] });
     value = '';
     updateHeight();
   }
@@ -47,6 +49,48 @@
 </script>
 
 <div class="border-t border-[var(--border)] bg-[var(--bg-surface)] px-[var(--space-md)] py-[var(--space-sm)]">
+  {#if Array.isArray(pendingReplies) && pendingReplies.length > 0}
+    <div
+      class="pending-replies mb-[var(--space-sm)] rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)]"
+      aria-label="Pending replies"
+    >
+      <div class="pending-scroll p-[var(--space-sm)]">
+        {#each pendingReplies as r (r.messageId)}
+          <div
+            class="pending-card relative w-full text-left rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-surface)] px-[var(--space-sm)] py-[var(--space-sm)]"
+            style={`border-left: 3px solid ${r.authorColor};`}
+            role="button"
+            tabindex="0"
+            on:click={() => dispatch('jumpToOriginal', { messageId: r.messageId })}
+            on:keydown={(ev) => {
+              if (ev.key === 'Enter' || ev.key === ' ') {
+                ev.preventDefault();
+                dispatch('jumpToOriginal', { messageId: r.messageId });
+              }
+            }}
+          >
+            <div class="min-w-0 pr-[26px]">
+              <div class="truncate text-[var(--font-size-xs)] font-800 text-[var(--text-primary)]">{r.authorUsername}</div>
+              <div class="mt-[2px] text-[var(--font-size-xs)] text-[var(--text-secondary)]">
+                {previewText(r.textSnapshot, 80)}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              class="pending-remove absolute right-[6px] top-[6px] h-[26px] w-[26px] grid place-items-center rounded-[var(--radius-full)] border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-secondary)]"
+              aria-label="Remove reply"
+              title="Remove reply"
+              on:click|stopPropagation={() => dispatch('removePendingReply', { messageId: r.messageId })}
+            >
+              ×
+            </button>
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   <div class="flex items-end gap-[var(--space-sm)]">
     <div class="flex-1">
       <textarea
@@ -80,9 +124,25 @@
 </div>
 
 <style>
+  .pending-scroll {
+    max-height: 30vh;
+    overflow: auto;
+    display: grid;
+    gap: 8px;
+  }
+
   @media (hover: hover) {
     .send-btn:hover:not(:disabled) {
       background: var(--accent-hover);
+    }
+
+    .pending-card:hover {
+      background: var(--bg-overlay);
+    }
+
+    .pending-remove:hover {
+      color: var(--text-primary);
+      background: var(--bg-overlay);
     }
   }
 </style>
