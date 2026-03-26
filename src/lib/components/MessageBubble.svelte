@@ -1,5 +1,5 @@
 	<script>
-	  import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
+		  import { createEventDispatcher, onDestroy, onMount } from 'svelte';
 	  import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
 	  import { formatMessageTime } from '$lib/utils/time.js';
 	  import { previewText } from '$lib/utils/replies.js';
@@ -42,11 +42,10 @@
   /** @type {MediaQueryList|null} */
   let mqDesktop = null;
   let isMobile = false;
-  let isDesktop = false;
+	  let isDesktop = false;
 
-  /** @type {HTMLDivElement|null} */
-  let bubbleEl = null;
-  let isNarrow = false;
+	  /** @type {HTMLDivElement|null} */
+	  let bubbleEl = null;
 
   // Swipe-to-reply (touch devices only)
   let isTouch = false;
@@ -65,37 +64,24 @@
     isDesktop = Boolean(mqDesktop?.matches);
   }
 
-  async function updateNarrow() {
-    await tick();
-    if (!bubbleEl) return;
-    // On mobile, very short messages can be narrow enough that the username/age row feels cramped.
-    isNarrow = bubbleEl.clientWidth < 240;
-  }
+	  onMount(() => {
+	    mqMobile = window.matchMedia?.('(max-width: 639px)') ?? null;
+	    mqDesktop = window.matchMedia?.('(min-width: 1024px)') ?? null;
+	    isTouch = window.matchMedia?.('(hover: none)')?.matches || (navigator.maxTouchPoints ?? 0) > 0;
+	    updateMqFlags();
+	    const onMobileChange = () => {
+	      updateMqFlags();
+	    };
+	    const onDesktopChange = () => updateMqFlags();
+	    mqMobile?.addEventListener?.('change', onMobileChange);
+	    mqDesktop?.addEventListener?.('change', onDesktopChange);
 
-  onMount(() => {
-    mqMobile = window.matchMedia?.('(max-width: 639px)') ?? null;
-    mqDesktop = window.matchMedia?.('(min-width: 1024px)') ?? null;
-    isTouch = window.matchMedia?.('(hover: none)')?.matches || (navigator.maxTouchPoints ?? 0) > 0;
-    updateMqFlags();
-    const onMobileChange = () => {
-      updateMqFlags();
-      void updateNarrow();
-    };
-    const onDesktopChange = () => updateMqFlags();
-    mqMobile?.addEventListener?.('change', onMobileChange);
-    mqDesktop?.addEventListener?.('change', onDesktopChange);
-
-    const onResize = () => void updateNarrow();
-    window.addEventListener('resize', onResize, { passive: true });
-    void updateNarrow();
-
-    return () => {
-      clearTimeout(animTimer);
-      window.removeEventListener('resize', onResize);
-      mqMobile?.removeEventListener?.('change', onMobileChange);
-      mqDesktop?.removeEventListener?.('change', onDesktopChange);
-    };
-  });
+	    return () => {
+	      clearTimeout(animTimer);
+	      mqMobile?.removeEventListener?.('change', onMobileChange);
+	      mqDesktop?.removeEventListener?.('change', onDesktopChange);
+	    };
+	  });
 
   function getPositionFromEvent(e) {
     const rect = e.currentTarget?.getBoundingClientRect?.();
@@ -212,13 +198,12 @@
     snapBack();
   }
 
-  $: bubbleShadow = hovered
-    ? `0 0 0 3px color-mix(in srgb, ${message.color} 15%, transparent)`
-    : 'none';
+	  $: bubbleShadow = hovered
+	    ? `0 0 0 3px color-mix(in srgb, ${message.color} 15%, transparent)`
+	    : 'none';
 
-  $: avatarSize = isDesktop ? 36 : 28;
-  $: showMetaRow = !isMobile || !isNarrow || hovered || Boolean(tooltipId);
-</script>
+	  $: avatarSize = isDesktop ? 40 : isMobile ? 32 : 36;
+	</script>
 
 <div class={isOwn ? 'flex justify-end' : 'flex justify-start'}>
   <div class="row flex items-center gap-[var(--space-sm)]">
@@ -249,12 +234,12 @@
         </div>
       </div>
 
-      <div
-        bind:this={bubbleEl}
-        class={`bubble w-fit rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-surface)] px-[var(--space-md)] py-[var(--space-sm)] ${animatingBack ? 'snap-back' : ''}`}
-        style={`--reply-color:${message.color}; border-left: 3px solid ${message.color}; box-shadow: ${bubbleShadow}; transform: translateX(${dragX}px);`}
-        role="group"
-        data-aether-bubble="true"
+	      <div
+	        bind:this={bubbleEl}
+	        class={`bubble w-fit rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-surface)] px-[18px] py-[12px] ${animatingBack ? 'snap-back' : ''}`}
+	        style={`--reply-color:${message.color}; border-left: 3px solid ${message.color}; box-shadow: ${bubbleShadow}; transform: translateX(${dragX}px);`}
+	        role="group"
+	        data-aether-bubble="true"
         data-message-id={message.id ?? ''}
         aria-label={`Message from ${message.username}`}
         aria-describedby={tooltipId || undefined}
@@ -266,16 +251,16 @@
         on:touchmove={onTouchMove}
         on:touchend={onTouchEnd}
       >
-        <div class="flex items-center gap-[var(--space-sm)]">
-          <AvatarDisplay username={message.username} avatarBase64={message.avatarBase64 ?? null} size={avatarSize} showRing={true} />
+	        <div class="flex items-center gap-[var(--space-sm)]">
+	          <AvatarDisplay username={message.username} avatarBase64={message.avatarBase64 ?? null} size={avatarSize} showRing={true} />
 
-          {#if showMetaRow}
-            <div class="min-w-0 flex items-center gap-[var(--space-sm)]">
-              <div class="truncate font-700 text-[var(--text-primary)]">{message.username}</div>
-              <div class="age-badge" aria-label="User age">{message.age}</div>
-            </div>
-          {/if}
-        </div>
+	          <div class="meta min-w-0">
+	            <div class="meta-top">
+	              <div class="meta-name font-700 text-[var(--text-primary)]">{message.username}</div>
+	              <div class="age-badge" aria-label="User age">{message.age}</div>
+	            </div>
+	          </div>
+	        </div>
 
         {#if Array.isArray(message.replies) && message.replies.length > 0}
           <div class="mt-[var(--space-xs)] grid gap-[6px]">
@@ -293,9 +278,9 @@
           </div>
         {/if}
 
-        <div class="mt-[var(--space-xs)] whitespace-pre-wrap break-words text-[var(--text-primary)]">
-          {message.text}
-        </div>
+	        <div class="mt-[var(--space-xs)] whitespace-pre-wrap break-words text-[var(--text-primary)] text-[var(--font-size-base)] leading-[1.45]">
+	          {message.text}
+	        </div>
 
         <div class="time-row" title={new Date(message.timestamp).toLocaleString()}>
           <span class="time">{displayTime}</span>
@@ -329,15 +314,28 @@
 </div>
 
 <style>
-  .bubble {
-    max-width: 85%;
-    will-change: transform;
-  }
+	  .bubble {
+	    max-width: min(92%, 760px);
+	    will-change: transform;
+	  }
 
-  .age-badge {
-    flex: none;
-    border-radius: var(--radius-full);
-    border: 1px solid var(--border);
+	  .meta-top {
+	    display: flex;
+	    align-items: center;
+	    gap: 8px;
+	    flex-wrap: wrap;
+	    min-width: 0;
+	  }
+
+	  .meta-name {
+	    min-width: 0;
+	    overflow-wrap: anywhere;
+	  }
+
+	  .age-badge {
+	    flex: none;
+	    border-radius: var(--radius-full);
+	    border: 1px solid var(--border);
     background: var(--bg-elevated);
     padding: 2px 8px;
     font-size: var(--font-size-xs);
@@ -451,9 +449,9 @@
     }
   }
 
-  @media (min-width: 1024px) {
-    .bubble {
-      max-width: 70%;
-    }
-  }
-</style>
+	  @media (min-width: 1024px) {
+	    .bubble {
+	      max-width: min(84%, 820px);
+	    }
+	  }
+	</style>

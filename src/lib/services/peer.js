@@ -299,6 +299,44 @@ let heartbeatIntervalId = null;
 // Track key exchange timeouts per chat so we don't get stuck forever in "initiated/completing".
 const keyExchangeTimeouts = new Map(); // chatId -> timeoutId
 
+// A session being "active" locally can simply mean we resumed a persisted key ring. That does not guarantee
+// the currently-connected peer can decrypt messages with that key (they may have refreshed/rotated/cleared storage).
+// We only consider a session safe for sending when we successfully complete a key exchange in this runtime.
+/** @type {Set<string>} */
+const confirmedPrivateSessions = new Set(); // chatId/sessionId
+
+function isSessionKeyMismatch(err) {
+  return err?.name === 'OperationError';
+}
+
+function decryptFailurePlaceholder(err) {
+  if (isSessionKeyMismatch(err)) return '🔒 Encrypted in a previous session';
+  if (String(err?.message ?? '').includes('No active session')) return '🔒 Encrypted message (no active session)';
+  return '🔒 Encrypted message (decryption error)';
+}
+
+function isPrivateSessionConfirmed(chatId) {
+  return confirmedPrivateSessions.has(String(chatId ?? '').trim());
+}
+
+function confirmPrivateSession(chatId) {
+  const id = String(chatId ?? '').trim();
+  if (!id) return;
+  confirmedPrivateSessions.add(id);
+}
+
+function clearConfirmedSessionsForPeer(theirPeerId) {
+  const pid = String(theirPeerId ?? '').trim();
+  if (!pid) return;
+  try {
+    for (const [chatId, chat] of get(privateChatStore).chats.entries()) {
+      if (chat?.theirPeerId === pid) confirmedPrivateSessions.delete(chatId);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 let reconnectAttempts = 0;
 let reconnectTimer = null;
 let unavailableIdAttempts = 0;
@@ -856,24 +894,27 @@ export async function flushQueueForPeer(theirPeerId) {
     }
     if (!queued || queued.length === 0) continue;
 
-    const sessionActive = isSessionActive(chatId);
-    if (!sessionActive) {
-      // Need a session before we can encrypt and send.
-      try {
-        const { publicKeyBase64 } = await createSession(profile.username, chat.theirUsername);
-        setKeyExchangeState(chatId, 'initiated');
-        startKeyExchangeTimeout(chatId);
-        sendToPeer(
-          theirPeerId,
-          buildDirectMessage('PRIVATE_KEY_EXCHANGE', myPeerId, profile, theirPeerId, { publicKeyBase64 }, Date.now())
-        );
-      } catch (err) {
-        console.error('flushQueueForPeer key exchange init failed', err);
-        clearKeyExchangeTimeout(chatId);
-        setKeyExchangeState(chatId, 'failed');
-      }
-      continue;
-    }
+	    const exchangeInProgress = chat?.keyExchangeState === 'initiated' || chat?.keyExchangeState === 'completing';
+	    const canEncryptNow = isSessionActive(chatId) && isPrivateSessionConfirmed(chatId);
+	    if (!canEncryptNow) {
+	      // Need a fresh key exchange. Even if we have a locally-resumed key ring, the remote peer may not.
+	      if (!exchangeInProgress) {
+	        try {
+	          const { publicKeyBase64 } = await createSession(profile.username, chat.theirUsername);
+	          setKeyExchangeState(chatId, 'initiated');
+	          startKeyExchangeTimeout(chatId);
+	          sendToPeer(
+	            theirPeerId,
+	            buildDirectMessage('PRIVATE_KEY_EXCHANGE', myPeerId, profile, theirPeerId, { publicKeyBase64 }, Date.now())
+	          );
+	        } catch (err) {
+	          console.error('flushQueueForPeer key exchange init failed', err);
+	          clearKeyExchangeTimeout(chatId);
+	          setKeyExchangeState(chatId, 'failed');
+	        }
+	      }
+	      continue;
+	    }
 
     // Session is active: encrypt and send each queued message, then remove it from the queue.
     for (const msg of queued) {
@@ -1299,13 +1340,14 @@ export function handleIncomingConnection(conn, profile) {
     })().catch((err) => console.error('handleMessage failed', err));
   });
 
-  conn.on('close', () => {
-    clearConnectPending(remotePeerId);
-    if (!opened) noteConnectFailure(remotePeerId);
-    setChatOnlineStatus(remotePeerId, false);
-    peerStore.update((s) => {
-      const next = new Map(s.connectedPeers);
-      const current = next.get(remotePeerId);
+	  conn.on('close', () => {
+	    clearConnectPending(remotePeerId);
+	    if (!opened) noteConnectFailure(remotePeerId);
+	    clearConfirmedSessionsForPeer(remotePeerId);
+	    setChatOnlineStatus(remotePeerId, false);
+	    peerStore.update((s) => {
+	      const next = new Map(s.connectedPeers);
+	      const current = next.get(remotePeerId);
       if (current?.connection === conn) {
         next.delete(remotePeerId);
       }
@@ -1317,13 +1359,14 @@ export function handleIncomingConnection(conn, profile) {
     }
   });
 
-  conn.on('error', (err) => {
-    noteConnectFailure(remotePeerId);
-    console.error('Peer connection error', err);
-    setChatOnlineStatus(remotePeerId, false);
-    peerStore.update((s) => {
-      const next = new Map(s.connectedPeers);
-      const current = next.get(remotePeerId);
+	  conn.on('error', (err) => {
+	    noteConnectFailure(remotePeerId);
+	    console.error('Peer connection error', err);
+	    clearConfirmedSessionsForPeer(remotePeerId);
+	    setChatOnlineStatus(remotePeerId, false);
+	    peerStore.update((s) => {
+	      const next = new Map(s.connectedPeers);
+	      const current = next.get(remotePeerId);
       if (current?.connection === conn) {
         next.delete(remotePeerId);
       }
@@ -1788,13 +1831,14 @@ export async function handleMessage(msg, fromConn, profile) {
     return;
   }
 
-  if (msg.type === 'PEER_DISCONNECT') {
-    const disconnectedPeerId = msg.from.peerId;
-    const wasLobbyHost = disconnectedPeerId && disconnectedPeerId === get(peerStore).currentLobbyHostId;
+	  if (msg.type === 'PEER_DISCONNECT') {
+	    const disconnectedPeerId = msg.from.peerId;
+	    const wasLobbyHost = disconnectedPeerId && disconnectedPeerId === get(peerStore).currentLobbyHostId;
 
-    setChatOnlineStatus(disconnectedPeerId, false);
-    await saveKnownPeer({ username: msg.from.username, peerId: disconnectedPeerId, lastSeen: msg.timestamp ?? Date.now() });
-    removeConnectedPeer(disconnectedPeerId);
+	    clearConfirmedSessionsForPeer(disconnectedPeerId);
+	    setChatOnlineStatus(disconnectedPeerId, false);
+	    await saveKnownPeer({ username: msg.from.username, peerId: disconnectedPeerId, lastSeen: msg.timestamp ?? Date.now() });
+	    removeConnectedPeer(disconnectedPeerId);
 
     if (wasLobbyHost) {
       // Give the elected peer a moment to claim the lobby ID before we try.
@@ -1879,10 +1923,10 @@ export async function handleMessage(msg, fromConn, profile) {
       unreadCount: typeof existing?.unreadCount === 'number' ? existing.unreadCount : 0
     });
 
-    upsertChatEntry({
-      id: chatId,
-      theirPeerId,
-      theirUsername: msg.from.username,
+	    upsertChatEntry({
+	      id: chatId,
+	      theirPeerId,
+	      theirUsername: msg.from.username,
       theirColor: msg.from.color,
       theirAvatarBase64: cachedAvatar,
       theirAge: msg.from.age,
@@ -1898,15 +1942,16 @@ export async function handleMessage(msg, fromConn, profile) {
       return;
     }
 
-    sendToPeer(
-      theirPeerId,
-      buildDirectMessage('PRIVATE_KEY_EXCHANGE_ACK', myPeerId, selfProfile, theirPeerId, { publicKeyBase64: ourPublicKeyBase64 })
-    );
-    setKeyExchangeState(chatId, 'active');
-    await decryptSealedMessages(chatId, chatId);
-    await flushQueueForPeer(theirPeerId);
-    return;
-  }
+	    sendToPeer(
+	      theirPeerId,
+	      buildDirectMessage('PRIVATE_KEY_EXCHANGE_ACK', myPeerId, selfProfile, theirPeerId, { publicKeyBase64: ourPublicKeyBase64 })
+	    );
+	    setKeyExchangeState(chatId, 'active');
+	    confirmPrivateSession(chatId);
+	    await decryptSealedMessages(chatId, chatId);
+	    await flushQueueForPeer(theirPeerId);
+	    return;
+	  }
 
 	  if (msg.type === 'PRIVATE_KEY_EXCHANGE_ACK') {
 	    const myPeerId = get(peerStore).peerId;
@@ -1925,16 +1970,17 @@ export async function handleMessage(msg, fromConn, profile) {
     clearKeyExchangeTimeout(chatId);
     try {
       await completeSession(myUsername, theirUsername, publicKeyBase64);
-    } catch (err) {
-      console.error('completeSession (initiator) failed', err);
-      setKeyExchangeState(chatId, 'failed');
-      return;
-    }
-    setKeyExchangeState(chatId, 'active');
-    await decryptSealedMessages(chatId, chatId);
-    await flushQueueForPeer(theirPeerId);
-    return;
-  }
+	    } catch (err) {
+	      console.error('completeSession (initiator) failed', err);
+	      setKeyExchangeState(chatId, 'failed');
+	      return;
+	    }
+	    setKeyExchangeState(chatId, 'active');
+	    confirmPrivateSession(chatId);
+	    await decryptSealedMessages(chatId, chatId);
+	    await flushQueueForPeer(theirPeerId);
+	    return;
+	  }
 
 	  if (msg.type === 'PRIVATE_MSG') {
 	    const myPeerId = get(peerStore).peerId;
@@ -1984,32 +2030,37 @@ export async function handleMessage(msg, fromConn, profile) {
       theirAvatarBase64: cachedAvatar,
       theirAge: msg.from.age,
       lastActivity: msg.timestamp ?? now
-    });
+	    });
 
-    let sealed = true;
-    /** @type {string|null} */
-    let text = null;
-    /** @type {any[]|null} */
-    let replies = null;
-    const repliesCiphertext = typeof repliesEnc?.ciphertext === 'string' ? repliesEnc.ciphertext : null;
-    const repliesIv = typeof repliesEnc?.iv === 'string' ? repliesEnc.iv : null;
-    if (isSessionActive(chatId)) {
-      try {
-        text = await decryptForSession(chatId, ciphertext, iv);
-        sealed = false;
-      } catch {
-        // keep placeholder
-      }
-      if (!sealed && repliesCiphertext && repliesIv) {
-        try {
-          const raw = await decryptForSession(chatId, repliesCiphertext, repliesIv);
-          const parsed = JSON.parse(raw);
-          replies = Array.isArray(parsed) ? parsed : null;
-        } catch {
-          // ignore
-        }
-      }
-    }
+	    let sealed = true;
+	    /** @type {string|null} */
+	    let text = '🔒 Encrypted message';
+	    /** @type {any[]|null} */
+	    let replies = null;
+		    const repliesCiphertext = typeof repliesEnc?.ciphertext === 'string' ? repliesEnc.ciphertext : null;
+		    const repliesIv = typeof repliesEnc?.iv === 'string' ? repliesEnc.iv : null;
+		    if (isSessionActive(chatId)) {
+		      try {
+		        text = await decryptForSession(chatId, ciphertext, iv);
+		        sealed = false;
+		      } catch (err) {
+	        text = decryptFailurePlaceholder(err);
+	        if (!isSessionKeyMismatch(err)) {
+	          console.error('PRIVATE_MSG decrypt failed:', err?.message ?? String(err), { chatId, messageId, theirPeerId });
+		        }
+		      }
+		      if (!sealed && repliesCiphertext && repliesIv) {
+		        try {
+		          const raw = await decryptForSession(chatId, repliesCiphertext, repliesIv);
+		          const parsed = JSON.parse(raw);
+		          replies = Array.isArray(parsed) ? parsed : null;
+		        } catch (err) {
+		          if (!isSessionKeyMismatch(err)) {
+		            console.error('PRIVATE_MSG replies decrypt failed:', err?.message ?? String(err), { chatId, messageId, theirPeerId });
+		          }
+		        }
+		      }
+		    }
 
     try {
       await saveEncryptedPrivateMessage({
@@ -2462,26 +2513,28 @@ export async function initiatePrivateChat(theirPeerId, theirUsername, theirColor
     }
   }
 
-  openChat(chatId);
-  setChatOnlineStatus(theirPeerId, state.connectedPeers.has(theirPeerId));
+	  openChat(chatId);
+	  setChatOnlineStatus(theirPeerId, state.connectedPeers.has(theirPeerId));
 
-  // If the session is already active, nothing else to do.
-  if (isSessionActive(chatId)) {
-    setKeyExchangeState(chatId, 'active');
-    return;
-  }
+	  // If the target peer isn't currently connected, defer key exchange until they reconnect.
+	  const peerConn = state.connectedPeers.get(theirPeerId)?.connection ?? null;
+	  if (!peerConn || peerConn.open === false) {
+	    // Keep UI in "active" when we have local keys (history can decrypt), but we still need
+	    // a fresh exchange before sending once they reconnect.
+	    setKeyExchangeState(chatId, isSessionActive(chatId) ? 'active' : 'idle');
+	    return;
+	  }
 
-  // If the target peer isn't currently connected, defer key exchange until they reconnect.
-  const peerConn = state.connectedPeers.get(theirPeerId)?.connection ?? null;
-  if (!peerConn || peerConn.open === false) {
-    setKeyExchangeState(chatId, 'idle');
-    return;
-  }
+	  // If we already negotiated a session in this runtime, nothing else to do.
+	  if (isSessionActive(chatId) && isPrivateSessionConfirmed(chatId)) {
+	    setKeyExchangeState(chatId, 'active');
+	    return;
+	  }
 
-  setKeyExchangeState(chatId, 'initiated');
-  try {
-    const { publicKeyBase64 } = await createSession(profile.username, theirUsername);
-    startKeyExchangeTimeout(chatId);
+	  setKeyExchangeState(chatId, 'initiated');
+	  try {
+	    const { publicKeyBase64 } = await createSession(profile.username, theirUsername);
+	    startKeyExchangeTimeout(chatId);
     sendToPeer(theirPeerId, buildDirectMessage('PRIVATE_KEY_EXCHANGE', myPeerId, profile, theirPeerId, { publicKeyBase64 }, now));
   } catch (err) {
     console.error('initiatePrivateChat key exchange failed', err);
@@ -2529,13 +2582,13 @@ export async function sendPrivateMessage(chatId, theirPeerId, plaintext, replies
   // Optimistic UI: show the plaintext immediately.
   addOutgoingMessage(cid, { id: messageId, text: trimmed, timestamp, replies: safeReplies });
 
-  const sessionActive = isSessionActive(cid);
-  const peerOnline = state.connectedPeers.get(theirPeerId)?.connection?.open === true;
+	  const sessionActive = isSessionActive(cid);
+	  const peerOnline = state.connectedPeers.get(theirPeerId)?.connection?.open === true;
 
-  if (sessionActive && peerOnline) {
-    // Encrypt and send immediately.
-    const { ciphertext, iv } = await encryptForSession(cid, trimmed);
-    let repliesEnc = null;
+	  if (sessionActive && peerOnline && isPrivateSessionConfirmed(cid)) {
+	    // Encrypt and send immediately.
+	    const { ciphertext, iv } = await encryptForSession(cid, trimmed);
+	    let repliesEnc = null;
     if (safeReplies) {
       try {
         const raw = JSON.stringify(safeReplies);
@@ -2780,7 +2833,13 @@ export const __test = {
   async handlePeerDisconnectForTest() {
     await handlePeerDisconnect();
   },
-  getReconnectAttemptsForTest() {
-    return reconnectAttempts;
-  }
-};
+	  getReconnectAttemptsForTest() {
+	    return reconnectAttempts;
+	  },
+	  confirmPrivateSessionForTest(chatId) {
+	    confirmPrivateSession(chatId);
+	  },
+	  clearConfirmedPrivateSessionsForTest() {
+	    confirmedPrivateSessions.clear();
+	  }
+	};

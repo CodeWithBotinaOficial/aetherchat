@@ -35,6 +35,17 @@ const initialState = {
 const { subscribe, update, set } = writable(initialState);
 export const privateChatStore = { subscribe, update, set };
 
+function isSessionKeyMismatch(err) {
+  // WebCrypto AES-GCM authentication failures typically surface as OperationError.
+  return err?.name === 'OperationError';
+}
+
+function decryptFailurePlaceholder(err) {
+  if (isSessionKeyMismatch(err)) return '🔒 Encrypted in a previous session';
+  if (String(err?.message ?? '').includes('No active session')) return '🔒 Encrypted message (no active session)';
+  return '🔒 Encrypted message (decryption error)';
+}
+
 // ── Derived stores ───────────────────────────────────────────────────────────
 
 export const chatList = derived(privateChatStore, ($s) => [...$s.chats.values()].sort((a, b) => b.lastActivity - a.lastActivity));
@@ -289,9 +300,16 @@ export async function decryptSealedMessages(chatId, sessionId) {
             }
           }
           return { ...m, text, replies, sealed: false };
-        } catch {
+        } catch (err) {
+          if (!isSessionKeyMismatch(err)) {
+            console.error(
+              'decryptSealedMessages decrypt failed:',
+              err?.message ?? String(err),
+              { chatId, messageId: m?.id ?? null, sessionId }
+            );
+          }
           // Keep sealed so we can retry later (e.g. after a key ring resumes from storage).
-          return { ...m, text: '🔒 Encrypted in a previous session', sealed: true };
+          return { ...m, text: decryptFailurePlaceholder(err), sealed: true };
         }
       }
 
@@ -303,7 +321,14 @@ export async function decryptSealedMessages(chatId, sessionId) {
         const parsed = JSON.parse(raw);
         const replies = Array.isArray(parsed) ? parsed : null;
         return { ...m, replies };
-      } catch {
+      } catch (err) {
+        if (!isSessionKeyMismatch(err)) {
+          console.error(
+            'decryptSealedMessages replies decrypt failed:',
+            err?.message ?? String(err),
+            { chatId, messageId: m?.id ?? null, sessionId }
+          );
+        }
         return m;
       }
     })

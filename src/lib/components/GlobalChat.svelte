@@ -302,18 +302,18 @@
       </div>
     {:else}
       <div
-        bind:this={listEl}
-        class="h-full scroll-container px-[var(--space-md)] py-[var(--space-md)]"
-        on:scroll={() => computeRange(msgs)}
-      >
-        <div style={`padding-top:${padTop}px; padding-bottom:${padBottom}px;`}>
-          {#each visibleMsgs as m (m.id ?? `${m.timestamp}-${m.username}-${m.text}`)}
-            <div class="mb-[var(--space-sm)]">
-              <MessageBubble
-                message={m}
-                messageKey={m.id ?? `${m.timestamp}-${m.username}-${m.text}`}
-                bind:this={bubbleRefs[String(m.id ?? `${m.timestamp}-${m.username}-${m.text}`)]}
-                isOwn={$user?.username === m.username}
+	        bind:this={listEl}
+	        class="h-full scroll-container px-[var(--space-md)] py-[var(--space-md)]"
+	        on:scroll={() => computeRange(msgs)}
+	      >
+	        <div class="gc-inner" style={`padding-top:${padTop}px; padding-bottom:${padBottom}px;`}>
+	          {#each visibleMsgs as m (m.id ?? `${m.timestamp}-${m.username}-${m.text}`)}
+	            <div class="mb-[12px]">
+	              <MessageBubble
+	                message={m}
+	                messageKey={m.id ?? `${m.timestamp}-${m.username}-${m.text}`}
+	                bind:this={bubbleRefs[String(m.id ?? `${m.timestamp}-${m.username}-${m.text}`)]}
+	                isOwn={$user?.username === m.username}
                 tooltipId={tooltipUser && tooltipKey === String(m.id ?? `${m.timestamp}-${m.username}-${m.text}`) ? TOOLTIP_ID : ''}
                 on:hoverEnter={onHoverEnter}
                 on:hoverMove={onHoverMove}
@@ -363,9 +363,15 @@
     }
   }
 
-  @media (min-width: 640px) {
-    .gc-input {
-      position: static;
-    }
-  }
-</style>
+	  @media (min-width: 640px) {
+	    .gc-input {
+	      position: static;
+	    }
+	  }
+
+	  .gc-inner {
+	    width: 100%;
+	    max-width: 980px;
+	    margin: 0 auto;
+	  }
+	</style>

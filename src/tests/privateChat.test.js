@@ -553,11 +553,13 @@ it('decryptSealedMessages only decrypts received sealed messages (not sent)', as
   expect(chat.messages[1].sealed).toBe(false);
 });
 
-it('decryptSealedMessages marks old-session failures with placeholder text', async () => {
-  hoisted.decryptForSessionMock.mockRejectedValueOnce(new Error('bad key'));
-  privateChatStore.set({
-    chats: new Map([
-      [
+	it('decryptSealedMessages marks old-session failures with placeholder text', async () => {
+	  const err = new Error('bad key');
+	  err.name = 'OperationError';
+	  hoisted.decryptForSessionMock.mockRejectedValueOnce(err);
+	  privateChatStore.set({
+	    chats: new Map([
+	      [
         'a:b',
         {
           id: 'a:b',
@@ -579,11 +581,48 @@ it('decryptSealedMessages marks old-session failures with placeholder text', asy
     pendingKeyExchanges: new Map()
   });
 
-  await decryptSealedMessages('a:b', 'a:b');
-  const chat = get(privateChatStore).chats.get('a:b');
-  expect(chat.messages[0].text).toMatch(/previous session/i);
-  expect(chat.messages[0].sealed).toBe(true);
-});
+	  await decryptSealedMessages('a:b', 'a:b');
+	  const chat = get(privateChatStore).chats.get('a:b');
+	  expect(chat.messages[0].text).toMatch(/previous session/i);
+	  expect(chat.messages[0].sealed).toBe(true);
+	});
+
+	it('decryptSealedMessages logs unexpected decrypt errors and does not label them as previous session', async () => {
+	  const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+	  hoisted.decryptForSessionMock.mockRejectedValueOnce(new TypeError('iv missing'));
+	  privateChatStore.set({
+	    chats: new Map([
+	      [
+	        'a:b',
+	        {
+	          id: 'a:b',
+	          theirPeerId: 'b',
+	          theirUsername: 'bob',
+	          theirColor: 'hsl(2, 65%, 65%)',
+	          theirAvatarBase64: null,
+	          messages: [{ id: 'm-recv', direction: 'received', text: null, ciphertext: 'CT', iv: 'IV', timestamp: 2, delivered: true, sealed: true }],
+	          unreadCount: 0,
+	          lastMessage: null,
+	          lastActivity: 2,
+	          isOnline: true,
+	          keyExchangeState: 'active',
+	          __loaded: true
+	        }
+	      ]
+	    ]),
+	    activeChatId: 'a:b',
+	    pendingKeyExchanges: new Map()
+	  });
+
+	  await decryptSealedMessages('a:b', 'a:b');
+	  const chat = get(privateChatStore).chats.get('a:b');
+	  expect(chat.messages[0].text).toMatch(/decryption error/i);
+	  expect(chat.messages[0].text).not.toMatch(/previous session/i);
+	  expect(spy).toHaveBeenCalled();
+	  expect(spy.mock.calls.some((c) => String(c[0]).includes('decryptSealedMessages decrypt failed'))).toBe(true);
+	  expect(spy.mock.calls.some((c) => c.some((arg) => String(arg).includes('iv missing')))).toBe(true);
+	  spy.mockRestore();
+	});
 
 it('ConfirmDialog handles keydown and does not throw after destruction', async () => {
   const { component, unmount } = render(ConfirmDialog, {

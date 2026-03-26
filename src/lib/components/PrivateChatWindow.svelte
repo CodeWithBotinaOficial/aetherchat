@@ -146,22 +146,22 @@
         let text = '🔒 Encrypted message — start a new session to decrypt';
         /** @type {any[]|null} */
         let replies = null;
-        if (canDecrypt) {
-          try {
-            text = await decryptForSession(chat.id, m.ciphertext, m.iv);
-          } catch {
-            // keep placeholder
-          }
-          if (typeof m?.replies?.ciphertext === 'string' && typeof m?.replies?.iv === 'string') {
-            try {
-              const raw = await decryptForSession(chat.id, m.replies.ciphertext, m.replies.iv);
-              const parsed = JSON.parse(raw);
-              replies = Array.isArray(parsed) ? parsed : null;
-            } catch {
-              // ignore
-            }
-          }
-        }
+	        if (canDecrypt) {
+	          try {
+	            text = await decryptForSession(chat.id, m.ciphertext, m.iv);
+	          } catch (err) {
+	            if (err?.name !== 'OperationError') console.error('loadOlder decrypt failed:', err?.message ?? String(err));
+	          }
+	          if (typeof m?.replies?.ciphertext === 'string' && typeof m?.replies?.iv === 'string') {
+	            try {
+	              const raw = await decryptForSession(chat.id, m.replies.ciphertext, m.replies.iv);
+	              const parsed = JSON.parse(raw);
+	              replies = Array.isArray(parsed) ? parsed : null;
+	            } catch (err) {
+	              if (err?.name !== 'OperationError') console.error('loadOlder replies decrypt failed:', err?.message ?? String(err));
+	            }
+	          }
+	        }
         return {
           id: m.id,
           direction: m.direction,
@@ -186,19 +186,14 @@
     return Boolean(entry);
   }
 
-  function msgToBubble(m, chat) {
-    const u = get(user);
-    const isOwn = m.direction === 'sent';
-    const safeText =
-      typeof m.text === 'string'
-        ? m.text
-        : m?.sealed
-          ? '🔒 Encrypted in a previous session'
-          : '🔒 Encrypted message';
-    return {
-      id: m.id,
-      username: isOwn ? (u?.username ?? 'me') : chat.theirUsername,
-      age: isOwn ? (u?.age ?? 0) : (chat.theirAge ?? get(peerStore).connectedPeers.get(chat.theirPeerId)?.age ?? 0),
+	  function msgToBubble(m, chat) {
+	    const u = get(user);
+	    const isOwn = m.direction === 'sent';
+	    const safeText = typeof m.text === 'string' ? m.text : '🔒 Encrypted message';
+	    return {
+	      id: m.id,
+	      username: isOwn ? (u?.username ?? 'me') : chat.theirUsername,
+	      age: isOwn ? (u?.age ?? 0) : (chat.theirAge ?? get(peerStore).connectedPeers.get(chat.theirPeerId)?.age ?? 0),
       color: isOwn ? (u?.color ?? 'hsl(0,0%,65%)') : chat.theirColor,
       avatarBase64: isOwn ? (u?.avatarBase64 ?? null) : theirAvatar,
       text: safeText,
@@ -319,11 +314,12 @@
       </div>
     {/if}
 
-    <div bind:this={listEl} class="flex-1 min-h-0 overflow-y-auto px-[var(--space-md)] py-[var(--space-md)]">
-      {#if hasMore && $activeChat.messages.length >= 100}
-        <div class="mb-[var(--space-md)] grid place-items-center">
-          <button
-            class="btn-load rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-secondary)]"
+	    <div bind:this={listEl} class="flex-1 min-h-0 overflow-y-auto px-[var(--space-md)] py-[var(--space-md)]">
+	      <div class="pc-inner">
+	      {#if hasMore && $activeChat.messages.length >= 100}
+	        <div class="mb-[var(--space-md)] grid place-items-center">
+	          <button
+	            class="btn-load rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-secondary)]"
             on:click={loadOlder}
             disabled={loadingOlder}
           >
@@ -346,15 +342,15 @@
             </div>
           </div>
         </div>
-      {:else}
-        {#each $activeChat.messages as m (m.id)}
-          <div class={m.direction === 'sent' ? 'flex flex-col items-end' : 'flex flex-col items-start'}>
-            <div class="mb-[var(--space-sm)] w-full">
-              <MessageBubble
-                message={msgToBubble(m, $activeChat)}
-                isOwn={m.direction === 'sent'}
-                on:reply={(ev) => addPendingReply($activeChat.id, ev.detail.message)}
-                on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
+	      {:else}
+	        {#each $activeChat.messages as m (m.id)}
+	          <div class={m.direction === 'sent' ? 'flex flex-col items-end' : 'flex flex-col items-start'}>
+	            <div class="mb-[12px] w-full">
+	              <MessageBubble
+	                message={msgToBubble(m, $activeChat)}
+	                isOwn={m.direction === 'sent'}
+	                on:reply={(ev) => addPendingReply($activeChat.id, ev.detail.message)}
+	                on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
               />
             </div>
             {#if m.direction === 'sent'}
@@ -362,10 +358,11 @@
                 {m.delivered ? '✓ delivered' : theirOnline($activeChat) ? 'sent' : 'queued'}
               </div>
             {/if}
-          </div>
-        {/each}
-      {/if}
-    </div>
+	          </div>
+	        {/each}
+	      {/if}
+	      </div>
+	    </div>
 
     <div title={inputDisabled ? 'Setting up encryption...' : ''}>
       <ChatInput
@@ -380,11 +377,17 @@
   </div>
 {/if}
 
-<style>
-  @media (hover: hover) {
-    .btn-back:hover {
-      color: var(--text-primary);
-    }
+	<style>
+	  .pc-inner {
+	    width: 100%;
+	    max-width: 980px;
+	    margin: 0 auto;
+	  }
+
+	  @media (hover: hover) {
+	    .btn-back:hover {
+	      color: var(--text-primary);
+	    }
 
     .btn-icon:hover {
       background: var(--bg-elevated);
