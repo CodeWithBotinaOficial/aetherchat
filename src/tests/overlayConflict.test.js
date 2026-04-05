@@ -117,16 +117,27 @@ it('Opening the tooltip closes any open action menu', async () => {
 
   identity.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: 120, clientY: 120 }));
 
-  await waitFor(() => {
-    const el = document.querySelector('[data-aether-tooltip="true"]');
-    if (!el) throw new Error('tooltip not ready');
-    return el;
-  });
+  // While the action menu is open, tooltip opening is suppressed so the menu
+  // stays open while the cursor moves into it.
+  await new Promise((r) => setTimeout(r, 50));
+  expect(document.querySelector('[data-aether-tooltip="true"]')).toBeNull();
+  expect(document.querySelector('.msg-menu')).toBeTruthy();
+
+  // Close the menu by clicking outside.
+  document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
   await waitFor(() => {
     if (document.querySelector('.msg-menu')) throw new Error('menu still open');
     return true;
   });
 
+  // Now tooltip can open normally.
+  identity.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+  identity.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: 120, clientY: 120 }));
+  await waitFor(() => {
+    const el = document.querySelector('[data-aether-tooltip="true"]');
+    if (!el) throw new Error('tooltip not ready');
+    return el;
+  });
+
   component.$destroy();
 });
-

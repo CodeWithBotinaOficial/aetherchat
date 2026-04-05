@@ -35,6 +35,9 @@
   let tooltipCancelHide = null;
   const TOOLTIP_ID = 'aether-user-tooltip';
   const bubbleRefs = Object.create(null);
+  // While an action menu is open, suppress tooltip opening (so the user can move
+  // from the ⋯ trigger into the menu without it closing).
+  let openMenuKey = '';
   let isTouch = false;
   let outsideListenerAttached = false;
 
@@ -104,6 +107,8 @@
 
   async function onHoverEnter(e) {
     const { message, messageKey, position } = e.detail;
+    // If an action menu is open, do not open the tooltip (menu has priority).
+    if (openMenuKey) return;
     // Tooltips and message action menus are mutually exclusive.
     closeAllActionMenus();
     const cache = $avatarCache;
@@ -139,6 +144,18 @@
 
   function onTooltipClose() {
     onHoverLeave();
+  }
+
+  function onMenuOpen(ev) {
+    openMenuKey = String(ev?.detail?.messageKey ?? '');
+    // Tooltips and message action menus are mutually exclusive.
+    onHoverLeave();
+    closeAllActionMenus(openMenuKey);
+  }
+
+  function onMenuClose(ev) {
+    const key = String(ev?.detail?.messageKey ?? '');
+    if (key && key === openMenuKey) openMenuKey = '';
   }
 
   async function onSend(e) {
@@ -396,11 +413,8 @@
 	                on:hoverLeave={onHoverLeave}
 	                on:reply={(ev) => addPendingReply(ev.detail.message)}
 	                on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
-	                on:menuOpen={(ev) => {
-	                  // Tooltips and message action menus are mutually exclusive.
-	                  onHoverLeave();
-	                  closeAllActionMenus(ev?.detail?.messageKey ?? '');
-	                }}
+	                on:menuOpen={onMenuOpen}
+                  on:menuClose={onMenuClose}
 	                    on:edit={(ev) => {
 	                      const msg = ev?.detail?.message;
 	                      if (!msg?.id) return;
