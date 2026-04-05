@@ -323,7 +323,9 @@
 
 	  @media (min-width: 1024px) {
 	    .bubble {
-	      max-width: min(72%, 60rem);
+	      /* Give short desktop messages more presence; still capped for readability. */
+	      min-width: clamp(16rem, 24vw, 24rem);
+	      max-width: min(82%, 70rem);
 	    }
 	  }
 
