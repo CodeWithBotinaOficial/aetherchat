@@ -55,8 +55,8 @@ it('MessageBubble avatar is visible at expected size on mobile and desktop', asy
     const avatar = document.querySelector('.avatar');
     expect(avatar).toBeTruthy();
     const style = avatar.getAttribute('style') ?? '';
-    expect(style).toMatch(/width:\s*40px/);
-    expect(style).toMatch(/height:\s*40px/);
+    expect(style).toMatch(/width:\s*48px/);
+    expect(style).toMatch(/height:\s*48px/);
     unmount();
   } finally {
     restore();
@@ -77,8 +77,8 @@ it('MessageBubble avatar is visible at expected size on mobile and desktop', asy
     const avatar = document.querySelector('.avatar');
     expect(avatar).toBeTruthy();
     const style = avatar.getAttribute('style') ?? '';
-    expect(style).toMatch(/width:\s*32px/);
-    expect(style).toMatch(/height:\s*32px/);
+    expect(style).toMatch(/width:\s*36px/);
+    expect(style).toMatch(/height:\s*36px/);
     unmount();
   } finally {
     restore();

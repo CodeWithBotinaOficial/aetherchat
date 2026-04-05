@@ -202,12 +202,12 @@
 	    ? `0 0 0 3px color-mix(in srgb, ${message.color} 15%, transparent)`
 	    : 'none';
 
-	  $: avatarSize = isDesktop ? 40 : isMobile ? 32 : 36;
-	</script>
+		  $: avatarSize = isDesktop ? 48 : isMobile ? 36 : 42;
+		</script>
 
-<div class={isOwn ? 'flex justify-end' : 'flex justify-start'}>
-  <div class="row flex items-center gap-[var(--space-sm)]">
-    {#if isOwn}
+	<div class={`message-row flex w-full ${isOwn ? 'justify-end' : 'justify-start'}`}>
+	  <div class="row flex items-center gap-[var(--space-sm)]">
+	    {#if isOwn}
       <button
         type="button"
         class="reply-btn reply-btn-left h-[36px] w-[36px] grid place-items-center rounded-[var(--radius-full)] border border-[var(--border)] bg-[var(--bg-surface)] text-[var(--text-secondary)]"
@@ -234,12 +234,12 @@
         </div>
       </div>
 
-	      <div
-	        bind:this={bubbleEl}
-	        class={`bubble w-fit rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-surface)] px-[18px] py-[12px] ${animatingBack ? 'snap-back' : ''}`}
-	        style={`--reply-color:${message.color}; border-left: 3px solid ${message.color}; box-shadow: ${bubbleShadow}; transform: translateX(${dragX}px);`}
-	        role="group"
-	        data-aether-bubble="true"
+		      <div
+		        bind:this={bubbleEl}
+		        class={`bubble w-fit rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-surface)] ${animatingBack ? 'snap-back' : ''}`}
+		        style={`--reply-color:${message.color}; border-left: 3px solid ${message.color}; box-shadow: ${bubbleShadow}; transform: translateX(${dragX}px);`}
+		        role="group"
+		        data-aether-bubble="true"
         data-message-id={message.id ?? ''}
         aria-label={`Message from ${message.username}`}
         aria-describedby={tooltipId || undefined}
@@ -262,25 +262,25 @@
 	          </div>
 	        </div>
 
-        {#if Array.isArray(message.replies) && message.replies.length > 0}
-          <div class="mt-[var(--space-xs)] grid gap-[6px]">
-            {#each message.replies as r (r.messageId)}
+	        {#if Array.isArray(message.replies) && message.replies.length > 0}
+	          <div class="mt-[var(--space-xs)] grid gap-[6px]">
+	            {#each message.replies as r (r.messageId)}
               <button
                 type="button"
                 class="quote-card w-full text-left rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-sm)] py-[6px]"
                 style={`border-left: 3px solid ${r.authorColor};`}
                 on:click|stopPropagation={() => dispatch('jumpToOriginal', { messageId: r.messageId })}
-              >
-                <div class="truncate text-[var(--font-size-xs)] font-800 text-[var(--text-primary)]">{r.authorUsername}</div>
-                <div class="mt-[2px] text-[var(--font-size-xs)] text-[var(--text-secondary)]">{previewText(r.textSnapshot, 80)}</div>
-              </button>
-            {/each}
-          </div>
-        {/if}
+	              >
+	                <div class="quote-author text-[var(--font-size-xs)] font-800 text-[var(--text-primary)]">{r.authorUsername}</div>
+	                <div class="mt-[2px] text-[var(--font-size-xs)] text-[var(--text-secondary)]">{previewText(r.textSnapshot, 80)}</div>
+	              </button>
+	            {/each}
+	          </div>
+	        {/if}
 
-	        <div class="mt-[var(--space-xs)] whitespace-pre-wrap break-words text-[var(--text-primary)] text-[var(--font-size-base)] leading-[1.45]">
-	          {message.text}
-	        </div>
+		        <div class="msg-text mt-[var(--space-xs)] whitespace-pre-wrap break-words text-[var(--text-primary)] leading-[1.45]">
+		          {message.text}
+		        </div>
 
         <div class="time-row" title={new Date(message.timestamp).toLocaleString()}>
           <span class="time">{displayTime}</span>
@@ -315,22 +315,31 @@
 
 <style>
 	  .bubble {
-	    max-width: min(92%, 760px);
+	    /* Comfortable sizing across devices without becoming comically wide on large screens. */
+	    max-width: min(94%, 52rem);
+	    padding: clamp(10px, 1.2vw, 16px) clamp(14px, 1.6vw, 22px);
 	    will-change: transform;
 	  }
 
-	  .meta-top {
-	    display: flex;
-	    align-items: center;
+	  @media (min-width: 1024px) {
+	    .bubble {
+	      max-width: min(72%, 60rem);
+	    }
+	  }
+
+		  .meta-top {
+		    display: flex;
+		    align-items: center;
 	    gap: 8px;
 	    flex-wrap: wrap;
 	    min-width: 0;
 	  }
 
-	  .meta-name {
-	    min-width: 0;
-	    overflow-wrap: anywhere;
-	  }
+		  .meta-name {
+		    min-width: 0;
+		    overflow-wrap: anywhere;
+		    font-size: clamp(0.95rem, 0.92rem + 0.18vw, 1.1rem);
+		  }
 
 	  .age-badge {
 	    flex: none;
@@ -344,28 +353,37 @@
     line-height: 1.2;
   }
 
-  .time-row {
-    margin-top: 6px;
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    align-items: center;
-    font-size: var(--font-size-xs);
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-  }
+	  .time-row {
+	    margin-top: 6px;
+	    display: flex;
+	    justify-content: flex-end;
+	    gap: 8px;
+	    align-items: center;
+	    font-size: clamp(0.72rem, 0.7rem + 0.1vw, 0.8rem);
+	    color: var(--text-muted);
+	    font-family: var(--font-mono);
+	  }
 
   .status {
     color: var(--text-secondary);
   }
 
-  .swipe-wrap {
-    display: inline-block;
-  }
+	  .swipe-wrap {
+	    display: inline-block;
+	  }
 
-  .swipe-underlay {
-    position: absolute;
-    top: 0;
+	  .msg-text {
+	    font-size: clamp(1rem, 0.96rem + 0.25vw, 1.125rem);
+	  }
+
+	  .quote-author {
+	    overflow-wrap: anywhere;
+	    white-space: normal;
+	  }
+
+	  .swipe-underlay {
+	    position: absolute;
+	    top: 0;
     bottom: 0;
     width: 56px;
     display: grid;
@@ -449,9 +467,5 @@
     }
   }
 
-	  @media (min-width: 1024px) {
-	    .bubble {
-	      max-width: min(84%, 820px);
-	    }
-	  }
-	</style>
+		  /* (min-width: 1024px) bubble sizing handled above */
+		</style>

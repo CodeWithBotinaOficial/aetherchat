@@ -257,7 +257,7 @@
 </script>
 
 {#if $activeChat}
-  <div class="h-full flex flex-col bg-[var(--bg-base)]">
+  <div class="pc h-full flex flex-col bg-[var(--bg-base)]">
     <div class="flex items-center justify-between gap-[var(--space-sm)] px-[var(--space-md)] py-[var(--space-md)] border-b border-[var(--border)] bg-[var(--bg-surface)]">
       <div class="flex items-center gap-[var(--space-sm)] min-w-0">
         <button
@@ -314,10 +314,10 @@
       </div>
     {/if}
 
-	    <div bind:this={listEl} class="flex-1 min-h-0 overflow-y-auto px-[var(--space-md)] py-[var(--space-md)]">
-	      <div class="pc-inner">
-	      {#if hasMore && $activeChat.messages.length >= 100}
-	        <div class="mb-[var(--space-md)] grid place-items-center">
+		    <div bind:this={listEl} class="pc-scroll flex-1 min-h-0 overflow-y-auto">
+		      <div class="pc-inner">
+		      {#if hasMore && $activeChat.messages.length >= 100}
+		        <div class="mb-[var(--space-md)] grid place-items-center">
 	          <button
 	            class="btn-load rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-secondary)]"
             on:click={loadOlder}
@@ -342,27 +342,26 @@
             </div>
           </div>
         </div>
-	      {:else}
-	        {#each $activeChat.messages as m (m.id)}
-	          <div class={m.direction === 'sent' ? 'flex flex-col items-end' : 'flex flex-col items-start'}>
-	            <div class="mb-[12px] w-full">
-	              <MessageBubble
-	                message={msgToBubble(m, $activeChat)}
-	                isOwn={m.direction === 'sent'}
-	                on:reply={(ev) => addPendingReply($activeChat.id, ev.detail.message)}
-	                on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
-              />
-            </div>
-            {#if m.direction === 'sent'}
-              <div class="mt-[-10px] mb-[var(--space-sm)] pr-[var(--space-sm)] text-[var(--font-size-xs)] text-[var(--text-muted)] font-mono">
-                {m.delivered ? '✓ delivered' : theirOnline($activeChat) ? 'sent' : 'queued'}
-              </div>
-            {/if}
-	          </div>
-	        {/each}
-	      {/if}
-	      </div>
-	    </div>
+		      {:else}
+		        {#each $activeChat.messages as m (m.id)}
+		          <div class={`pc-msg ${m.direction === 'sent' ? 'pc-msg-own' : 'pc-msg-their'}`}>
+		            <MessageBubble
+		              message={msgToBubble(m, $activeChat)}
+		              isOwn={m.direction === 'sent'}
+		              on:reply={(ev) => addPendingReply($activeChat.id, ev.detail.message)}
+		              on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
+		            />
+
+		            {#if m.direction === 'sent'}
+		              <div class="pc-status text-[var(--font-size-xs)] text-[var(--text-muted)] font-mono">
+		                {m.delivered ? '✓ delivered' : theirOnline($activeChat) ? 'sent' : 'queued'}
+		              </div>
+		            {/if}
+		          </div>
+		        {/each}
+		      {/if}
+		      </div>
+		    </div>
 
     <div title={inputDisabled ? 'Setting up encryption...' : ''}>
       <ChatInput
@@ -377,17 +376,46 @@
   </div>
 {/if}
 
-	<style>
-	  .pc-inner {
-	    width: 100%;
-	    max-width: 980px;
-	    margin: 0 auto;
-	  }
+		<style>
+		  .pc {
+		    --chat-pad-x: clamp(12px, 2.2vw, 32px);
+		    --chat-pad-y: clamp(12px, 1.8vw, 24px);
+		    --msg-gap: clamp(10px, 1.3vh, 16px);
+		  }
 
-	  @media (hover: hover) {
-	    .btn-back:hover {
-	      color: var(--text-primary);
-	    }
+		  .pc-scroll {
+		    padding: var(--chat-pad-y) var(--chat-pad-x);
+		  }
+
+		  .pc-inner {
+		    width: 100%;
+		  }
+
+		  .pc-msg {
+		    width: 100%;
+		    display: flex;
+		    flex-direction: column;
+		    margin-bottom: var(--msg-gap);
+		  }
+
+		  .pc-msg-own {
+		    align-items: flex-end;
+		  }
+
+		  .pc-msg-their {
+		    align-items: flex-start;
+		  }
+
+		  .pc-status {
+		    margin-top: -10px;
+		    margin-bottom: var(--space-sm);
+		    padding-right: var(--space-sm);
+		  }
+
+		  @media (hover: hover) {
+		    .btn-back:hover {
+		      color: var(--text-primary);
+		    }
 
     .btn-icon:hover {
       background: var(--bg-elevated);

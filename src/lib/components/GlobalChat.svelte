@@ -289,7 +289,7 @@
   let detachOutsideClose = () => {};
 </script>
 
-<div class="gc h-full flex flex-col" style={`--composer-pad:${composerPad}px;`}>
+  <div class="gc h-full flex flex-col" style={`--composer-pad:${composerPad}px;`}>
   <div class="gc-list flex-1 min-h-0">
     {#if $globalMessages.length === 0}
       <div class="h-full grid place-items-center px-[var(--space-lg)]">
@@ -302,18 +302,18 @@
       </div>
     {:else}
       <div
-	        bind:this={listEl}
-	        class="h-full scroll-container px-[var(--space-md)] py-[var(--space-md)]"
-	        on:scroll={() => computeRange(msgs)}
-	      >
-	        <div class="gc-inner" style={`padding-top:${padTop}px; padding-bottom:${padBottom}px;`}>
-	          {#each visibleMsgs as m (m.id ?? `${m.timestamp}-${m.username}-${m.text}`)}
-	            <div class="mb-[12px]">
-	              <MessageBubble
-	                message={m}
-	                messageKey={m.id ?? `${m.timestamp}-${m.username}-${m.text}`}
-	                bind:this={bubbleRefs[String(m.id ?? `${m.timestamp}-${m.username}-${m.text}`)]}
-	                isOwn={$user?.username === m.username}
+		        bind:this={listEl}
+		        class="gc-scroll h-full scroll-container"
+		        on:scroll={() => computeRange(msgs)}
+		      >
+		        <div class="gc-inner" style={`padding-top:${padTop}px; padding-bottom:${padBottom}px;`}>
+		          {#each visibleMsgs as m (m.id ?? `${m.timestamp}-${m.username}-${m.text}`)}
+		            <div class="mb-[var(--msg-gap)]">
+		              <MessageBubble
+		                message={m}
+		                messageKey={m.id ?? `${m.timestamp}-${m.username}-${m.text}`}
+		                bind:this={bubbleRefs[String(m.id ?? `${m.timestamp}-${m.username}-${m.text}`)]}
+		                isOwn={$user?.username === m.username}
                 tooltipId={tooltipUser && tooltipKey === String(m.id ?? `${m.timestamp}-${m.username}-${m.text}`) ? TOOLTIP_ID : ''}
                 on:hoverEnter={onHoverEnter}
                 on:hoverMove={onHoverMove}
@@ -348,12 +348,22 @@
   />
 </div>
 
-<style>
-  @media (max-width: 639px) {
-    .gc-input {
-      position: fixed;
-      left: 0;
-      right: 0;
+	<style>
+	  .gc {
+	    --chat-pad-x: clamp(12px, 2.2vw, 32px);
+	    --chat-pad-y: clamp(12px, 1.8vw, 24px);
+	    --msg-gap: clamp(10px, 1.3vh, 16px);
+	  }
+
+	  .gc-scroll {
+	    padding: var(--chat-pad-y) var(--chat-pad-x);
+	  }
+
+	  @media (max-width: 639px) {
+	    .gc-input {
+	      position: fixed;
+	      left: 0;
+	      right: 0;
       bottom: calc(56px + env(safe-area-inset-bottom, 0px));
       z-index: 45;
     }
@@ -369,9 +379,7 @@
 	    }
 	  }
 
-	  .gc-inner {
-	    width: 100%;
-	    max-width: 980px;
-	    margin: 0 auto;
-	  }
-	</style>
+		  .gc-inner {
+		    width: 100%;
+		  }
+		</style>
