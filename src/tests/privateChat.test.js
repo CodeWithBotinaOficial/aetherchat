@@ -49,6 +49,7 @@ async function clearAllTables() {
 	    db.sentMessagesPlaintext,
 	    db.sessionKeys,
 	    db.queuedMessages,
+	    db.queuedActions,
 	    db.knownPeers,
 	    db.usernameRegistry,
 	    db.peerIds,
@@ -61,6 +62,7 @@ async function clearAllTables() {
 	        db.sentMessagesPlaintext.clear(),
 	        db.sessionKeys.clear(),
 	        db.queuedMessages.clear(),
+	        db.queuedActions.clear(),
 	        db.knownPeers.clear(),
 	        db.usernameRegistry.clear(),
 	        db.peerIds.clear()

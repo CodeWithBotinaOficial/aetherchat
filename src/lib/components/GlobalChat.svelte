@@ -4,20 +4,23 @@
     addGlobalMessage,
     addPendingReply,
     clearPendingReplies,
+    editingMessageId,
     globalMessages,
     loadGlobalMessages,
     pendingReplies,
     prependGlobalMessages,
-    removePendingReply
+    removePendingReply,
+    setPendingReplies
   } from '$lib/stores/chatStore.js';
   import { peer } from '$lib/stores/peerStore.js';
   import { user } from '$lib/stores/userStore.js';
-  import { avatarCache, broadcastGlobalMessage } from '$lib/services/peer.js';
+  import { avatarCache, broadcastGlobalMessage, broadcastGlobalMessageDelete, broadcastGlobalMessageEdit } from '$lib/services/peer.js';
   import { getGlobalMessagesPage } from '$lib/services/db.js';
   import { cssEscape } from '$lib/utils/replies.js';
   import { showToast } from '$lib/stores/toastStore.js';
 
   import ChatInput from '$lib/components/ChatInput.svelte';
+  import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import MessageBubble from '$lib/components/MessageBubble.svelte';
   import UserTooltip from '$lib/components/UserTooltip.svelte';
 
@@ -39,6 +42,13 @@
   let composerEl = null;
   let composerPad = 160;
   let cleanupResize = () => {};
+  let now = Date.now();
+  let nowTimer = 0;
+
+  let composerValue = '';
+  let showMsgDelete = false;
+  /** @type {{ messageId: string } | null} */
+  let msgDeleteTarget = null;
 
   // Simple windowed list for large histories.
   const EST_ITEM_H = 84;
@@ -130,10 +140,26 @@
         authorUsername: r.authorUsername,
         authorColor: r.authorColor,
         textSnapshot: r.textSnapshot,
-        timestamp: typeof original?.timestamp === 'number' ? original.timestamp : 0
+        timestamp: typeof original?.timestamp === 'number' ? original.timestamp : (typeof r?.timestamp === 'number' ? r.timestamp : 0),
+        deleted: Boolean(r?.deleted)
       };
     });
     const safeReplies = replies.length > 0 ? replies : null;
+
+    // Save edit in-place (no reorder).
+    if ($editingMessageId) {
+      await broadcastGlobalMessageEdit(
+        $editingMessageId,
+        e.detail.text,
+        { username: u.username, color: u.color, age: u.age, avatarBase64: u.avatarBase64 ?? null, createdAt: u.createdAt },
+        safeReplies
+      );
+      editingMessageId.set(null);
+      composerValue = '';
+      clearPendingReplies();
+      computeRange($globalMessages);
+      return;
+    }
 
     if ($peer.peerId) {
       // Peer service handles optimistic add + network broadcast.
@@ -213,6 +239,9 @@
 
   onMount(() => {
     isTouch = window.matchMedia?.('(hover: none)').matches || (navigator.maxTouchPoints ?? 0) > 0;
+    nowTimer = setInterval(() => {
+      now = Date.now();
+    }, 30_000);
 
     // Keep enough bottom padding so the fixed composer never covers messages on mobile.
     try {
@@ -252,6 +281,7 @@
       } catch {
         // ignore
       }
+      clearInterval(nowTimer);
     };
   });
 
@@ -287,6 +317,36 @@
   }
 
   let detachOutsideClose = () => {};
+  $: isEditing = Boolean($editingMessageId);
+  $: editLabel = (() => {
+    if (!$editingMessageId) return '';
+    const msg = ($globalMessages ?? []).find((m) => m?.id === $editingMessageId) ?? null;
+    const ts = typeof msg?.timestamp === 'number' ? msg.timestamp : Date.now();
+    return `Editing message from ${new Date(ts).toLocaleTimeString()}`;
+  })();
+
+  async function confirmMsgDelete() {
+    showMsgDelete = false;
+    const target = msgDeleteTarget;
+    msgDeleteTarget = null;
+    if (!target?.messageId) return;
+    const u = $user;
+    if (!u) return;
+
+    if ($editingMessageId === target.messageId) {
+      editingMessageId.set(null);
+      composerValue = '';
+      clearPendingReplies();
+    }
+
+    await broadcastGlobalMessageDelete(target.messageId, {
+      username: u.username,
+      color: u.color,
+      age: u.age,
+      avatarBase64: u.avatarBase64 ?? null,
+      createdAt: u.createdAt
+    });
+  }
 </script>
 
   <div class="gc h-full flex flex-col" style={`--composer-pad:${composerPad}px;`}>
@@ -314,12 +374,27 @@
 		                messageKey={m.id ?? `${m.timestamp}-${m.username}-${m.text}`}
 		                bind:this={bubbleRefs[String(m.id ?? `${m.timestamp}-${m.username}-${m.text}`)]}
 		                isOwn={$user?.username === m.username}
+                    canEdit={$user?.username === m.username && !m.deleted && now - (m.timestamp ?? 0) <= 30 * 60 * 1000}
+                    canDelete={$user?.username === m.username && !m.deleted && now - (m.timestamp ?? 0) <= 30 * 60 * 1000}
                 tooltipId={tooltipUser && tooltipKey === String(m.id ?? `${m.timestamp}-${m.username}-${m.text}`) ? TOOLTIP_ID : ''}
                 on:hoverEnter={onHoverEnter}
                 on:hoverMove={onHoverMove}
                 on:hoverLeave={onHoverLeave}
                 on:reply={(ev) => addPendingReply(ev.detail.message)}
                 on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
+                    on:edit={(ev) => {
+                      const msg = ev?.detail?.message;
+                      if (!msg?.id) return;
+                      editingMessageId.set(msg.id);
+                      composerValue = String(msg.text ?? '');
+                      setPendingReplies(Array.isArray(msg.replies) ? msg.replies : null);
+                    }}
+                    on:delete={(ev) => {
+                      const msg = ev?.detail?.message;
+                      if (!msg?.id) return;
+                      showMsgDelete = true;
+                      msgDeleteTarget = { messageId: msg.id };
+                    }}
               />
             </div>
           {/each}
@@ -331,10 +406,18 @@
   <div class="gc-input">
     <div bind:this={composerEl}>
       <ChatInput
+        bind:value={composerValue}
+        mode={isEditing ? 'edit' : 'compose'}
+        editLabel={editLabel}
         pendingReplies={$pendingReplies}
         on:removePendingReply={(ev) => removePendingReply(ev.detail.messageId)}
         on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
         on:send={onSend}
+        on:cancelEdit={() => {
+          editingMessageId.set(null);
+          composerValue = '';
+          clearPendingReplies();
+        }}
         placeholder="Message the global room..."
       />
     </div>
@@ -347,6 +430,20 @@
     on:close={onTooltipClose}
   />
 </div>
+
+{#if showMsgDelete && msgDeleteTarget}
+  <ConfirmDialog
+    title="Delete message?"
+    message="This will replace the message with a deletion placeholder for everyone in the global chat."
+    confirmLabel="Delete"
+    dangerous={true}
+    on:confirm={confirmMsgDelete}
+    on:cancel={() => {
+      showMsgDelete = false;
+      msgDeleteTarget = null;
+    }}
+  />
+{/if}
 
 	<style>
 	  .gc {

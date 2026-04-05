@@ -7,7 +7,14 @@
   import MessageBubble from '$lib/components/MessageBubble.svelte';
   import { decryptForSession, isSessionActive } from '$lib/services/crypto.js';
   import { getPrivateMessagesPage } from '$lib/services/db.js';
-  import { avatarCache, closePrivateChat, initiatePrivateChat, sendPrivateMessage } from '$lib/services/peer.js';
+  import {
+    avatarCache,
+    closePrivateChat,
+    deletePrivateMessage,
+    editPrivateMessage,
+    initiatePrivateChat,
+    sendPrivateMessage
+  } from '$lib/services/peer.js';
   import { peer as peerStore } from '$lib/stores/peerStore.js';
   import { user } from '$lib/stores/userStore.js';
   import {
@@ -15,10 +22,14 @@
     addPendingReply,
     clearPendingReplies,
     closeChat,
+    editingChatId,
+    editingMessageId,
     prependMessages,
-    removePendingReply
+    removePendingReply,
+    setPendingReplies
   } from '$lib/stores/privateChatStore.js';
   import { cssEscape } from '$lib/utils/replies.js';
+  import { decodePrivateBody } from '$lib/utils/privateMessageCodec.js';
   import { showToast } from '$lib/stores/toastStore.js';
 
   /** @type {HTMLDivElement|null} */
@@ -30,6 +41,12 @@
   let showDelete = false;
 	  /** @type {{ chatId: string, theirPeerId: string, theirUsername: string } | null} */
 	  let deleteTarget = null;
+
+  let showMsgDelete = false;
+  /** @type {{ chatId: string, theirPeerId: string, messageId: string } | null} */
+  let msgDeleteTarget = null;
+
+  let composerValue = '';
   let showActiveBanner = false;
   let bannerTimer = 0;
   let prevKeyState = '';
@@ -42,6 +59,13 @@
   $: keyState = $activeChat?.keyExchangeState ?? 'idle';
   $: inputDisabled = keyState === 'initiated' || keyState === 'completing';
   $: inputPlaceholder = getPlaceholder(keyState, $activeChat?.isOnline);
+  $: isEditingThisChat = Boolean($activeChat && $editingChatId === $activeChat.id && $editingMessageId);
+  $: editLabel = (() => {
+    if (!isEditingThisChat) return '';
+    const msg = ($activeChat?.messages ?? []).find((m) => m?.id === $editingMessageId) ?? null;
+    const ts = typeof msg?.timestamp === 'number' ? msg.timestamp : Date.now();
+    return `Editing message from ${new Date(ts).toLocaleTimeString()}`;
+  })();
 
   function getPlaceholder(state, isOnline) {
     if (state === 'initiated' || state === 'completing') return 'Setting up encryption...';
@@ -65,6 +89,11 @@
       prevKeyState = chat.keyExchangeState;
       hasMore = true;
       lastCount = 0;
+      // Switching chats cancels any active edit session (single-edit invariant).
+      editingMessageId.set(null);
+      editingChatId.set(null);
+      composerValue = '';
+      clearPendingReplies(chat.id);
       scrollToBottom();
     }
 
@@ -116,12 +145,23 @@
           authorUsername: r.authorUsername,
           authorColor: r.authorColor,
           textSnapshot: r.textSnapshot,
-          timestamp: typeof original?.timestamp === 'number' ? original.timestamp : 0
+          timestamp: typeof original?.timestamp === 'number' ? original.timestamp : (typeof r?.timestamp === 'number' ? r.timestamp : 0),
+          deleted: Boolean(r?.deleted)
         };
       });
       const safeReplies = replies.length > 0 ? replies : null;
 
+      if (isEditingThisChat) {
+        await editPrivateMessage(chat.id, chat.theirPeerId, $editingMessageId, e.detail.text, safeReplies);
+        editingMessageId.set(null);
+        editingChatId.set(null);
+        composerValue = '';
+        clearPendingReplies(chat.id);
+        return;
+      }
+
 	    await sendPrivateMessage(chat.id, chat.theirPeerId, e.detail.text, safeReplies);
+      composerValue = '';
       clearPendingReplies(chat.id);
 	  }
 
@@ -143,12 +183,17 @@
     const canDecrypt = isSessionActive(chat.id);
     const decrypted = await Promise.all(
       page.map(async (m) => {
-        let text = '🔒 Encrypted message — start a new session to decrypt';
+        const deleted = Boolean(m?.deleted);
+        let text = deleted ? '[ This message was deleted ]' : '🔒 Encrypted message — start a new session to decrypt';
+        let editedAt = Object.prototype.hasOwnProperty.call(m, 'editedAt') ? (m.editedAt ?? null) : null;
         /** @type {any[]|null} */
         let replies = null;
-	        if (canDecrypt) {
+	        if (canDecrypt && !deleted) {
 	          try {
-	            text = await decryptForSession(chat.id, m.ciphertext, m.iv);
+	            const raw = await decryptForSession(chat.id, m.ciphertext, m.iv);
+              const decoded = decodePrivateBody(raw);
+	            text = decoded.text;
+              editedAt = decoded.editedAt ?? editedAt;
 	          } catch (err) {
 	            if (err?.name !== 'OperationError') console.error('loadOlder decrypt failed:', err?.message ?? String(err));
 	          }
@@ -170,7 +215,10 @@
           repliesCiphertext: typeof m?.replies?.ciphertext === 'string' ? m.replies.ciphertext : null,
           repliesIv: typeof m?.replies?.iv === 'string' ? m.replies.iv : null,
           timestamp: m.timestamp,
-          delivered: Boolean(m.delivered)
+          delivered: Boolean(m.delivered),
+          editedAt,
+          deleted,
+          sealed: !canDecrypt && m.direction !== 'sent'
         };
       })
     );
@@ -198,7 +246,11 @@
       avatarBase64: isOwn ? (u?.avatarBase64 ?? null) : theirAvatar,
       text: safeText,
       replies: Array.isArray(m?.replies) && m.replies.length > 0 ? m.replies : null,
-      timestamp: m.timestamp
+      timestamp: m.timestamp,
+      editedAt: Object.prototype.hasOwnProperty.call(m, 'editedAt') ? (m.editedAt ?? null) : null,
+      deleted: Boolean(m?.deleted),
+      delivered: Boolean(m?.delivered),
+      queued: Boolean(m?.queued)
     };
   }
 
@@ -244,6 +296,21 @@
 	    if (!target?.chatId) return;
 	    await closePrivateChat(target.chatId);
 	  }
+
+    async function confirmMsgDelete() {
+      showMsgDelete = false;
+      const target = msgDeleteTarget;
+      msgDeleteTarget = null;
+      if (!target?.chatId || !target?.messageId) return;
+      // Cancel edit if the deleted message is being edited.
+      if (target.chatId === $editingChatId && target.messageId === $editingMessageId) {
+        editingMessageId.set(null);
+        editingChatId.set(null);
+        composerValue = '';
+      }
+      await deletePrivateMessage(target.chatId, target.theirPeerId, target.messageId);
+      clearPendingReplies(target.chatId);
+    }
 
   async function retryKeyExchange() {
     const chat = $activeChat;
@@ -348,8 +415,24 @@
 		            <MessageBubble
 		              message={msgToBubble(m, $activeChat)}
 		              isOwn={m.direction === 'sent'}
+                  canEdit={m.direction === 'sent' && !m.deleted && !m.queued}
+                  canDelete={m.direction === 'sent' && !m.deleted && !m.queued}
 		              on:reply={(ev) => addPendingReply($activeChat.id, ev.detail.message)}
 		              on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
+                  on:edit={(ev) => {
+                    const msg = ev?.detail?.message;
+                    if (!msg?.id || !$activeChat) return;
+                    editingChatId.set($activeChat.id);
+                    editingMessageId.set(msg.id);
+                    composerValue = String(msg.text ?? '');
+                    setPendingReplies($activeChat.id, Array.isArray(msg.replies) ? msg.replies : null);
+                  }}
+                  on:delete={(ev) => {
+                    const msg = ev?.detail?.message;
+                    if (!msg?.id || !$activeChat) return;
+                    showMsgDelete = true;
+                    msgDeleteTarget = { chatId: $activeChat.id, theirPeerId: $activeChat.theirPeerId, messageId: msg.id };
+                  }}
 		            />
 
 		            {#if m.direction === 'sent'}
@@ -366,11 +449,21 @@
     <div title={inputDisabled ? 'Setting up encryption...' : ''}>
       <ChatInput
         disabled={inputDisabled}
+        bind:value={composerValue}
+        mode={isEditingThisChat ? 'edit' : 'compose'}
+        editLabel={editLabel}
         pendingReplies={$activeChat.pendingReplies ?? []}
         placeholder={inputPlaceholder}
         on:removePendingReply={(ev) => removePendingReply($activeChat.id, ev.detail.messageId)}
         on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
         on:send={onSend}
+        on:cancelEdit={() => {
+          if (!$activeChat) return;
+          editingMessageId.set(null);
+          editingChatId.set(null);
+          composerValue = '';
+          clearPendingReplies($activeChat.id);
+        }}
       />
     </div>
   </div>
@@ -439,6 +532,20 @@
     on:cancel={() => {
       showDelete = false;
       deleteTarget = null;
+    }}
+  />
+{/if}
+
+{#if showMsgDelete && msgDeleteTarget}
+  <ConfirmDialog
+    title="Delete message?"
+    message="This will replace the message with a deletion placeholder for both participants."
+    confirmLabel="Delete"
+    dangerous={true}
+    on:confirm={confirmMsgDelete}
+    on:cancel={() => {
+      showMsgDelete = false;
+      msgDeleteTarget = null;
     }}
   />
 {/if}

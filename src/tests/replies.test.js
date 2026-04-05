@@ -26,16 +26,26 @@ async function clearAllTables() {
     db.globalMessages,
     db.privateChats,
     db.privateMessages,
+    db.sentMessagesPlaintext,
+    db.sessionKeys,
+    db.queuedMessages,
+    db.queuedActions,
     db.knownPeers,
     db.usernameRegistry,
+    db.peerIds,
     async () => {
       await Promise.all([
         db.users.clear(),
         db.globalMessages.clear(),
         db.privateChats.clear(),
         db.privateMessages.clear(),
+        db.sentMessagesPlaintext.clear(),
+        db.sessionKeys.clear(),
+        db.queuedMessages.clear(),
+        db.queuedActions.clear(),
         db.knownPeers.clear(),
-        db.usernameRegistry.clear()
+        db.usernameRegistry.clear(),
+        db.peerIds.clear()
       ]);
     }
   );
@@ -191,6 +201,40 @@ it('A message with one reply renders one quoted card with truncated preview and 
   component.$on('jumpToOriginal', (e) => seen.push(e.detail.messageId));
   card.click();
   expect(seen).toEqual(['orig1']);
+});
+
+it('A deleted cited message renders a muted non-clickable quoted card', async () => {
+  const { component } = render(MessageBubble, {
+    message: {
+      id: 'm-del-quote',
+      username: 'alice',
+      age: 1,
+      color: 'hsl(1, 65%, 65%)',
+      text: 'hello',
+      timestamp: 1,
+      replies: [
+        {
+          messageId: 'orig-deleted',
+          authorUsername: 'bob',
+          authorColor: 'hsl(2, 65%, 65%)',
+          textSnapshot: '[ Original message deleted ]',
+          timestamp: 10,
+          deleted: true
+        }
+      ]
+    },
+    isOwn: false
+  });
+
+  const card = document.querySelector('.quote-card.quote-deleted');
+  expect(card).toBeTruthy();
+  expect(card.tagName).toBe('DIV');
+  expect(card.textContent).toContain('Original message deleted');
+
+  const seen = [];
+  component.$on('jumpToOriginal', (e) => seen.push(e.detail.messageId));
+  card.click();
+  expect(seen).toEqual([]);
 });
 
 it('Swipe threshold: below 60px does not trigger reply; above 60px triggers reply', async () => {

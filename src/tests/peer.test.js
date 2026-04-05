@@ -81,9 +81,14 @@ class MockPeer {
 	const hoisted = vi.hoisted(() => {
 		  return {
 	    addGlobalMessageMock: vi.fn().mockResolvedValue(undefined),
+      updateGlobalMessageMock: vi.fn().mockReturnValue(true),
+      deleteGlobalMessageMock: vi.fn().mockReturnValue(true),
+      cascadeGlobalCitationsMock: vi.fn().mockReturnValue(0),
+      persistGlobalPatchWithCascadeMock: vi.fn().mockResolvedValue(undefined),
 	    saveKnownPeerMock: vi.fn().mockResolvedValue(undefined),
 	    getKnownPeersMock: vi.fn().mockResolvedValue([]),
 	    getGlobalMessagesMock: vi.fn().mockResolvedValue([]),
+      getGlobalMessageMock: vi.fn().mockResolvedValue(null),
 	    getFullUsernameRegistryMock: vi.fn().mockResolvedValue([]),
 	    registerUsernameLocallyMock: vi.fn().mockResolvedValue(undefined),
 	    isUsernameTakenMock: vi.fn().mockResolvedValue(false),
@@ -96,13 +101,20 @@ class MockPeer {
 			    updateChatMetaMock: vi.fn().mockResolvedValue(undefined),
 			    saveQueuedMessageMock: vi.fn().mockResolvedValue(undefined),
 			    getQueuedMessagesForChatMock: vi.fn().mockResolvedValue([]),
+          saveQueuedActionMock: vi.fn().mockResolvedValue(undefined),
+          getQueuedActionsForChatMock: vi.fn().mockResolvedValue([]),
 			    deleteQueuedMessageMock: vi.fn().mockResolvedValue(undefined),
+          deleteQueuedActionMock: vi.fn().mockResolvedValue(undefined),
 		    markMessageDeliveredMock: vi.fn().mockResolvedValue(undefined),
+        updatePrivateMessageMock: vi.fn().mockResolvedValue(1),
 	    openChatMock: vi.fn(),
 	    upsertChatEntryMock: vi.fn(),
 	    setKeyExchangeStateMock: vi.fn(),
 	    addOutgoingMessageMock: vi.fn(),
 	    addIncomingMessageMock: vi.fn(),
+      updatePrivateMessageInStoreMock: vi.fn().mockReturnValue(true),
+      deletePrivateMessageInStoreMock: vi.fn().mockReturnValue(true),
+      cascadePrivateCitationsMock: vi.fn().mockReturnValue(0),
 	    deleteChatFromStoreMock: vi.fn().mockResolvedValue(undefined),
 	    markDeliveredMock: vi.fn(),
 	    updateMessageQueuedMock: vi.fn(),
@@ -117,6 +129,11 @@ vi.mock('peerjs', () => {
 vi.mock('$lib/stores/chatStore.js', () => {
   return {
     addGlobalMessage: (...args) => hoisted.addGlobalMessageMock(...args),
+    updateMessage: (...args) => hoisted.updateGlobalMessageMock(...args),
+    deleteMessage: (...args) => hoisted.deleteGlobalMessageMock(...args),
+    cascadeUpdateCitations: (...args) => hoisted.cascadeGlobalCitationsMock(...args),
+    persistMessagePatchWithCascade: (...args) => hoisted.persistGlobalPatchWithCascadeMock(...args),
+    GLOBAL_DELETED_PLACEHOLDER: '[ This message was deleted ]',
     globalMessages: { set: vi.fn() }
   };
 });
@@ -127,16 +144,26 @@ vi.mock('$lib/stores/chatStore.js', () => {
 	    orderBy: vi.fn(() => ({ last: vi.fn().mockResolvedValue(null) }))
 	  };
 	  const usernameRegistry = { count: vi.fn().mockResolvedValue(0) };
+      const privateMessages = {
+        get: vi.fn().mockResolvedValue(null),
+        where: vi.fn(() => ({ equals: vi.fn(() => ({ toArray: vi.fn().mockResolvedValue([]) })) }))
+      };
+      const queuedMessages = { where: vi.fn(() => ({ equals: vi.fn(() => ({ toArray: vi.fn().mockResolvedValue([]) })) })), update: vi.fn() };
+      const queuedActions = { where: vi.fn(() => ({ equals: vi.fn(() => ({ toArray: vi.fn().mockResolvedValue([]) })) })), update: vi.fn() };
 
 	  return {
 	    db: {
 	      globalMessages,
 	      usernameRegistry,
+          privateMessages,
+          queuedMessages,
+          queuedActions,
 	      transaction: vi.fn(async (_mode, _table, fn) => fn())
 	    },
 	    saveKnownPeer: (...args) => hoisted.saveKnownPeerMock(...args),
 	    getKnownPeers: (...args) => hoisted.getKnownPeersMock(...args),
 	    getGlobalMessages: (...args) => hoisted.getGlobalMessagesMock(...args),
+        getGlobalMessage: (...args) => hoisted.getGlobalMessageMock(...args),
 	    getFullUsernameRegistry: (...args) => hoisted.getFullUsernameRegistryMock(...args),
 	    registerUsernameLocally: (...args) => hoisted.registerUsernameLocallyMock(...args),
 	    isUsernameTaken: (...args) => hoisted.isUsernameTakenMock(...args),
@@ -150,7 +177,11 @@ vi.mock('$lib/stores/chatStore.js', () => {
 			    updateChatMeta: (...args) => hoisted.updateChatMetaMock(...args),
 			    saveQueuedMessage: (...args) => hoisted.saveQueuedMessageMock(...args),
 			    getQueuedMessagesForChat: (...args) => hoisted.getQueuedMessagesForChatMock(...args),
+          saveQueuedAction: (...args) => hoisted.saveQueuedActionMock(...args),
+          getQueuedActionsForChat: (...args) => hoisted.getQueuedActionsForChatMock(...args),
 			    deleteQueuedMessage: (...args) => hoisted.deleteQueuedMessageMock(...args),
+          deleteQueuedAction: (...args) => hoisted.deleteQueuedActionMock(...args),
+          updatePrivateMessage: (...args) => hoisted.updatePrivateMessageMock(...args),
 		    markMessageDelivered: (...args) => hoisted.markMessageDeliveredMock(...args)
 		  };
 		});
@@ -188,6 +219,10 @@ vi.mock('$lib/services/crypto.js', () => {
 	    setKeyExchangeState: (...args) => hoisted.setKeyExchangeStateMock(...args),
 	    addOutgoingMessage: (...args) => hoisted.addOutgoingMessageMock(...args),
 	    addIncomingMessage: (...args) => hoisted.addIncomingMessageMock(...args),
+      updateMessage: (...args) => hoisted.updatePrivateMessageInStoreMock(...args),
+      deleteMessage: (...args) => hoisted.deletePrivateMessageInStoreMock(...args),
+      cascadeUpdateCitations: (...args) => hoisted.cascadePrivateCitationsMock(...args),
+      PRIVATE_DELETED_PLACEHOLDER: '[ This message was deleted ]',
 	    deleteChatFromStore: (...args) => hoisted.deleteChatFromStoreMock(...args),
 	    markDelivered: (...args) => hoisted.markDeliveredMock(...args),
 	    updateMessageQueued: (...args) => hoisted.updateMessageQueuedMock(...args),
@@ -220,9 +255,14 @@ const me = { username: 'alice', color: 'hsl(1, 65%, 65%)', age: 22, avatarBase64
 	  MockPeer.ctorCalls = [];
 	  MockPeer.instances = [];
 	  hoisted.addGlobalMessageMock.mockClear();
+    hoisted.updateGlobalMessageMock.mockClear();
+    hoisted.deleteGlobalMessageMock.mockClear();
+    hoisted.cascadeGlobalCitationsMock.mockClear();
+    hoisted.persistGlobalPatchWithCascadeMock.mockClear();
 	  hoisted.saveKnownPeerMock.mockClear();
 	  hoisted.getKnownPeersMock.mockClear();
 	  hoisted.getGlobalMessagesMock.mockClear();
+    hoisted.getGlobalMessageMock.mockClear();
 	  hoisted.getFullUsernameRegistryMock.mockClear();
 	  hoisted.registerUsernameLocallyMock.mockClear();
 	  hoisted.isUsernameTakenMock.mockClear();
@@ -235,13 +275,20 @@ const me = { username: 'alice', color: 'hsl(1, 65%, 65%)', age: 22, avatarBase64
 		  hoisted.updateChatMetaMock.mockClear();
 		  hoisted.saveQueuedMessageMock.mockClear();
 		  hoisted.getQueuedMessagesForChatMock.mockClear();
+      hoisted.saveQueuedActionMock.mockClear();
+      hoisted.getQueuedActionsForChatMock.mockClear();
 		  hoisted.deleteQueuedMessageMock.mockClear();
+      hoisted.deleteQueuedActionMock.mockClear();
 	  hoisted.markMessageDeliveredMock.mockClear();
+    hoisted.updatePrivateMessageMock.mockClear();
 	  hoisted.openChatMock.mockClear();
 	  hoisted.upsertChatEntryMock.mockClear();
 	  hoisted.setKeyExchangeStateMock.mockClear();
 	  hoisted.addOutgoingMessageMock.mockClear();
 	  hoisted.addIncomingMessageMock.mockClear();
+    hoisted.updatePrivateMessageInStoreMock.mockClear();
+    hoisted.deletePrivateMessageInStoreMock.mockClear();
+    hoisted.cascadePrivateCitationsMock.mockClear();
 	  hoisted.deleteChatFromStoreMock.mockClear();
 	  hoisted.markDeliveredMock.mockClear();
 	  hoisted.updateMessageQueuedMock.mockClear();
@@ -1307,4 +1354,104 @@ it('Message protocol shape is validated correctly', () => {
 
   expect(validateProtocolMessage(good)).toBe(true);
   expect(validateProtocolMessage(bad)).toBe(false);
+});
+
+it('Security: GLOBAL_MSG_EDIT is rejected when the original message is older than 30 minutes', async () => {
+  vi.useFakeTimers();
+  const now = new Date('2026-04-05T12:00:00.000Z');
+  vi.setSystemTime(now);
+
+  hoisted.getGlobalMessageMock.mockResolvedValueOnce({
+    id: 'm1',
+    peerId: 'p2',
+    username: 'bob',
+    age: 1,
+    color: 'hsl(2, 65%, 65%)',
+    text: 'orig',
+    replies: null,
+    timestamp: now.getTime() - 31 * 60 * 1000,
+    editedAt: null,
+    deleted: false
+  });
+
+  await handleMessage(
+    {
+      type: 'GLOBAL_MSG_EDIT',
+      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33 },
+      payload: { messageId: 'm1', text: 'new', editedAt: now.getTime(), replies: null },
+      timestamp: now.getTime()
+    },
+    null,
+    me
+  );
+
+  expect(hoisted.updateGlobalMessageMock).not.toHaveBeenCalled();
+  expect(hoisted.persistGlobalPatchWithCascadeMock).not.toHaveBeenCalled();
+});
+
+it('Security: GLOBAL_MSG_EDIT is rejected when the sender is not the stored author', async () => {
+  vi.useFakeTimers();
+  const now = new Date('2026-04-05T12:05:00.000Z');
+  vi.setSystemTime(now);
+
+  hoisted.getGlobalMessageMock.mockResolvedValueOnce({
+    id: 'm2',
+    peerId: 'pX',
+    username: 'alice',
+    age: 1,
+    color: 'hsl(2, 65%, 65%)',
+    text: 'orig',
+    replies: null,
+    timestamp: now.getTime() - 60_000,
+    editedAt: null,
+    deleted: false
+  });
+
+  await handleMessage(
+    {
+      type: 'GLOBAL_MSG_EDIT',
+      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33 },
+      payload: { messageId: 'm2', text: 'new', editedAt: now.getTime(), replies: null },
+      timestamp: now.getTime()
+    },
+    null,
+    me
+  );
+
+  expect(hoisted.updateGlobalMessageMock).not.toHaveBeenCalled();
+  expect(hoisted.persistGlobalPatchWithCascadeMock).not.toHaveBeenCalled();
+});
+
+it('GLOBAL_MSG_EDIT applies update + cascades when valid', async () => {
+  vi.useFakeTimers();
+  const now = new Date('2026-04-05T12:10:00.000Z');
+  vi.setSystemTime(now);
+
+  hoisted.getGlobalMessageMock.mockResolvedValueOnce({
+    id: 'm3',
+    peerId: 'p2',
+    username: 'bob',
+    age: 1,
+    color: 'hsl(2, 65%, 65%)',
+    text: 'orig',
+    replies: null,
+    timestamp: now.getTime() - 60_000,
+    editedAt: null,
+    deleted: false
+  });
+
+  await handleMessage(
+    {
+      type: 'GLOBAL_MSG_EDIT',
+      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 33 },
+      payload: { messageId: 'm3', text: 'new text', editedAt: now.getTime(), replies: null },
+      timestamp: now.getTime()
+    },
+    null,
+    me
+  );
+
+  expect(hoisted.updateGlobalMessageMock).toHaveBeenCalledTimes(1);
+  expect(hoisted.cascadeGlobalCitationsMock).toHaveBeenCalledTimes(1);
+  expect(hoisted.persistGlobalPatchWithCascadeMock).toHaveBeenCalledTimes(1);
 });

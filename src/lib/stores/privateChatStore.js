@@ -2,8 +2,10 @@ import { derived, get, writable } from 'svelte/store';
 import { tick } from 'svelte';
 import { buildSessionId, closeSession, decryptForSession, isSessionActive, resumeSession } from '$lib/services/crypto.js';
 import { snapshotText } from '$lib/utils/replies.js';
+import { decodePrivateBody } from '$lib/utils/privateMessageCodec.js';
 import {
   clearQueuedMessagesForChat,
+  clearQueuedActionsForChat,
   deletePrivateChat,
   deleteSessionKeyRing,
   getSessionKeyRing,
@@ -11,6 +13,7 @@ import {
   getPrivateChats,
   getPrivateMessages,
   getQueuedMessagesForChat,
+  getQueuedActionsForChat,
   saveSessionKeyRing,
   updateChatMeta
 } from '$lib/services/db.js';
@@ -23,7 +26,7 @@ import {
 // }
 
 /**
- * @typedef {{ messageId: string, authorUsername: string, authorColor: string, textSnapshot: string }} PendingReply
+ * @typedef {{ messageId: string, authorUsername: string, authorColor: string, textSnapshot: string, timestamp?: number, deleted?: boolean }} PendingReply
  */
 
 const initialState = {
@@ -34,6 +37,14 @@ const initialState = {
 
 const { subscribe, update, set } = writable(initialState);
 export const privateChatStore = { subscribe, update, set };
+
+/** @type {import('svelte/store').Writable<string|null>} */
+export const editingMessageId = writable(null);
+/** @type {import('svelte/store').Writable<string|null>} */
+export const editingChatId = writable(null);
+
+export const PRIVATE_DELETED_PLACEHOLDER = '[ This message was deleted ]';
+export const CITED_DELETED_PLACEHOLDER = '[ Original message deleted ]';
 
 function isSessionKeyMismatch(err) {
   // WebCrypto AES-GCM authentication failures typically surface as OperationError.
@@ -105,10 +116,11 @@ export async function loadPrivateChats(myPeerId) {
       const repliesIv = typeof m?.replies?.iv === 'string' ? m.replies.iv : null;
       if (m.direction === 'sent') {
         const plaintext = sentPlainMap.get(m.id);
+        const deleted = Boolean(m.deleted);
         return {
           id: m.id,
           direction: 'sent',
-          text: plaintext ?? '🔒 Sent message (plaintext not available)',
+          text: deleted ? PRIVATE_DELETED_PLACEHOLDER : plaintext ?? '🔒 Sent message (plaintext not available)',
           ciphertext: m.ciphertext,
           iv: m.iv,
           repliesCiphertext,
@@ -116,13 +128,16 @@ export async function loadPrivateChats(myPeerId) {
           replies: null,
           timestamp: m.timestamp,
           delivered: Boolean(m.delivered),
+          editedAt: Object.prototype.hasOwnProperty.call(m, 'editedAt') ? (m.editedAt ?? null) : null,
+          deleted,
           sealed: false
         };
       }
+      const deleted = Boolean(m.deleted);
       return {
         id: m.id,
         direction: 'received',
-        text: null,
+        text: deleted ? PRIVATE_DELETED_PLACEHOLDER : null,
         ciphertext: m.ciphertext,
         iv: m.iv,
         repliesCiphertext,
@@ -130,6 +145,8 @@ export async function loadPrivateChats(myPeerId) {
         replies: null,
         timestamp: m.timestamp,
         delivered: Boolean(m.delivered),
+        editedAt: Object.prototype.hasOwnProperty.call(m, 'editedAt') ? (m.editedAt ?? null) : null,
+        deleted,
         sealed: true
       };
     });
@@ -156,10 +173,53 @@ export async function loadPrivateChats(myPeerId) {
       timestamp: m.timestamp,
       delivered: false,
       queued: true,
+      editedAt: null,
+      deleted: false,
       sealed: false
     }));
 
-    const allMessages = [...messages, ...queuedInMemory].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+    // Load queued edit/delete actions (used to flush once session is confirmed).
+    let queuedActions;
+    try {
+      queuedActions = await getQueuedActionsForChat(c.id);
+    } catch {
+      queuedActions = [];
+    }
+
+    let allMessages = [...messages, ...queuedInMemory].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+
+    // Apply queued local edits/deletes to the in-memory messages so they survive reloads
+    // even when we cannot encrypt/flush yet (e.g. peer offline or session unconfirmed).
+    for (const action of queuedActions ?? []) {
+      if (!action?.messageId) continue;
+      const mid = String(action.messageId);
+      const idx = allMessages.findIndex((m) => m?.id === mid && m?.direction === 'sent');
+      if (idx < 0) continue;
+      const cur = allMessages[idx];
+      if (action.kind === 'delete') {
+        allMessages = allMessages.slice();
+        allMessages[idx] = { ...cur, deleted: true, text: PRIVATE_DELETED_PLACEHOLDER };
+        continue;
+      }
+      if (action.kind === 'edit') {
+        const plaintext = typeof action.plaintext === 'string' ? action.plaintext : cur.text;
+        const editedAt = typeof action.editedAt === 'number' ? action.editedAt : cur.editedAt ?? null;
+        /** @type {any[]|null} */
+        let replies = cur.replies ?? null;
+        if (typeof action?.repliesJson === 'string' && action.repliesJson.trim().length > 0) {
+          try {
+            const parsed = JSON.parse(action.repliesJson);
+            replies = Array.isArray(parsed) ? parsed : null;
+          } catch {
+            // keep existing
+          }
+        } else if (Object.prototype.hasOwnProperty.call(action, 'repliesJson')) {
+          replies = null;
+        }
+        allMessages = allMessages.slice();
+        allMessages[idx] = { ...cur, deleted: false, text: plaintext, editedAt, replies };
+      }
+    }
 
     chatMap.set(c.id, {
       id: c.id,
@@ -174,6 +234,7 @@ export async function loadPrivateChats(myPeerId) {
       isOnline: false,
       keyExchangeState: 'idle',
       pendingReplies: [],
+      queuedActions,
       __loaded: true
     });
   }
@@ -223,11 +284,15 @@ export async function loadChatMessages(chatId, sessionId) {
   const decrypted = await Promise.all(
     rows.map(async (m) => {
       let text = '🔒 Encrypted message — start a new session to decrypt';
+      let editedAt = Object.prototype.hasOwnProperty.call(m, 'editedAt') ? (m.editedAt ?? null) : null;
       /** @type {any[]|null} */
       let replies = null;
       if (canDecrypt) {
         try {
-          text = await decryptForSession(sessionId, m.ciphertext, m.iv);
+          const raw = await decryptForSession(sessionId, m.ciphertext, m.iv);
+          const decoded = decodePrivateBody(raw);
+          text = decoded.text;
+          editedAt = decoded.editedAt ?? editedAt;
         } catch {
           // keep placeholder
         }
@@ -249,7 +314,10 @@ export async function loadChatMessages(chatId, sessionId) {
         repliesCiphertext: typeof m?.replies?.ciphertext === 'string' ? m.replies.ciphertext : null,
         repliesIv: typeof m?.replies?.iv === 'string' ? m.replies.iv : null,
         timestamp: m.timestamp,
-        delivered: Boolean(m.delivered)
+        delivered: Boolean(m.delivered),
+        editedAt,
+        deleted: Boolean(m.deleted),
+        sealed: !canDecrypt && m.direction !== 'sent'
       };
     })
   );
@@ -281,13 +349,17 @@ export async function decryptSealedMessages(chatId, sessionId) {
 
   const decrypted = await Promise.all(
     chat.messages.map(async (m) => {
+      // Deleted messages always render the placeholder; no need to decrypt.
+      if (m?.deleted) return { ...m, text: PRIVATE_DELETED_PLACEHOLDER, sealed: false };
+
       // Only attempt to decrypt received sealed messages.
       const hasRepliesCipher = typeof m?.repliesCiphertext === 'string' && typeof m?.repliesIv === 'string';
 
       // Decrypt message text (received sealed) when possible.
       if (m?.sealed && m.direction !== 'sent' && typeof m.ciphertext === 'string' && typeof m.iv === 'string') {
         try {
-          const text = await decryptForSession(sessionId, m.ciphertext, m.iv);
+          const rawText = await decryptForSession(sessionId, m.ciphertext, m.iv);
+          const decoded = decodePrivateBody(rawText);
           // If we can decrypt the message, also try decrypting replies.
           let replies = m?.replies ?? null;
           if (hasRepliesCipher) {
@@ -299,7 +371,7 @@ export async function decryptSealedMessages(chatId, sessionId) {
               // ignore
             }
           }
-          return { ...m, text, replies, sealed: false };
+          return { ...m, text: decoded.text, editedAt: decoded.editedAt ?? (m.editedAt ?? null), replies, sealed: false };
         } catch (err) {
           if (!isSessionKeyMismatch(err)) {
             console.error(
@@ -347,13 +419,13 @@ export function addOutgoingMessage(chatId, { id, text, timestamp, replies = null
     if (!chat) return;
     const messages = [
       ...chat.messages,
-      { id, direction: 'sent', text, replies, timestamp, delivered: false, queued: false, sealed: false }
+      { id, direction: 'sent', text, replies, timestamp, delivered: false, queued: false, editedAt: null, deleted: false, sealed: false }
     ];
     chats.set(chatId, { ...chat, messages, lastMessage: text, lastActivity: timestamp });
   });
 }
 
-export function addIncomingMessage(chatId, { id, text, timestamp, replies = null, ciphertext = null, iv = null, sealed = false, repliesCiphertext = null, repliesIv = null }) {
+export function addIncomingMessage(chatId, { id, text, timestamp, replies = null, ciphertext = null, iv = null, sealed = false, repliesCiphertext = null, repliesIv = null, editedAt = null, deleted = false }) {
   update((s) => {
     const next = new Map(s.chats);
     const chat = next.get(chatId);
@@ -361,7 +433,7 @@ export function addIncomingMessage(chatId, { id, text, timestamp, replies = null
 
     const messages = [
       ...chat.messages,
-      { id, direction: 'received', text, replies, ciphertext, iv, repliesCiphertext, repliesIv, timestamp, delivered: true, sealed: Boolean(sealed) }
+      { id, direction: 'received', text, replies, ciphertext, iv, repliesCiphertext, repliesIv, timestamp, delivered: true, editedAt, deleted: Boolean(deleted), sealed: Boolean(sealed) }
     ];
     const unreadInc = s.activeChatId === chatId ? 0 : 1;
     next.set(chatId, {
@@ -456,6 +528,7 @@ export async function deleteChatFromStore(chatId) {
   try {
     await deletePrivateChat(chatId);
     await clearQueuedMessagesForChat(chatId);
+    await clearQueuedActionsForChat(chatId);
   } catch (err) {
     console.error('Failed to delete private chat from DB', err);
   }
@@ -500,7 +573,9 @@ export function addPendingReply(chatId, message) {
         messageId: mid,
         authorUsername: String(message?.username ?? '').trim() || 'unknown',
         authorColor: String(message?.color ?? '').trim() || 'hsl(0, 0%, 65%)',
-        textSnapshot: snapshotText(message?.text, 120)
+        textSnapshot: snapshotText(message?.text, 120),
+        timestamp: typeof message?.timestamp === 'number' ? message.timestamp : 0,
+        deleted: Boolean(message?.deleted)
       }
     ];
     chats.set(cid, { ...chat, pendingReplies: next });
@@ -534,4 +609,154 @@ export function clearPendingReplies(chatId) {
     if (!chat) return;
     chats.set(cid, { ...chat, pendingReplies: [] });
   });
+}
+
+/**
+ * Replace pending replies list for a given chat (used by edit mode).
+ * @param {string} chatId
+ * @param {any[]|null} list
+ */
+export function setPendingReplies(chatId, list) {
+  const cid = String(chatId ?? '').trim();
+  if (!cid) return;
+  const next = Array.isArray(list) ? list : [];
+  withChat((chats) => {
+    const chat = chats.get(cid);
+    if (!chat) return;
+    chats.set(cid, {
+      ...chat,
+      pendingReplies: next
+        .filter((r) => r && typeof r === 'object' && typeof r.messageId === 'string' && r.messageId.trim().length > 0)
+        .map((r) => ({
+          messageId: String(r.messageId),
+          authorUsername: String(r.authorUsername ?? '').trim() || 'unknown',
+          authorColor: String(r.authorColor ?? '').trim() || 'hsl(0, 0%, 65%)',
+          textSnapshot: snapshotText(r.textSnapshot ?? '', 120),
+          timestamp: typeof r.timestamp === 'number' ? r.timestamp : 0,
+          deleted: Boolean(r.deleted)
+        }))
+    });
+  });
+}
+
+function normalizeActor(actor) {
+  return actor === 'them' ? 'them' : 'me';
+}
+
+/**
+ * Update a private message in-memory without changing its position.
+ * Returns true if applied.
+ *
+ * @param {string} chatId
+ * @param {string} messageId
+ * @param {{ text?: string, editedAt?: number|null, replies?: any[]|null, deleted?: boolean }} patch
+ * @param {'me'|'them'} actor
+ */
+export function updateMessage(chatId, messageId, patch, actor = 'me') {
+  const cid = String(chatId ?? '').trim();
+  const mid = String(messageId ?? '').trim();
+  if (!cid || !mid) return false;
+  if (!patch || typeof patch !== 'object') return false;
+  const who = normalizeActor(actor);
+
+  let applied = false;
+  withChat((chats) => {
+    const chat = chats.get(cid);
+    if (!chat) return;
+    const idx = chat.messages.findIndex((m) => m?.id === mid);
+    if (idx < 0) return;
+    const cur = chat.messages[idx];
+    // Deleted messages stay deleted; editing a deleted message is not allowed.
+    if (cur?.deleted && patch.deleted !== true) return;
+    const allowed =
+      who === 'me'
+        ? cur?.direction === 'sent'
+        : cur?.direction === 'received';
+    if (!allowed) return;
+
+    const nextMessages = chat.messages.slice();
+    nextMessages[idx] = {
+      ...cur,
+      text: Object.prototype.hasOwnProperty.call(patch, 'text') ? String(patch.text ?? '') : cur.text,
+      editedAt: Object.prototype.hasOwnProperty.call(patch, 'editedAt') ? (patch.editedAt ?? null) : cur.editedAt ?? null,
+      replies: Object.prototype.hasOwnProperty.call(patch, 'replies')
+        ? (Array.isArray(patch.replies) && patch.replies.length > 0 ? patch.replies : null)
+        : cur.replies ?? null,
+      deleted: Object.prototype.hasOwnProperty.call(patch, 'deleted') ? Boolean(patch.deleted) : Boolean(cur.deleted),
+      ciphertext: Object.prototype.hasOwnProperty.call(patch, 'ciphertext') ? patch.ciphertext : cur.ciphertext,
+      iv: Object.prototype.hasOwnProperty.call(patch, 'iv') ? patch.iv : cur.iv,
+      repliesCiphertext: Object.prototype.hasOwnProperty.call(patch, 'repliesCiphertext') ? patch.repliesCiphertext : cur.repliesCiphertext,
+      repliesIv: Object.prototype.hasOwnProperty.call(patch, 'repliesIv') ? patch.repliesIv : cur.repliesIv,
+      sealed: Object.prototype.hasOwnProperty.call(patch, 'sealed') ? Boolean(patch.sealed) : Boolean(cur.sealed)
+    };
+    chats.set(cid, { ...chat, messages: nextMessages });
+    applied = true;
+  });
+  return applied;
+}
+
+/**
+ * Soft-delete a private message in-memory.
+ * Returns true if applied.
+ *
+ * @param {string} chatId
+ * @param {string} messageId
+ * @param {'me'|'them'} actor
+ */
+export function deleteMessage(chatId, messageId, actor = 'me') {
+  return updateMessage(chatId, messageId, { deleted: true, text: PRIVATE_DELETED_PLACEHOLDER }, actor);
+}
+
+/**
+ * Cascade update quoted reply cards for all messages in a chat that cited `originalMessageId`.
+ * Returns count of messages updated in-memory.
+ *
+ * @param {string} chatId
+ * @param {string} originalMessageId
+ * @param {{ newSnapshot?: string, deleted?: boolean }} change
+ */
+export function cascadeUpdateCitations(chatId, originalMessageId, change) {
+  const cid = String(chatId ?? '').trim();
+  const target = String(originalMessageId ?? '').trim();
+  if (!cid || !target) return 0;
+  const markDeleted = Boolean(change?.deleted);
+  const newSnap = typeof change?.newSnapshot === 'string' ? change.newSnapshot : null;
+
+  let touched = 0;
+  withChat((chats) => {
+    const chat = chats.get(cid);
+    if (!chat) return;
+    let any = false;
+    const nextMessages = chat.messages.map((m) => {
+      const replies = Array.isArray(m?.replies) ? m.replies : null;
+      if (!replies) return m;
+      let changed = false;
+      const updated = replies.map((r) => {
+        if (!r || typeof r !== 'object') return r;
+        if (String(r.messageId ?? '') !== target) return r;
+        changed = true;
+        if (markDeleted) return { ...r, deleted: true, textSnapshot: CITED_DELETED_PLACEHOLDER };
+        if (newSnap !== null) return { ...r, deleted: false, textSnapshot: snapshotText(newSnap, 120) };
+        return r;
+      });
+      if (!changed) return m;
+      any = true;
+      touched += 1;
+      return { ...m, replies: updated };
+    });
+    if (!any) return;
+
+    // Keep composer pending previews in sync too.
+    const pending = Array.isArray(chat.pendingReplies) ? chat.pendingReplies : [];
+    const nextPending = pending.map((r) => {
+      if (!r || typeof r !== 'object') return r;
+      if (String(r.messageId ?? '') !== target) return r;
+      if (markDeleted) return { ...r, deleted: true, textSnapshot: CITED_DELETED_PLACEHOLDER };
+      if (newSnap !== null) return { ...r, deleted: false, textSnapshot: snapshotText(newSnap, 120) };
+      return r;
+    });
+
+    chats.set(cid, { ...chat, messages: nextMessages, pendingReplies: nextPending });
+  });
+  return touched;
 }

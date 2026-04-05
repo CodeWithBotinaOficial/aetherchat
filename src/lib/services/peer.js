@@ -1,9 +1,18 @@
 import { get, writable } from 'svelte/store';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
-import { addGlobalMessage, globalMessages as globalMessagesStore } from '$lib/stores/chatStore.js';
+import {
+  GLOBAL_DELETED_PLACEHOLDER,
+  addGlobalMessage,
+  cascadeUpdateCitations as cascadeGlobalCitations,
+  deleteMessage as deleteGlobalMessageInStore,
+  globalMessages as globalMessagesStore,
+  persistMessagePatchWithCascade as persistGlobalPatchWithCascade,
+  updateMessage as updateGlobalMessageInStore
+} from '$lib/stores/chatStore.js';
 import {
   db,
   getFullUsernameRegistry,
+  getGlobalMessage,
   getGlobalMessages,
   getKnownPeers,
   isUsernameTaken,
@@ -26,28 +35,38 @@ import {
 import {
   addIncomingMessage,
   addOutgoingMessage,
+  cascadeUpdateCitations as cascadePrivateCitations,
   deleteChatFromStore,
+  deleteMessage as deletePrivateMessageInStore,
   decryptSealedMessages,
   markDelivered,
   openChat,
   privateChatStore,
+  PRIVATE_DELETED_PLACEHOLDER,
   setChatOnlineStatus,
   setKeyExchangeState,
+  updateMessage as updatePrivateMessageInStore,
   updateMessageQueued,
   upsertChatEntry
 } from '$lib/stores/privateChatStore.js';
 import { activeTab } from '$lib/stores/navigationStore.js';
 import {
   getPrivateChat,
+  getQueuedActionsForChat,
+  deleteQueuedAction,
   deleteQueuedMessage,
   getQueuedMessagesForChat,
+  saveQueuedAction,
   saveSentMessagePlaintext,
   markMessageDelivered,
   saveQueuedMessage,
   savePrivateMessage as saveEncryptedPrivateMessage,
+  updatePrivateMessage,
   updateChatMeta,
   upsertPrivateChat
 } from '$lib/services/db.js';
+import { decodePrivateBody, encodePrivateBody } from '$lib/utils/privateMessageCodec.js';
+import { snapshotText } from '$lib/utils/replies.js';
 
 // PeerJS public server has limitations (roughly ~50 connections per peer ID).
 // This MVP uses it for discovery and direct browser-to-browser messaging.
@@ -105,6 +124,7 @@ function getPeerJsDebugLevel() {
 const RECONNECT_DELAYS = [2000, 5000, 10000];
 const MAX_RECONNECT_ATTEMPTS = 3;
 const JOIN_LOBBY_TIMEOUT_MS = 6000;
+const GLOBAL_EDIT_WINDOW_MS = 30 * 60 * 1000;
 // PeerJS public server can keep an ID "taken" for a bit after hard-close; retry with backoff.
 // First attempts stay under ~5s total, then continue backing off to avoid thrashing.
 const UNAVAILABLE_ID_RETRY_DELAYS_MS = [250, 500, 900, 1500, 2200, 3500, 5500, 8500, 13000];
@@ -241,7 +261,7 @@ function setCachedAvatar(peerId, avatarBase64) {
 }
 
 /**
- * @typedef {'HANDSHAKE'|'HANDSHAKE_ACK'|'GLOBAL_MSG'|'PRIVATE_KEY_EXCHANGE'|'PRIVATE_KEY_EXCHANGE_ACK'|'PRIVATE_MSG'|'PRIVATE_MSG_ACK'|'PRIVATE_CHAT_CLOSED'|'USER_LIST'|'PEER_DISCONNECT'|'LOBBY_JOIN'|'NETWORK_STATE'|'NEW_PEER'|'USERNAME_CHECK'|'USERNAME_TAKEN'|'USERNAME_REGISTERED'|'STATE_DIGEST'|'SYNC_REQUEST'|'SYNC_RESPONSE'|'LOBBY_HOST_CHANGED'} MessageType
+ * @typedef {'HANDSHAKE'|'HANDSHAKE_ACK'|'GLOBAL_MSG'|'GLOBAL_MSG_EDIT'|'GLOBAL_MSG_DELETE'|'PRESENCE_ANNOUNCE'|'HEARTBEAT'|'PRIVATE_KEY_EXCHANGE'|'PRIVATE_KEY_EXCHANGE_ACK'|'PRIVATE_MSG'|'PRIVATE_MSG_EDIT'|'PRIVATE_MSG_DELETE'|'PRIVATE_MSG_ACK'|'PRIVATE_CHAT_CLOSED'|'USER_LIST'|'PEER_DISCONNECT'|'LOBBY_JOIN'|'NETWORK_STATE'|'NEW_PEER'|'USERNAME_CHECK'|'USERNAME_TAKEN'|'USERNAME_REGISTERED'|'STATE_DIGEST'|'SYNC_REQUEST'|'SYNC_RESPONSE'|'LOBBY_HOST_CHANGED'} MessageType
  */
 
 /**
@@ -292,6 +312,8 @@ const lobbyPeerList = new Map(); // peerId -> peer info (main peer IDs)
 
 /** @type {Map<string, ProtocolEnvelope>} */
 const pendingGlobalOutbox = new Map(); // messageId -> envelope (flush when peers connect)
+/** @type {Map<string, ProtocolEnvelope>} */
+const pendingGlobalActionOutbox = new Map(); // actionKey -> envelope (flush when peers connect)
 
 let gossipIntervalId = null;
 let heartbeatIntervalId = null;
@@ -440,11 +462,15 @@ const ALLOWED_TYPES = new Set([
   'HANDSHAKE',
   'HANDSHAKE_ACK',
   'GLOBAL_MSG',
+  'GLOBAL_MSG_EDIT',
+  'GLOBAL_MSG_DELETE',
   'PRESENCE_ANNOUNCE',
   'HEARTBEAT',
   'PRIVATE_KEY_EXCHANGE',
   'PRIVATE_KEY_EXCHANGE_ACK',
   'PRIVATE_MSG',
+  'PRIVATE_MSG_EDIT',
+  'PRIVATE_MSG_DELETE',
   'PRIVATE_MSG_ACK',
   'PRIVATE_CHAT_CLOSED',
   'USER_LIST',
@@ -465,6 +491,8 @@ const REQUIRES_TO = new Set([
   'PRIVATE_KEY_EXCHANGE',
   'PRIVATE_KEY_EXCHANGE_ACK',
   'PRIVATE_MSG',
+  'PRIVATE_MSG_EDIT',
+  'PRIVATE_MSG_DELETE',
   'PRIVATE_MSG_ACK',
   'PRIVATE_CHAT_CLOSED'
 ]);
@@ -859,6 +887,10 @@ function flushGlobalOutbox() {
     for (const entry of openPeers) safeSend(entry.connection, env);
     pendingGlobalOutbox.delete(msgId);
   }
+  for (const [key, env] of pendingGlobalActionOutbox.entries()) {
+    for (const entry of openPeers) safeSend(entry.connection, env);
+    pendingGlobalActionOutbox.delete(key);
+  }
 }
 
 export async function flushQueueForPeer(theirPeerId) {
@@ -892,11 +924,38 @@ export async function flushQueueForPeer(theirPeerId) {
       console.error('getQueuedMessagesForChat failed', err);
       continue;
     }
-    if (!queued || queued.length === 0) continue;
+    /** @type {import('$lib/services/db.js').QueuedAction[] | undefined} */
+    let queuedActions;
+    try {
+      queuedActions = await getQueuedActionsForChat(chatId);
+    } catch (err) {
+      console.error('getQueuedActionsForChat failed', err);
+      queuedActions = [];
+    }
+
+    const hasQueuedMsgs = Boolean(queued && queued.length > 0);
+    const hasQueuedActions = Boolean(queuedActions && queuedActions.length > 0);
+    if (!hasQueuedMsgs && !hasQueuedActions) continue;
+
+    // Deletes can be sent without an active session.
+    for (const action of queuedActions ?? []) {
+      if (action?.kind !== 'delete') continue;
+      if (action?.theirPeerId !== theirPeerId) continue;
+      try {
+        sendToPeer(
+          theirPeerId,
+          buildDirectMessage('PRIVATE_MSG_DELETE', myPeerId, profile, theirPeerId, { messageId: action.messageId }, Date.now())
+        );
+        await deleteQueuedAction(action.id);
+      } catch (err) {
+        console.error('Failed to flush queued delete action', err);
+      }
+    }
 
 	    const exchangeInProgress = chat?.keyExchangeState === 'initiated' || chat?.keyExchangeState === 'completing';
 	    const canEncryptNow = isSessionActive(chatId) && isPrivateSessionConfirmed(chatId);
-	    if (!canEncryptNow) {
+	    const hasPendingEdits = (queuedActions ?? []).some((a) => a?.kind === 'edit');
+	    if (!canEncryptNow && (hasQueuedMsgs || hasPendingEdits)) {
 	      // Need a fresh key exchange. Even if we have a locally-resumed key ring, the remote peer may not.
 	      if (!exchangeInProgress) {
 	        try {
@@ -917,9 +976,10 @@ export async function flushQueueForPeer(theirPeerId) {
 	    }
 
     // Session is active: encrypt and send each queued message, then remove it from the queue.
-    for (const msg of queued) {
+    for (const msg of queued ?? []) {
       try {
-        const { ciphertext, iv } = await encryptForSession(chatId, msg.plaintext);
+        const body = encodePrivateBody(msg.plaintext, null);
+        const { ciphertext, iv } = await encryptForSession(chatId, body);
         let repliesEnc = null;
         if (typeof msg?.repliesJson === 'string' && msg.repliesJson.trim().length > 0) {
           try {
@@ -952,6 +1012,175 @@ export async function flushQueueForPeer(theirPeerId) {
         console.error('Failed to flush queued message', err);
       }
     }
+
+    // Flush queued edit actions (requires active confirmed session).
+    for (const action of queuedActions ?? []) {
+      if (action?.kind !== 'edit') continue;
+      if (action?.theirPeerId !== theirPeerId) continue;
+      if (typeof action?.plaintext !== 'string') continue;
+      try {
+        const body = encodePrivateBody(action.plaintext, typeof action.editedAt === 'number' ? action.editedAt : null);
+        const { ciphertext, iv } = await encryptForSession(chatId, body);
+        let repliesEnc = null;
+        if (typeof action?.repliesJson === 'string' && action.repliesJson.trim().length > 0) {
+          try {
+            const enc = await encryptForSession(chatId, action.repliesJson);
+            repliesEnc = { ciphertext: enc.ciphertext, iv: enc.iv };
+          } catch (err) {
+            console.error('Failed to encrypt queued edit replies', err);
+            repliesEnc = null;
+          }
+        }
+
+        await updatePrivateMessage(action.messageId, {
+          ciphertext,
+          iv,
+          replies: repliesEnc,
+          editedAt: typeof action.editedAt === 'number' ? action.editedAt : null,
+          deleted: false
+        });
+
+        sendToPeer(
+          theirPeerId,
+          buildDirectMessage(
+            'PRIVATE_MSG_EDIT',
+            myPeerId,
+            profile,
+            theirPeerId,
+            { messageId: action.messageId, ciphertext, iv, replies: repliesEnc, editedAt: action.editedAt ?? null },
+            Date.now()
+          )
+        );
+        await deleteQueuedAction(action.id);
+      } catch (err) {
+        console.error('Failed to flush queued edit action', err);
+      }
+    }
+  }
+}
+
+const PRIVATE_CITED_DELETED_PLACEHOLDER = '[ Original message deleted ]';
+
+/**
+ * Persist cascade updates for private chat reply cards in IndexedDB.
+ * Replies are stored encrypted per-message; this decrypts + re-encrypts the bundle.
+ *
+ * @param {string} chatId
+ * @param {string} originalMessageId
+ * @param {{ newSnapshot?: string, deleted?: boolean }} change
+ */
+async function persistPrivateCitationCascade(chatId, originalMessageId, change) {
+  const cid = String(chatId ?? '').trim();
+  const target = String(originalMessageId ?? '').trim();
+  if (!cid || !target) return;
+  const markDeleted = Boolean(change?.deleted);
+  const newSnap = typeof change?.newSnapshot === 'string' ? change.newSnapshot : null;
+  if (!markDeleted && newSnap === null) return;
+
+  // Best-effort: ensure a key ring is available.
+  try {
+    if (!isSessionActive(cid)) await resumeSession(cid);
+  } catch {
+    // ignore
+  }
+  if (!isSessionActive(cid)) return;
+
+  // Update stored privateMessages reply bundles.
+  try {
+    if (!db?.privateMessages?.where) return;
+    const rows = await db.privateMessages.where('chatId').equals(cid).toArray();
+    for (const row of rows) {
+      const enc = row?.replies;
+      const repliesCiphertext = typeof enc?.ciphertext === 'string' ? enc.ciphertext : null;
+      const repliesIv = typeof enc?.iv === 'string' ? enc.iv : null;
+      if (!repliesCiphertext || !repliesIv) continue;
+      let parsed;
+      try {
+        const raw = await decryptForSession(cid, repliesCiphertext, repliesIv);
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(parsed)) continue;
+
+      let changed = false;
+      const updated = parsed.map((r) => {
+        if (!r || typeof r !== 'object') return r;
+        if (String(r.messageId ?? '') !== target) return r;
+        changed = true;
+        if (markDeleted) return { ...r, deleted: true, textSnapshot: PRIVATE_CITED_DELETED_PLACEHOLDER };
+        return { ...r, deleted: false, textSnapshot: snapshotText(newSnap, 120) };
+      });
+      if (!changed) continue;
+
+      try {
+        const enc2 = await encryptForSession(cid, JSON.stringify(updated));
+        await updatePrivateMessage(row.id, { replies: { ciphertext: enc2.ciphertext, iv: enc2.iv } });
+      } catch {
+        // ignore per-row failure
+      }
+    }
+  } catch (err) {
+    console.error('persistPrivateCitationCascade privateMessages scan failed', err);
+  }
+
+  // Update queuedMessages + queuedActions reply previews (plaintext, local-only).
+  try {
+    if (db?.queuedMessages?.where) {
+      const rows = await db.queuedMessages.where('chatId').equals(cid).toArray();
+      for (const row of rows) {
+        const raw = typeof row?.repliesJson === 'string' ? row.repliesJson : '';
+        if (!raw) continue;
+        let parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          continue;
+        }
+        if (!Array.isArray(parsed)) continue;
+        let changed = false;
+        const updated = parsed.map((r) => {
+          if (!r || typeof r !== 'object') return r;
+          if (String(r.messageId ?? '') !== target) return r;
+          changed = true;
+          if (markDeleted) return { ...r, deleted: true, textSnapshot: PRIVATE_CITED_DELETED_PLACEHOLDER };
+          return { ...r, deleted: false, textSnapshot: snapshotText(newSnap, 120) };
+        });
+        if (!changed) continue;
+        await db.queuedMessages.update(row.id, { repliesJson: JSON.stringify(updated) });
+      }
+    }
+  } catch (err) {
+    console.error('persistPrivateCitationCascade queuedMessages failed', err);
+  }
+
+  try {
+    if (db?.queuedActions?.where) {
+      const rows = await db.queuedActions.where('chatId').equals(cid).toArray();
+      for (const row of rows) {
+        const raw = typeof row?.repliesJson === 'string' ? row.repliesJson : '';
+        if (!raw) continue;
+        let parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          continue;
+        }
+        if (!Array.isArray(parsed)) continue;
+        let changed = false;
+        const updated = parsed.map((r) => {
+          if (!r || typeof r !== 'object') return r;
+          if (String(r.messageId ?? '') !== target) return r;
+          changed = true;
+          if (markDeleted) return { ...r, deleted: true, textSnapshot: PRIVATE_CITED_DELETED_PLACEHOLDER };
+          return { ...r, deleted: false, textSnapshot: snapshotText(newSnap, 120) };
+        });
+        if (!changed) continue;
+        await db.queuedActions.update(row.id, { repliesJson: JSON.stringify(updated) });
+      }
+    }
+  } catch (err) {
+    console.error('persistPrivateCitationCascade queuedActions failed', err);
   }
 }
 
@@ -1876,6 +2105,58 @@ export async function handleMessage(msg, fromConn, profile) {
     return;
   }
 
+  if (msg.type === 'GLOBAL_MSG_EDIT') {
+    const id = String(msg.payload?.messageId ?? '').trim();
+    const text = typeof msg.payload?.text === 'string' ? msg.payload.text.trim() : '';
+    const replies = Array.isArray(msg.payload?.replies) ? msg.payload.replies : null;
+    const editedAt = typeof msg.payload?.editedAt === 'number' ? msg.payload.editedAt : null;
+    if (!id || !text) return;
+
+	    const original = await getGlobalMessage(id);
+	    if (!original) return;
+	    if (String(original.username ?? '') !== String(msg.from.username ?? '')) return;
+	    if (original.deleted) return;
+    const originalTs = typeof original.timestamp === 'number' ? original.timestamp : 0;
+    if (Date.now() - originalTs > GLOBAL_EDIT_WINDOW_MS) return;
+
+    // In-memory update (keeps position).
+    updateGlobalMessageInStore(id, { text, editedAt: editedAt ?? Date.now(), replies }, msg.from.username);
+    cascadeGlobalCitations(id, { newSnapshot: text });
+
+    // Persist + cascade in DB.
+    try {
+      await persistGlobalPatchWithCascade(
+        id,
+        { text, editedAt: editedAt ?? Date.now(), replies },
+        { cascadeFromText: text }
+      );
+    } catch (err) {
+      console.error('GLOBAL_MSG_EDIT persist failed', err);
+    }
+    return;
+  }
+
+  if (msg.type === 'GLOBAL_MSG_DELETE') {
+    const id = String(msg.payload?.messageId ?? '').trim();
+    if (!id) return;
+
+	    const original = await getGlobalMessage(id);
+	    if (!original) return;
+	    if (String(original.username ?? '') !== String(msg.from.username ?? '')) return;
+	    if (original.deleted) return;
+    const originalTs = typeof original.timestamp === 'number' ? original.timestamp : 0;
+    if (Date.now() - originalTs > GLOBAL_EDIT_WINDOW_MS) return;
+
+    deleteGlobalMessageInStore(id, msg.from.username);
+    cascadeGlobalCitations(id, { deleted: true });
+    try {
+      await persistGlobalPatchWithCascade(id, { deleted: true, text: GLOBAL_DELETED_PLACEHOLDER }, { cascadeDeleted: true });
+    } catch (err) {
+      console.error('GLOBAL_MSG_DELETE persist failed', err);
+    }
+    return;
+  }
+
   if (msg.type === 'PRIVATE_KEY_EXCHANGE') {
 	    const myPeerId = get(peerStore).peerId;
 	    if (!myPeerId) return;
@@ -1982,7 +2263,7 @@ export async function handleMessage(msg, fromConn, profile) {
 	    return;
 	  }
 
-	  if (msg.type === 'PRIVATE_MSG') {
+  if (msg.type === 'PRIVATE_MSG') {
 	    const myPeerId = get(peerStore).peerId;
 	    if (!myPeerId) return;
 	    if (msg.to !== myPeerId) return;
@@ -2035,13 +2316,18 @@ export async function handleMessage(msg, fromConn, profile) {
 	    let sealed = true;
 	    /** @type {string|null} */
 	    let text = '🔒 Encrypted message';
+	    /** @type {number|null} */
+	    let editedAt = null;
 	    /** @type {any[]|null} */
 	    let replies = null;
 		    const repliesCiphertext = typeof repliesEnc?.ciphertext === 'string' ? repliesEnc.ciphertext : null;
 		    const repliesIv = typeof repliesEnc?.iv === 'string' ? repliesEnc.iv : null;
 		    if (isSessionActive(chatId)) {
 		      try {
-		        text = await decryptForSession(chatId, ciphertext, iv);
+		        const raw = await decryptForSession(chatId, ciphertext, iv);
+		        const decoded = decodePrivateBody(raw);
+		        text = decoded.text;
+		        editedAt = decoded.editedAt;
 		        sealed = false;
 		      } catch (err) {
 	        text = decryptFailurePlaceholder(err);
@@ -2071,7 +2357,9 @@ export async function handleMessage(msg, fromConn, profile) {
         iv,
         replies: repliesCiphertext && repliesIv ? { ciphertext: repliesCiphertext, iv: repliesIv } : null,
         timestamp: msg.timestamp ?? now,
-        delivered: true
+        delivered: true,
+        editedAt,
+        deleted: false
       });
     } catch (err) {
       console.error('savePrivateMessage failed', err);
@@ -2086,7 +2374,9 @@ export async function handleMessage(msg, fromConn, profile) {
       repliesCiphertext,
       repliesIv,
       sealed,
-      timestamp: msg.timestamp ?? now
+      timestamp: msg.timestamp ?? now,
+      editedAt,
+      deleted: false
     });
 
     try {
@@ -2104,6 +2394,133 @@ export async function handleMessage(msg, fromConn, profile) {
     sendToPeer(
       theirPeerId,
       buildDirectMessage('PRIVATE_MSG_ACK', myPeerId, profile, theirPeerId, { messageId }, Date.now())
+    );
+    return;
+  }
+
+  if (msg.type === 'PRIVATE_MSG_EDIT') {
+    const myPeerId = get(peerStore).peerId;
+    if (!myPeerId) return;
+    if (msg.to !== myPeerId) return;
+
+    const myUsername = profile?.username ?? null;
+    const theirUsername = msg.from.username;
+    if (!myUsername || myUsername === 'pre-registration') return;
+    if (!theirUsername) return;
+
+    const messageId = String(msg.payload?.messageId ?? '').trim();
+    const ciphertext = msg.payload?.ciphertext;
+    const iv = msg.payload?.iv;
+    const repliesEnc = msg.payload?.replies ?? null;
+    const payloadEditedAt = typeof msg.payload?.editedAt === 'number' ? msg.payload.editedAt : null;
+    if (!messageId) return;
+    if (typeof ciphertext !== 'string' || typeof iv !== 'string') return;
+
+    const chatId = buildSessionId(myUsername, theirUsername);
+
+    // Author verification: only allow edits on messages we stored as received in this chat.
+	    const existingRow = await db.privateMessages.get(messageId);
+	    if (!existingRow) return;
+	    if (existingRow.chatId !== chatId) return;
+	    if (existingRow.direction !== 'received') return;
+	    if (existingRow.deleted) return;
+
+    // Need a decryptable session key; reject silently on failure.
+    try {
+      if (!isSessionActive(chatId)) await resumeSession(chatId);
+    } catch {
+      // ignore
+    }
+    if (!isSessionActive(chatId)) return;
+
+	    let text;
+	    let editedAt;
+    try {
+      const raw = await decryptForSession(chatId, ciphertext, iv);
+      const decoded = decodePrivateBody(raw);
+      text = decoded.text;
+      editedAt = decoded.editedAt ?? payloadEditedAt;
+    } catch (err) {
+      if (!isSessionKeyMismatch(err)) console.error('PRIVATE_MSG_EDIT decrypt failed', err);
+      return;
+    }
+
+    /** @type {any[]|null} */
+    let replies = null;
+    const repliesCiphertext = typeof repliesEnc?.ciphertext === 'string' ? repliesEnc.ciphertext : null;
+    const repliesIv = typeof repliesEnc?.iv === 'string' ? repliesEnc.iv : null;
+    if (repliesCiphertext && repliesIv) {
+      try {
+        const raw = await decryptForSession(chatId, repliesCiphertext, repliesIv);
+        const parsed = JSON.parse(raw);
+        replies = Array.isArray(parsed) ? parsed : null;
+      } catch (err) {
+        if (!isSessionKeyMismatch(err)) console.error('PRIVATE_MSG_EDIT replies decrypt failed', err);
+        replies = null;
+      }
+    }
+
+    try {
+      await updatePrivateMessage(messageId, {
+        ciphertext,
+        iv,
+        replies: repliesCiphertext && repliesIv ? { ciphertext: repliesCiphertext, iv: repliesIv } : null,
+        editedAt: typeof editedAt === 'number' ? editedAt : null,
+        deleted: false
+      });
+    } catch (err) {
+      console.error('PRIVATE_MSG_EDIT persist failed', err);
+    }
+
+    updatePrivateMessageInStore(chatId, messageId, {
+      text: typeof text === 'string' ? text : '🔒 Encrypted message',
+      editedAt: typeof editedAt === 'number' ? editedAt : null,
+      replies,
+      ciphertext,
+      iv,
+      repliesCiphertext,
+      repliesIv,
+      sealed: false,
+      deleted: false
+    }, 'them');
+    cascadePrivateCitations(chatId, messageId, { newSnapshot: typeof text === 'string' ? text : '' });
+    persistPrivateCitationCascade(chatId, messageId, { newSnapshot: typeof text === 'string' ? text : '' }).catch((err) =>
+      console.error('persistPrivateCitationCascade (recv edit) failed', err)
+    );
+
+    return;
+  }
+
+  if (msg.type === 'PRIVATE_MSG_DELETE') {
+    const myPeerId = get(peerStore).peerId;
+    if (!myPeerId) return;
+    if (msg.to !== myPeerId) return;
+
+    const myUsername = profile?.username ?? null;
+    const theirUsername = msg.from.username;
+    if (!myUsername || myUsername === 'pre-registration') return;
+    if (!theirUsername) return;
+
+    const messageId = String(msg.payload?.messageId ?? '').trim();
+    if (!messageId) return;
+
+    const chatId = buildSessionId(myUsername, theirUsername);
+
+    const existingRow = await db.privateMessages.get(messageId);
+    if (!existingRow) return;
+    if (existingRow.chatId !== chatId) return;
+    if (existingRow.direction !== 'received') return;
+
+    try {
+      await updatePrivateMessage(messageId, { deleted: true });
+    } catch (err) {
+      console.error('PRIVATE_MSG_DELETE persist failed', err);
+    }
+
+    deletePrivateMessageInStore(chatId, messageId, 'them');
+    cascadePrivateCitations(chatId, messageId, { deleted: true });
+    persistPrivateCitationCascade(chatId, messageId, { deleted: true }).catch((err) =>
+      console.error('persistPrivateCitationCascade (recv delete) failed', err)
     );
     return;
   }
@@ -2412,6 +2829,291 @@ export async function broadcastGlobalMessage(text, profile, replies = null) {
 }
 
 /**
+ * Edit an existing global chat message (local + broadcast).
+ * Enforces: own message only, within 30 minutes, not deleted.
+ *
+ * @param {string} messageId
+ * @param {string} text
+ * @param {UserProfile} profile
+ * @param {any[]|null} [replies=null]
+ */
+export async function broadcastGlobalMessageEdit(messageId, text, profile, replies = null) {
+  const id = String(messageId ?? '').trim();
+  if (!id) return;
+  if (!profile?.username || profile.username === 'pre-registration') return;
+
+  const trimmed = String(text ?? '').trim();
+  if (!trimmed) return;
+
+  const original = await getGlobalMessage(id);
+  if (!original) return;
+  if (String(original.username ?? '') !== profile.username) return;
+  if (original.deleted) return;
+  if (Date.now() - (typeof original.timestamp === 'number' ? original.timestamp : 0) > GLOBAL_EDIT_WINDOW_MS) return;
+
+  const editedAt = Date.now();
+  const safeReplies = Array.isArray(replies) && replies.length > 0 ? replies : null;
+
+  // Local update (optimistic but persisted).
+  updateGlobalMessageInStore(id, { text: trimmed, editedAt, replies: safeReplies }, profile.username);
+  cascadeGlobalCitations(id, { newSnapshot: trimmed });
+  await persistGlobalPatchWithCascade(id, { text: trimmed, editedAt, replies: safeReplies }, { cascadeFromText: trimmed });
+
+  const stateAfter = get(peerStore);
+  const myPeerId = stateAfter.peerId;
+  if (!myPeerId) return;
+
+  const envelope = buildMessage(
+    'GLOBAL_MSG_EDIT',
+    myPeerId,
+    profile,
+    { messageId: id, text: trimmed, replies: safeReplies, editedAt },
+    Date.now()
+  );
+
+  const openPeers = [...stateAfter.connectedPeers.values()].filter((e) => e.connection?.open !== false);
+  if (openPeers.length === 0) {
+    pendingGlobalActionOutbox.set(`GLOBAL_MSG_EDIT:${id}`, envelope);
+    return;
+  }
+  for (const entry of openPeers) safeSend(entry.connection, envelope);
+}
+
+/**
+ * Delete an existing global chat message (local + broadcast).
+ * Enforces: own message only, within 30 minutes, not deleted.
+ *
+ * @param {string} messageId
+ * @param {UserProfile} profile
+ */
+export async function broadcastGlobalMessageDelete(messageId, profile) {
+  const id = String(messageId ?? '').trim();
+  if (!id) return;
+  if (!profile?.username || profile.username === 'pre-registration') return;
+
+  const original = await getGlobalMessage(id);
+  if (!original) return;
+  if (String(original.username ?? '') !== profile.username) return;
+  if (original.deleted) return;
+  if (Date.now() - (typeof original.timestamp === 'number' ? original.timestamp : 0) > GLOBAL_EDIT_WINDOW_MS) return;
+
+  deleteGlobalMessageInStore(id, profile.username);
+  cascadeGlobalCitations(id, { deleted: true });
+  await persistGlobalPatchWithCascade(id, { deleted: true, text: GLOBAL_DELETED_PLACEHOLDER }, { cascadeDeleted: true });
+
+  const stateAfter = get(peerStore);
+  const myPeerId = stateAfter.peerId;
+  if (!myPeerId) return;
+
+  const envelope = buildMessage('GLOBAL_MSG_DELETE', myPeerId, profile, { messageId: id }, Date.now());
+  const openPeers = [...stateAfter.connectedPeers.values()].filter((e) => e.connection?.open !== false);
+  if (openPeers.length === 0) {
+    pendingGlobalActionOutbox.set(`GLOBAL_MSG_DELETE:${id}`, envelope);
+    return;
+  }
+  for (const entry of openPeers) safeSend(entry.connection, envelope);
+}
+
+/**
+ * Edit a private message authored by the local user.
+ * - If a confirmed session is active and the peer is online, encrypt and send immediately.
+ * - Otherwise, queue the edit action locally and flush when possible.
+ *
+ * @param {string} chatId
+ * @param {string} theirPeerId
+ * @param {string} messageId
+ * @param {string} text
+ * @param {any[]|null} [replies=null]
+ */
+export async function editPrivateMessage(chatId, theirPeerId, messageId, text, replies = null) {
+  const cid = String(chatId ?? '').trim();
+  const mid = String(messageId ?? '').trim();
+  if (!cid || !mid) return;
+
+  const state = get(peerStore);
+  const myPeerId = state.peerId;
+  const profile = userProfileRef ?? cachedProfile;
+  if (!profile?.username || profile.username === 'pre-registration') return;
+
+  const trimmed = String(text ?? '').trim();
+  if (!trimmed) return;
+
+  // Guard: only allow edits on our own stored "sent" messages (never received).
+  try {
+    const row = await db.privateMessages.get(mid);
+    if (!row) return;
+    if (row.chatId !== cid) return;
+    if (row.direction !== 'sent') return;
+    if (row.deleted) return;
+  } catch {
+    return;
+  }
+
+  const safeReplies = Array.isArray(replies) && replies.length > 0 ? replies : null;
+  const editedAt = Date.now();
+
+  // Local update first.
+  updatePrivateMessageInStore(cid, mid, { text: trimmed, editedAt, replies: safeReplies, deleted: false }, 'me');
+  cascadePrivateCitations(cid, mid, { newSnapshot: trimmed });
+  persistPrivateCitationCascade(cid, mid, { newSnapshot: trimmed }).catch((err) =>
+    console.error('persistPrivateCitationCascade (edit) failed', err)
+  );
+
+  // Persist local plaintext copy (sender readability) and editedAt metadata.
+  try {
+    await updatePrivateMessage(mid, { editedAt, deleted: false });
+    const row = await db.privateMessages.get(mid);
+    const ts = typeof row?.timestamp === 'number' ? row.timestamp : Date.now();
+    await saveSentMessagePlaintext({ id: mid, chatId: cid, plaintext: trimmed, timestamp: ts });
+  } catch (err) {
+    console.error('editPrivateMessage persist local failed', err);
+  }
+
+  const peerOnline = theirPeerId ? state.connectedPeers.get(theirPeerId)?.connection?.open === true : false;
+  const canEncryptNow = isSessionActive(cid) && isPrivateSessionConfirmed(cid) && peerOnline;
+  if (!canEncryptNow || !myPeerId || !theirPeerId) {
+    // Queue the action; it will be encrypted + sent on flush.
+    try {
+      const actionId = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `qa-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      await saveQueuedAction({
+        id: actionId,
+        chatId: cid,
+        theirPeerId: String(theirPeerId ?? ''),
+        kind: 'edit',
+        messageId: mid,
+        plaintext: trimmed,
+        repliesJson: safeReplies ? JSON.stringify(safeReplies) : null,
+        editedAt,
+        timestamp: Date.now()
+      });
+    } catch (err) {
+      console.error('saveQueuedAction failed', err);
+    }
+    if (peerOnline && theirPeerId) void flushQueueForPeer(theirPeerId);
+    return;
+  }
+
+  // Encrypt + send immediately.
+  try {
+    const body = encodePrivateBody(trimmed, editedAt);
+    const { ciphertext, iv } = await encryptForSession(cid, body);
+    let repliesEnc = null;
+    if (safeReplies) {
+      try {
+        const enc = await encryptForSession(cid, JSON.stringify(safeReplies));
+        repliesEnc = { ciphertext: enc.ciphertext, iv: enc.iv };
+      } catch (err) {
+        console.error('encrypt replies failed', err);
+        repliesEnc = null;
+      }
+    }
+
+    await updatePrivateMessage(mid, { ciphertext, iv, replies: repliesEnc, editedAt, deleted: false });
+    sendToPeer(
+      theirPeerId,
+      buildDirectMessage(
+        'PRIVATE_MSG_EDIT',
+        myPeerId,
+        profile,
+        theirPeerId,
+        { messageId: mid, ciphertext, iv, replies: repliesEnc, editedAt },
+        Date.now()
+      )
+    );
+  } catch (err) {
+    console.error('editPrivateMessage encrypt/send failed', err);
+    try {
+      const actionId = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `qa-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      await saveQueuedAction({
+        id: actionId,
+        chatId: cid,
+        theirPeerId,
+        kind: 'edit',
+        messageId: mid,
+        plaintext: trimmed,
+        repliesJson: safeReplies ? JSON.stringify(safeReplies) : null,
+        editedAt,
+        timestamp: Date.now()
+      });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Delete a private message authored by the local user.
+ *
+ * @param {string} chatId
+ * @param {string} theirPeerId
+ * @param {string} messageId
+ */
+export async function deletePrivateMessage(chatId, theirPeerId, messageId) {
+  const cid = String(chatId ?? '').trim();
+  const mid = String(messageId ?? '').trim();
+  if (!cid || !mid) return;
+
+  const state = get(peerStore);
+  const myPeerId = state.peerId;
+  const profile = userProfileRef ?? cachedProfile;
+  if (!profile?.username || profile.username === 'pre-registration') return;
+
+  // Guard: only allow deletes on our own stored "sent" messages (never received).
+  try {
+    const row = await db.privateMessages.get(mid);
+    if (!row) return;
+    if (row.chatId !== cid) return;
+    if (row.direction !== 'sent') return;
+    if (row.deleted) return;
+  } catch {
+    return;
+  }
+
+  // Local update first.
+  deletePrivateMessageInStore(cid, mid, 'me');
+  cascadePrivateCitations(cid, mid, { deleted: true });
+  persistPrivateCitationCascade(cid, mid, { deleted: true }).catch((err) =>
+    console.error('persistPrivateCitationCascade (delete) failed', err)
+  );
+
+  // Persist local deletion flag + placeholder in plaintext store.
+  try {
+    await updatePrivateMessage(mid, { deleted: true });
+    const row = await db.privateMessages.get(mid);
+    const ts = typeof row?.timestamp === 'number' ? row.timestamp : Date.now();
+    await saveSentMessagePlaintext({ id: mid, chatId: cid, plaintext: PRIVATE_DELETED_PLACEHOLDER, timestamp: ts });
+  } catch (err) {
+    console.error('deletePrivateMessage persist local failed', err);
+  }
+
+  const peerOnline = theirPeerId ? state.connectedPeers.get(theirPeerId)?.connection?.open === true : false;
+  if (!peerOnline || !myPeerId || !theirPeerId) {
+    try {
+      const actionId = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `qa-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      await saveQueuedAction({
+        id: actionId,
+        chatId: cid,
+        theirPeerId: String(theirPeerId ?? ''),
+        kind: 'delete',
+        messageId: mid,
+        plaintext: null,
+        repliesJson: null,
+        editedAt: null,
+        timestamp: Date.now()
+      });
+    } catch (err) {
+      console.error('saveQueuedAction failed', err);
+    }
+    return;
+  }
+
+  sendToPeer(
+    theirPeerId,
+    buildDirectMessage('PRIVATE_MSG_DELETE', myPeerId, profile, theirPeerId, { messageId: mid }, Date.now())
+  );
+}
+
+/**
  * Broadcast a one-time username registration event so all peers can update their local registry.
  * Note: in a fully decentralized system, simultaneous registrations can still conflict in rare races.
  * @param {UserProfile} profile
@@ -2587,7 +3289,8 @@ export async function sendPrivateMessage(chatId, theirPeerId, plaintext, replies
 
 	  if (sessionActive && peerOnline && isPrivateSessionConfirmed(cid)) {
 	    // Encrypt and send immediately.
-	    const { ciphertext, iv } = await encryptForSession(cid, trimmed);
+	    const body = encodePrivateBody(trimmed, null);
+	    const { ciphertext, iv } = await encryptForSession(cid, body);
 	    let repliesEnc = null;
     if (safeReplies) {
       try {

@@ -4,32 +4,37 @@
 	  import { formatMessageTime } from '$lib/utils/time.js';
 	  import { previewText } from '$lib/utils/replies.js';
 
-	  /**
-	   * @typedef {Object} Message
-	   * @property {string} [id]
-	   * @property {string} [peerId]
-	   * @property {string} username
-	   * @property {number} age
-	   * @property {string} color
-	   * @property {string} text
-	   * @property {{ messageId: string, authorUsername: string, authorColor: string, textSnapshot: string, timestamp: number }[] | null} [replies]
-	   * @property {number} timestamp
-	   * @property {string|null} [avatarBase64]
-	   * @property {'sent'|'received'} [direction]
-	   * @property {boolean} [delivered]
-	   * @property {boolean} [queued]
+		  /**
+		   * @typedef {Object} Message
+		   * @property {string} [id]
+		   * @property {string} [peerId]
+		   * @property {string} username
+		   * @property {number} age
+		   * @property {string} color
+		   * @property {string} text
+		   * @property {{ messageId: string, authorUsername: string, authorColor: string, textSnapshot: string, timestamp: number, deleted?: boolean }[] | null} [replies]
+		   * @property {number} timestamp
+		   * @property {number|null} [editedAt]
+		   * @property {boolean} [deleted]
+		   * @property {string|null} [avatarBase64]
+		   * @property {'sent'|'received'} [direction]
+		   * @property {boolean} [delivered]
+		   * @property {boolean} [queued]
 	   */
 
   /** @type {{ message: Message, isOwn: boolean }} */
-  export let message;
-  export let messageKey = '';
-  export let isOwn = false;
-  export let tooltipId = '';
+	  export let message;
+	  export let messageKey = '';
+	  export let isOwn = false;
+	  export let tooltipId = '';
+	  export let canEdit = false;
+	  export let canDelete = false;
 
   const dispatch = createEventDispatcher();
 
 	  let hovered = false;
-	  let hideTimeout = null;
+		  let hideTimeout = null;
+		  let menuOpen = false;
 
 	  let displayTime = formatMessageTime(message.timestamp);
 	  const timer = setInterval(() => {
@@ -135,10 +140,46 @@
     });
   }
 
-  function triggerReply() {
-    if (!message?.id) return;
-    dispatch('reply', { message });
-  }
+	  function triggerReply() {
+	    if (message?.deleted) return;
+	    if (!message?.id) return;
+	    dispatch('reply', { message });
+	  }
+
+	  function openMenu() {
+	    if (!isOwn) return;
+	    if (!canEdit && !canDelete) return;
+	    if (message?.deleted) return;
+	    menuOpen = true;
+	  }
+
+	  function closeMenu() {
+	    menuOpen = false;
+	  }
+
+	  function onMenuTrigger(e) {
+	    e.preventDefault();
+	    e.stopPropagation();
+	    if (menuOpen) closeMenu();
+	    else openMenu();
+	  }
+
+	  function onDocPointerDown(e) {
+	    if (!menuOpen) return;
+	    const path = e.composedPath?.() ?? [];
+	    const hit = path.some((n) => n?.dataset?.aetherMenu === 'true' || n?.dataset?.aetherMenuTrigger === 'true');
+	    if (!hit) closeMenu();
+	  }
+
+	  $: if (menuOpen) {
+	    document.addEventListener('pointerdown', onDocPointerDown, true);
+	  } else {
+	    document.removeEventListener('pointerdown', onDocPointerDown, true);
+	  }
+
+	  onDestroy(() => {
+	    document.removeEventListener('pointerdown', onDocPointerDown, true);
+	  });
 
   function onTouchStart(e) {
     if (!isTouch || !isMobile) return;
@@ -234,13 +275,13 @@
         </div>
       </div>
 
-		      <div
-		        bind:this={bubbleEl}
-		        class={`bubble w-fit rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-surface)] ${animatingBack ? 'snap-back' : ''}`}
-		        style={`--reply-color:${message.color}; border-left: 3px solid ${message.color}; box-shadow: ${bubbleShadow}; transform: translateX(${dragX}px);`}
-		        role="group"
-		        data-aether-bubble="true"
-        data-message-id={message.id ?? ''}
+			      <div
+			        bind:this={bubbleEl}
+			        class={`bubble w-fit rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-surface)] ${animatingBack ? 'snap-back' : ''}`}
+			        style={`--reply-color:${message.color}; border-left: 3px solid ${message.color}; box-shadow: ${bubbleShadow}; transform: translateX(${dragX}px);`}
+			        role="group"
+			        data-aether-bubble="true"
+	        data-message-id={message.id ?? ''}
         aria-label={`Message from ${message.username}`}
         aria-describedby={tooltipId || undefined}
         on:mouseenter={handleBubbleMouseEnter}
@@ -248,11 +289,45 @@
         on:mouseleave={handleBubbleMouseLeave}
         on:pointerup={onPointerUp}
         on:touchstart={onTouchStart}
-        on:touchmove={onTouchMove}
-        on:touchend={onTouchEnd}
-      >
-	        <div class="flex items-center gap-[var(--space-sm)]">
-	          <AvatarDisplay username={message.username} avatarBase64={message.avatarBase64 ?? null} size={avatarSize} showRing={true} />
+	        on:touchmove={onTouchMove}
+	        on:touchend={onTouchEnd}
+	      >
+	        {#if isOwn && !message.deleted && (canEdit || canDelete)}
+	          <button
+	            type="button"
+	            class="msg-menu-trigger"
+	            data-aether-menu-trigger="true"
+	            aria-label="Message actions"
+	            title="Message actions"
+	            on:pointerdown|stopPropagation={onMenuTrigger}
+	            on:keydown|stopPropagation={(e) => {
+	              if (e.key === 'Enter' || e.key === ' ') {
+	                e.preventDefault();
+	                onMenuTrigger(e);
+	              }
+	            }}
+	          >
+	            ⋯
+	          </button>
+
+	          {#if menuOpen}
+	            <div class="msg-menu" data-aether-menu="true" role="menu" aria-label="Message actions">
+	              {#if canEdit}
+	                <button type="button" class="msg-menu-item" role="menuitem" on:click={() => { closeMenu(); dispatch('edit', { message }); }}>
+	                  Edit
+	                </button>
+	              {/if}
+	              {#if canDelete}
+	                <button type="button" class="msg-menu-item danger" role="menuitem" on:click={() => { closeMenu(); dispatch('delete', { message }); }}>
+	                  Delete
+	                </button>
+	              {/if}
+	            </div>
+	          {/if}
+	        {/if}
+
+		        <div class="flex items-center gap-[var(--space-sm)]">
+		          <AvatarDisplay username={message.username} avatarBase64={message.avatarBase64 ?? null} size={avatarSize} showRing={true} />
 
 	          <div class="meta min-w-0">
 	            <div class="meta-top">
@@ -262,31 +337,59 @@
 	          </div>
 	        </div>
 
-	        {#if Array.isArray(message.replies) && message.replies.length > 0}
-	          <div class="mt-[var(--space-xs)] grid gap-[6px]">
-	            {#each message.replies as r (r.messageId)}
-              <button
-                type="button"
-                class="quote-card w-full text-left rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-sm)] py-[6px]"
-                style={`border-left: 3px solid ${r.authorColor};`}
-                on:click|stopPropagation={() => dispatch('jumpToOriginal', { messageId: r.messageId })}
-	              >
-	                <div class="quote-author text-[var(--font-size-xs)] font-800 text-[var(--text-primary)]">{r.authorUsername}</div>
-	                <div class="mt-[2px] text-[var(--font-size-xs)] text-[var(--text-secondary)]">{previewText(r.textSnapshot, 80)}</div>
-	              </button>
-	            {/each}
-	          </div>
-	        {/if}
+		        {#if Array.isArray(message.replies) && message.replies.length > 0}
+		          <div class="mt-[var(--space-xs)] grid gap-[6px]">
+		            {#each message.replies as r (r.messageId)}
+		              {#if r?.deleted}
+		                <div
+		                  class="quote-card quote-deleted w-full text-left rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-sm)] py-[6px]"
+		                  style={`border-left: 3px solid ${r.authorColor};`}
+		                  role="note"
+		                  aria-label="Original message deleted"
+		                >
+		                  <div class="quote-author text-[var(--font-size-xs)] font-800 text-[var(--text-primary)]">{r.authorUsername}</div>
+		                  <div class="mt-[2px] text-[var(--font-size-xs)] text-[var(--text-muted)]">
+		                    {previewText(r.textSnapshot, 80)}
+		                  </div>
+		                </div>
+		              {:else}
+		                <button
+		                  type="button"
+		                  class="quote-card w-full text-left rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-sm)] py-[6px]"
+		                  style={`border-left: 3px solid ${r.authorColor};`}
+		                  on:click|stopPropagation={() => dispatch('jumpToOriginal', { messageId: r.messageId })}
+		                >
+		                  <div class="quote-author text-[var(--font-size-xs)] font-800 text-[var(--text-primary)]">{r.authorUsername}</div>
+		                  <div class="mt-[2px] text-[var(--font-size-xs)] text-[var(--text-secondary)]">{previewText(r.textSnapshot, 80)}</div>
+		                </button>
+		              {/if}
+		            {/each}
+		          </div>
+		        {/if}
 
-		        <div class="msg-text mt-[var(--space-xs)] whitespace-pre-wrap break-words text-[var(--text-primary)] leading-[1.45]">
+		        <div
+		          class={`msg-text mt-[var(--space-xs)] whitespace-pre-wrap break-words leading-[1.45] ${message.deleted ? 'msg-deleted' : ''}`}
+		        >
 		          {message.text}
 		        </div>
 
-        <div class="time-row" title={new Date(message.timestamp).toLocaleString()}>
-          <span class="time">{displayTime}</span>
-          {#if isOwn}
-            {#if message.queued}
-              <span class="status" title="Will be sent when peer reconnects">⏳</span>
+	        <div class="time-row" title={new Date(message.timestamp).toLocaleString()}>
+	          <span class="time">{displayTime}</span>
+	          {#if typeof message.editedAt === 'number' && !message.deleted}
+	            <span
+	              class="edited"
+	              title={`Edited at ${new Date(message.editedAt).toLocaleTimeString()}`}
+	              aria-label={`Edited at ${new Date(message.editedAt).toLocaleTimeString()}`}
+	            >
+	              <svg viewBox="0 0 24 24" class="edited-ico" fill="currentColor" aria-hidden="true">
+	                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25Zm2.92 2.83H5v-.92l8.06-8.06.92.92L5.92 20.08ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z" />
+	              </svg>
+	              edited
+	            </span>
+	          {/if}
+	          {#if isOwn}
+	            {#if message.queued}
+	              <span class="status" title="Will be sent when peer reconnects">⏳</span>
             {:else if message.delivered === true}
               <span class="status" title="Delivered">✓</span>
             {:else if message.delivered === false}
@@ -314,12 +417,13 @@
 </div>
 
 <style>
-	  .bubble {
-	    /* Comfortable sizing across devices without becoming comically wide on large screens. */
-	    max-width: min(94%, 52rem);
-	    padding: clamp(10px, 1.2vw, 16px) clamp(14px, 1.6vw, 22px);
-	    will-change: transform;
-	  }
+		  .bubble {
+		    /* Comfortable sizing across devices without becoming comically wide on large screens. */
+		    max-width: min(94%, 52rem);
+		    padding: clamp(10px, 1.2vw, 16px) clamp(14px, 1.6vw, 22px);
+		    will-change: transform;
+		    position: relative;
+		  }
 
 	  @media (min-width: 1024px) {
 	    .bubble {
@@ -374,14 +478,84 @@
 	    display: inline-block;
 	  }
 
-	  .msg-text {
-	    font-size: clamp(1rem, 0.96rem + 0.25vw, 1.125rem);
-	  }
+		  .msg-text {
+		    font-size: clamp(1rem, 0.96rem + 0.25vw, 1.125rem);
+		    color: var(--text-primary);
+		  }
 
-	  .quote-author {
-	    overflow-wrap: anywhere;
-	    white-space: normal;
-	  }
+		  .msg-deleted {
+		    color: var(--text-muted);
+		    font-style: italic;
+		  }
+
+		  .quote-author {
+		    overflow-wrap: anywhere;
+		    white-space: normal;
+		  }
+
+		  .quote-deleted {
+		    cursor: default;
+		  }
+
+		  .msg-menu-trigger {
+		    position: absolute;
+		    top: 8px;
+		    right: 8px;
+		    height: 28px;
+		    width: 28px;
+		    display: grid;
+		    place-items: center;
+		    border-radius: var(--radius-full);
+		    border: 1px solid var(--border);
+		    background: var(--bg-surface);
+		    color: var(--text-secondary);
+		    padding: 0;
+		    opacity: 0;
+		    pointer-events: none;
+		  }
+
+		  .msg-menu {
+		    position: absolute;
+		    top: 40px;
+		    right: 8px;
+		    z-index: 20;
+		    min-width: 160px;
+		    border-radius: var(--radius-md);
+		    border: 1px solid var(--border);
+		    background: var(--bg-overlay);
+		    box-shadow: var(--shadow-md);
+		    overflow: hidden;
+		  }
+
+		  .msg-menu-item {
+		    width: 100%;
+		    text-align: left;
+		    padding: 10px 12px;
+		    border: 0;
+		    background: transparent;
+		    color: var(--text-primary);
+		    font-size: var(--font-size-sm);
+		    font-family: var(--font-sans);
+		  }
+
+		  .msg-menu-item.danger {
+		    color: color-mix(in srgb, var(--danger) 90%, var(--text-primary));
+		  }
+
+		  .edited {
+		    display: inline-flex;
+		    align-items: center;
+		    gap: 4px;
+		    color: var(--text-muted);
+		    font-size: clamp(0.72rem, 0.7rem + 0.1vw, 0.8rem);
+		    font-family: var(--font-mono);
+		  }
+
+		  .edited-ico {
+		    height: 14px;
+		    width: 14px;
+		    flex: none;
+		  }
 
 	  .swipe-underlay {
 	    position: absolute;
@@ -425,21 +599,40 @@
     pointer-events: none;
   }
 
-  @media (hover: none) {
-    .reply-btn {
-      display: none;
-    }
-  }
+	  @media (hover: none) {
+	    .reply-btn {
+	      display: none;
+	    }
 
-  @media (hover: hover) {
-    .row:hover .reply-btn {
-      opacity: 1;
-      pointer-events: auto;
-    }
+		    .msg-menu-trigger {
+		      opacity: 0.7;
+		      pointer-events: auto;
+		    }
+	  }
 
-    .reply-btn:hover {
-      background: var(--bg-elevated);
-      color: var(--text-primary);
+	  @media (hover: hover) {
+	    .row:hover .reply-btn {
+	      opacity: 1;
+	      pointer-events: auto;
+	    }
+
+		    .row:hover .msg-menu-trigger {
+		      opacity: 1;
+		      pointer-events: auto;
+		    }
+
+		    .msg-menu-trigger:hover {
+		      background: var(--bg-elevated);
+		      color: var(--text-primary);
+		    }
+
+		    .msg-menu-item:hover {
+		      background: var(--bg-elevated);
+		    }
+
+	    .reply-btn:hover {
+	      background: var(--bg-elevated);
+	      color: var(--text-primary);
     }
 
     .quote-card:hover {

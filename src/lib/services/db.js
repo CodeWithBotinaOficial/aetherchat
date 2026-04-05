@@ -18,8 +18,10 @@ import Dexie from 'dexie';
  * @property {number} age
  * @property {string} color
  * @property {string} text
- * @property {{ messageId: string, authorUsername: string, authorColor: string, textSnapshot: string, timestamp: number }[] | null} [replies]
+ * @property {{ messageId: string, authorUsername: string, authorColor: string, textSnapshot: string, timestamp: number, deleted?: boolean }[] | null} [replies]
  * @property {number} timestamp
+ * @property {number|null} [editedAt]
+ * @property {boolean} [deleted]
  */
 
 /**
@@ -47,6 +49,8 @@ import Dexie from 'dexie';
  * @property {{ ciphertext: string, iv: string } | null} [replies] Encrypted replies bundle (never plaintext).
  * @property {number} timestamp
  * @property {boolean} delivered
+ * @property {number|null} [editedAt]
+ * @property {boolean} [deleted]
  */
 
 /**
@@ -85,6 +89,21 @@ import Dexie from 'dexie';
  */
 
 /**
+ * Local-only queued private edit/delete actions (plaintext, temporary).
+ * This is used when the peer is offline or we don't have a confirmed session yet.
+ * @typedef {Object} QueuedAction
+ * @property {string} id
+ * @property {string} chatId
+ * @property {string} theirPeerId
+ * @property {'edit'|'delete'} kind
+ * @property {string} messageId
+ * @property {string|null} [plaintext]
+ * @property {string|null} [repliesJson]
+ * @property {number|null} [editedAt]
+ * @property {number} timestamp
+ */
+
+/**
  * Persisted private chat session key ring (local-only).
  * Keys are stored so received messages remain decryptable across browser restarts and re-keys.
  * @typedef {Object} SessionKeyRing
@@ -102,6 +121,7 @@ export class AetherChatDB extends Dexie {
   /** @type {Dexie.Table<UsernameRegistryEntry, number>} */ usernameRegistry;
   /** @type {Dexie.Table<PeerIdEntry, string>} */ peerIds;
   /** @type {Dexie.Table<QueuedMessage, string>} */ queuedMessages;
+  /** @type {Dexie.Table<QueuedAction, string>} */ queuedActions;
   /** @type {Dexie.Table<{ id: string, chatId: string, timestamp: number, plaintext: string }, string>} */ sentMessagesPlaintext;
   /** @type {Dexie.Table<SessionKeyRing, string>} */ sessionKeys;
 
@@ -317,29 +337,62 @@ export class AetherChatDB extends Dexie {
 				    // Phase 11: add `replies` field to message tables (global + private).
 				    // - Global: replies are stored in plaintext (public chat).
 				    // - Private: replies are stored encrypted in the `privateMessages.replies` bundle.
-				    this.version(12)
-				      .stores({
-				        users: 'id, username, createdAt',
-				        globalMessages: 'id, timestamp, peerId, username',
-				        privateChats: 'id, myPeerId, myUsername, theirPeerId, theirUsername, createdAt, lastActivity',
-				        privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
-				        knownPeers: '++id, peerId, lastSeen, username',
-				        usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
-				        peerIds: 'username, peerId',
-				        queuedMessages: 'id, chatId, theirPeerId, timestamp',
-				        sentMessagesPlaintext: 'id, chatId, timestamp',
-				        sessionKeys: 'id, updatedAt'
-				      })
-				      .upgrade(async (tx) => {
-				        const globals = tx.table('globalMessages');
-				        const privates = tx.table('privateMessages');
-				        await globals.toCollection().modify((m) => {
-				          if (!Object.prototype.hasOwnProperty.call(m, 'replies')) m.replies = null;
-				        });
-				        await privates.toCollection().modify((m) => {
-				          if (!Object.prototype.hasOwnProperty.call(m, 'replies')) m.replies = null;
-				        });
-				      });
+					    this.version(12)
+					      .stores({
+					        users: 'id, username, createdAt',
+					        globalMessages: 'id, timestamp, peerId, username',
+					        privateChats: 'id, myPeerId, myUsername, theirPeerId, theirUsername, createdAt, lastActivity',
+					        privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+					        knownPeers: '++id, peerId, lastSeen, username',
+					        usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+					        peerIds: 'username, peerId',
+					        queuedMessages: 'id, chatId, theirPeerId, timestamp',
+					        sentMessagesPlaintext: 'id, chatId, timestamp',
+					        sessionKeys: 'id, updatedAt'
+					      })
+					      .upgrade(async (tx) => {
+					        const globals = tx.table('globalMessages');
+					        const privates = tx.table('privateMessages');
+					        await globals.toCollection().modify((m) => {
+					          if (!Object.prototype.hasOwnProperty.call(m, 'replies')) m.replies = null;
+					        });
+					        await privates.toCollection().modify((m) => {
+					          if (!Object.prototype.hasOwnProperty.call(m, 'replies')) m.replies = null;
+					        });
+					      });
+
+					    // Phase 12: message edit/delete metadata + offline queue for private edit/delete actions.
+					    this.version(13)
+					      .stores({
+					        users: 'id, username, createdAt',
+					        globalMessages: 'id, timestamp, peerId, username',
+					        privateChats: 'id, myPeerId, myUsername, theirPeerId, theirUsername, createdAt, lastActivity',
+					        privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+					        knownPeers: '++id, peerId, lastSeen, username',
+					        usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+					        peerIds: 'username, peerId',
+					        queuedMessages: 'id, chatId, theirPeerId, timestamp',
+					        queuedActions: 'id, chatId, theirPeerId, timestamp, kind',
+					        sentMessagesPlaintext: 'id, chatId, timestamp',
+					        sessionKeys: 'id, updatedAt'
+					      })
+					      .upgrade(async (tx) => {
+					        const globals = tx.table('globalMessages');
+					        const privates = tx.table('privateMessages');
+					        await globals.toCollection().modify((m) => {
+					          if (!Object.prototype.hasOwnProperty.call(m, 'editedAt')) m.editedAt = null;
+					          if (!Object.prototype.hasOwnProperty.call(m, 'deleted')) m.deleted = false;
+					          if (Array.isArray(m.replies)) {
+					            for (const r of m.replies) {
+					              if (r && typeof r === 'object' && !Object.prototype.hasOwnProperty.call(r, 'deleted')) r.deleted = false;
+					            }
+					          }
+					        });
+					        await privates.toCollection().modify((m) => {
+					          if (!Object.prototype.hasOwnProperty.call(m, 'editedAt')) m.editedAt = null;
+					          if (!Object.prototype.hasOwnProperty.call(m, 'deleted')) m.deleted = false;
+					        });
+					      });
 				  }
 				}
 
@@ -395,9 +448,47 @@ export async function getUser() {
 export async function saveGlobalMessage(msg) {
   try {
     const id = msg.id || (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : String(Date.now()));
-    await db.globalMessages.put({ ...msg, id });
+    await db.globalMessages.put({
+      editedAt: Object.prototype.hasOwnProperty.call(msg, 'editedAt') ? (msg.editedAt ?? null) : null,
+      deleted: Object.prototype.hasOwnProperty.call(msg, 'deleted') ? Boolean(msg.deleted) : false,
+      ...msg,
+      id,
+      replies: Array.isArray(msg?.replies) && msg.replies.length > 0 ? msg.replies : null
+    });
   } catch (err) {
     console.error('saveGlobalMessage failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} id
+ * @returns {Promise<GlobalMessage|null>}
+ */
+export async function getGlobalMessage(id) {
+  try {
+    const key = String(id ?? '').trim();
+    if (!key) return null;
+    return (await db.globalMessages.get(key)) ?? null;
+  } catch (err) {
+    console.error('getGlobalMessage failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} id
+ * @param {Partial<GlobalMessage>} patch
+ * @returns {Promise<number>} number of modified rows
+ */
+export async function updateGlobalMessage(id, patch) {
+  try {
+    const key = String(id ?? '').trim();
+    if (!key) return 0;
+    if (!patch || typeof patch !== 'object') return 0;
+    return await db.globalMessages.update(key, patch);
+  } catch (err) {
+    console.error('updateGlobalMessage failed', err);
     throw err;
   }
 }
@@ -553,6 +644,75 @@ export async function clearQueuedMessagesForChat(chatId) {
     await db.queuedMessages.where('chatId').equals(key).delete();
   } catch (err) {
     console.error('clearQueuedMessagesForChat failed', err);
+    throw err;
+  }
+}
+
+// ── Offline Queue (Edit/Delete actions) ──────────────────────────────────────
+
+/**
+ * @param {QueuedAction} action
+ */
+export async function saveQueuedAction(action) {
+  try {
+    if (!action?.id) throw new Error('Missing queued action id');
+    await db.queuedActions.put({
+      id: action.id,
+      chatId: action.chatId,
+      theirPeerId: action.theirPeerId,
+      kind: action.kind,
+      messageId: action.messageId,
+      plaintext: Object.prototype.hasOwnProperty.call(action, 'plaintext') ? (action.plaintext ?? null) : null,
+      repliesJson: Object.prototype.hasOwnProperty.call(action, 'repliesJson') ? (action.repliesJson ?? null) : null,
+      editedAt: Object.prototype.hasOwnProperty.call(action, 'editedAt') ? (action.editedAt ?? null) : null,
+      timestamp: action.timestamp
+    });
+  } catch (err) {
+    console.error('saveQueuedAction failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} chatId
+ * @returns {Promise<QueuedAction[]>}
+ */
+export async function getQueuedActionsForChat(chatId) {
+  try {
+    const key = String(chatId ?? '').trim();
+    if (!key) return [];
+    const rows = await db.queuedActions.where('chatId').equals(key).toArray();
+    return rows.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+  } catch (err) {
+    console.error('getQueuedActionsForChat failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} id
+ */
+export async function deleteQueuedAction(id) {
+  try {
+    const key = String(id ?? '').trim();
+    if (!key) return;
+    await db.queuedActions.delete(key);
+  } catch (err) {
+    console.error('deleteQueuedAction failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} chatId
+ */
+export async function clearQueuedActionsForChat(chatId) {
+  try {
+    const key = String(chatId ?? '').trim();
+    if (!key) return;
+    await db.queuedActions.where('chatId').equals(key).delete();
+  } catch (err) {
+    console.error('clearQueuedActionsForChat failed', err);
     throw err;
   }
 }
@@ -791,9 +951,30 @@ export async function savePrivateMessage(msg) {
     if (typeof msg.chatId !== 'string' || msg.chatId.length === 0) throw new Error('Missing msg.chatId');
     if (typeof msg.ciphertext !== 'string' || msg.ciphertext.length === 0) throw new Error('Missing ciphertext');
     if (typeof msg.iv !== 'string' || msg.iv.length === 0) throw new Error('Missing iv');
-    await db.privateMessages.put(msg);
+    await db.privateMessages.put({
+      editedAt: Object.prototype.hasOwnProperty.call(msg, 'editedAt') ? (msg.editedAt ?? null) : null,
+      deleted: Object.prototype.hasOwnProperty.call(msg, 'deleted') ? Boolean(msg.deleted) : false,
+      ...msg
+    });
   } catch (err) {
     console.error('savePrivateMessage failed', err);
+    throw err;
+  }
+}
+
+/**
+ * @param {string} id
+ * @param {Partial<PrivateMessage>} patch
+ * @returns {Promise<number>} number of modified rows
+ */
+export async function updatePrivateMessage(id, patch) {
+  try {
+    const key = String(id ?? '').trim();
+    if (!key) return 0;
+    if (!patch || typeof patch !== 'object') return 0;
+    return await db.privateMessages.update(key, patch);
+  } catch (err) {
+    console.error('updatePrivateMessage failed', err);
     throw err;
   }
 }

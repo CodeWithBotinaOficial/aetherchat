@@ -1,7 +1,7 @@
 import Dexie from 'dexie';
 import { AetherChatDB } from '$lib/services/db.js';
 
-it('DB migration sets replies: null on existing rows without data loss', async () => {
+it('DB migration sets replies + edit/delete defaults on existing rows without data loss', async () => {
   const name = `AetherChatDB-mig-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
   // Create an "old" DB at version 11 with message rows that do not have `replies`.
@@ -26,7 +26,18 @@ it('DB migration sets replies: null on existing rows without data loss', async (
     age: 22,
     color: 'hsl(1, 65%, 65%)',
     text: 'hello',
+    // Simulate a legacy replies array missing the `deleted` flag on entries.
+    replies: [{ messageId: 'orig', authorUsername: 'bob', authorColor: 'hsl(2, 65%, 65%)', textSnapshot: 'x', timestamp: 0 }],
     timestamp: 1
+  });
+  await old.table('globalMessages').put({
+    id: 'g2',
+    peerId: 'p2',
+    username: 'carol',
+    age: 30,
+    color: 'hsl(10, 65%, 65%)',
+    text: 'no replies field in legacy row',
+    timestamp: 2
   });
   await old.table('privateMessages').put({
     id: 'pm1',
@@ -44,12 +55,22 @@ it('DB migration sets replies: null on existing rows without data loss', async (
 
   const g = await db.globalMessages.get('g1');
   expect(g.text).toBe('hello');
-  expect(g.replies).toBeNull();
+  expect(Array.isArray(g.replies)).toBe(true);
+  expect(g.replies?.[0]?.deleted).toBe(false);
+  expect(g.editedAt).toBeNull();
+  expect(g.deleted).toBe(false);
+
+  const g2 = await db.globalMessages.get('g2');
+  expect(g2.text).toContain('no replies');
+  expect(g2.replies).toBeNull();
+  expect(g2.editedAt).toBeNull();
+  expect(g2.deleted).toBe(false);
 
   const pm = await db.privateMessages.get('pm1');
   expect(pm.ciphertext).toBe('CT');
   expect(pm.replies).toBeNull();
+  expect(pm.editedAt).toBeNull();
+  expect(pm.deleted).toBe(false);
 
   await db.delete();
 });
-
