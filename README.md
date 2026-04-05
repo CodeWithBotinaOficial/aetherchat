@@ -68,6 +68,9 @@ Privacy note: for Private Chats, reply snapshots and reply metadata are encrypte
 
 Each message bubble can show a context menu (⋯) for actions, but only on messages you authored.
 
+- **Action menu UX**
+  - Desktop: the ⋯ trigger is revealed on hover so it does not clutter reading.
+  - Touch/mobile: the ⋯ trigger is always visible (subtle) for discoverability and single-tap access.
 - **Global Chat rules**
   - You can **edit** or **delete** your own messages only within **30 minutes** of sending.
   - After 30 minutes, edit/delete options disappear and incoming edit/delete packets for older messages are rejected.
@@ -80,6 +83,7 @@ Each message bubble can show a context menu (⋯) for actions, but only on messa
 - **Deleted messages**
   - Are soft-deleted: the message ID is preserved, `deleted: true` is stored, and the text becomes a standard placeholder.
   - This ensures quoted replies can still reference the original message ID safely.
+  - Deleting requires a confirmation step (no one-tap destructive delete).
 - **Editing UX**
   - Editing happens in the composer (the input switches to “Save/Cancel” mode).
   - `Escape` cancels an edit; `Enter` saves.
