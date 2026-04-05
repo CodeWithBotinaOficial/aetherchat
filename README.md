@@ -11,11 +11,14 @@ AetherChat connects people across the globe using WebRTC (via PeerJS) so message
 - **Global Chat**: real-time public chat shared peer-to-peer between connected browsers.
 - **Private Chats (E2EE)**: end-to-end encrypted 1-to-1 messaging using ECDH (P-256) + HKDF-SHA256 + AES-GCM (256-bit).
 - **Message replies + multi-quote**: reply to one or more messages at once (Global + Private), with clickable quote cards that jump to the original.
+- **Message edit + delete**: edit/delete your own messages (Global has a 30-minute window; Private has no time limit). Edited messages show an indicator; deleted messages are soft-deleted with a placeholder (IDs are preserved for quotes).
+- **Quote cascades**: if a cited message is edited or deleted, every message that quoted it updates its preview (or shows `[ Original message deleted ]` with no click behavior).
 - **No centralized message server**: there is no backend that stores or processes chat content.
 - **Local-only identity**: profiles live in your browser storage; clearing site data resets identity and local history.
-- **Offline-first UX**: the UI loads and remains usable even when the network is unavailable (messages can be stored locally).
+- **Offline-first UX**: the UI loads and remains usable even when the network is unavailable (private messages and private edits can queue locally until encryption/session is ready).
 - **Automatic cleanup**: local retention policies delete old data on a schedule (global + private history).
 - **Responsive UI**: mobile TopBar + BottomNav, tablet icon rail, desktop sidebar, wide/TV max width.
+- **Responsive message layout**: bubbles are always left/right aligned by author and scale comfortably across mobile, tablet, and desktop.
 - **Terms & Conditions page**: full Terms of Service and Privacy Policy rendered in-app.
 - **SEO-ready**: full metadata, Open Graph/Twitter cards, JSON-LD structured data, `robots.txt` and `sitemap.xml`.
 - **Production-ready Cloudflare Pages config**: SPA fallback routing and security headers (`_redirects`, `_headers`).
@@ -39,9 +42,10 @@ AetherChat connects people across the globe using WebRTC (via PeerJS) so message
 
 - **Discovery**: a lightweight lobby peer ID is used so newcomers can join a network and receive a snapshot of peers + registry state.
 - **Direct connections**: after discovery, the app forms a limited mesh of direct DataChannel connections to reduce spam and stay within PeerJS limits.
-- **Protocol messages**: peers exchange handshake metadata, public messages, private E2EE payloads, delivery acks, and network state digests.
+- **Protocol messages**: peers exchange handshake metadata, public messages, private E2EE payloads, delivery acks, message edit/delete actions, and network state digests.
 - **Replies (quotes)**: new messages can include a `replies` array referencing one or more earlier messages, plus a text snapshot captured at send time (private reply payloads are encrypted).
 - **Local storage**: chat history, registry state, and E2EE key rings (local-only) are persisted in IndexedDB using Dexie.
+- **Security enforcement**: receiving peers verify authorship for edits/deletes, and Global Chat enforces the 30-minute edit/delete window on the receiving side too.
 
 ---
 
@@ -53,8 +57,52 @@ AetherChat supports quoting one or more messages when composing a new message in
 - Mobile: swipe to reply (own messages swipe left; other messages swipe right) with a WhatsApp-style visual indicator.
 - The composer shows a pending replies area above the input; remove quotes individually or send to clear them.
 - Sent messages render quoted cards above the message text; clicking a quote scrolls to and highlights the original (and attempts to load older history if needed).
+- If a quoted/original message is later edited, quote previews update everywhere to match the new text snapshot.
+- If a quoted/original message is later deleted, quote cards show `[ Original message deleted ]` in muted text and are no longer clickable.
 
 Privacy note: for Private Chats, reply snapshots and reply metadata are encrypted along with the message payload (no plaintext reply metadata is stored or transmitted).
+
+---
+
+## ✏️ Message Edit & Delete
+
+Each message bubble can show a context menu (⋯) for actions, but only on messages you authored.
+
+- **Global Chat rules**
+  - You can **edit** or **delete** your own messages only within **30 minutes** of sending.
+  - After 30 minutes, edit/delete options disappear and incoming edit/delete packets for older messages are rejected.
+- **Private Chat rules**
+  - You can **edit** or **delete** your own messages at any time.
+  - You can never edit/delete the other participant's messages.
+- **Edited messages**
+  - Show an `edited` indicator next to the timestamp (with the edit time on hover).
+  - Stay in their original position; ordering never changes on edit.
+- **Deleted messages**
+  - Are soft-deleted: the message ID is preserved, `deleted: true` is stored, and the text becomes a standard placeholder.
+  - This ensures quoted replies can still reference the original message ID safely.
+- **Editing UX**
+  - Editing happens in the composer (the input switches to “Save/Cancel” mode).
+  - `Escape` cancels an edit; `Enter` saves.
+  - While editing, you can add/remove quoted replies and they are saved with the edit.
+
+Private encryption note: private message bodies are encrypted as a small versioned envelope so metadata like `editedAt` is included inside ciphertext.
+
+---
+
+## 🧩 Overlay Rules (Tooltip vs Action Menu)
+
+AetherChat has two overlays that can appear near a message:
+
+- **User tooltip**: avatar/name/age and “Start Private Chat”
+- **Message action menu**: ⋯ dropdown with Edit/Delete (own messages only)
+
+These overlays are mutually exclusive:
+
+- Opening the ⋯ menu closes any visible tooltip immediately.
+- Opening the tooltip closes any open ⋯ menu immediately.
+- The ⋯ trigger is a separate interaction zone and does not trigger tooltip events.
+- On touch devices, the tooltip is intentionally triggered from the message identity area (avatar/username), not from the entire bubble.
+- Clicking/tapping outside closes whichever overlay is open.
 
 ---
 
