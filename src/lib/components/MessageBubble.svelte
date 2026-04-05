@@ -146,23 +146,31 @@
 	    dispatch('reply', { message });
 	  }
 
-	  function openMenu() {
-	    if (!isOwn) return;
-	    if (!canEdit && !canDelete) return;
-	    if (message?.deleted) return;
-	    menuOpen = true;
-	  }
+		  function openMenu() {
+		    if (!isOwn) return;
+		    if (!canEdit && !canDelete) return;
+		    if (message?.deleted) return;
+		    menuOpen = true;
+		    dispatch('menuOpen', { message, messageKey });
+		  }
 
-	  function closeMenu() {
-	    menuOpen = false;
-	  }
+		  function closeMenu() {
+		    menuOpen = false;
+		    dispatch('menuClose', { message, messageKey });
+		  }
 
-	  function onMenuTrigger(e) {
-	    e.preventDefault();
-	    e.stopPropagation();
-	    if (menuOpen) closeMenu();
-	    else openMenu();
-	  }
+		  // Parent can close the menu to resolve overlay conflicts (e.g. tooltip vs menu).
+		  export function closeMenuFromParent() {
+		    if (!menuOpen) return;
+		    closeMenu();
+		  }
+
+		  function onMenuTrigger(e) {
+		    e.preventDefault();
+		    e.stopPropagation();
+		    if (menuOpen) closeMenu();
+		    else openMenu();
+		  }
 
 	  function onDocPointerDown(e) {
 	    if (!menuOpen) return;
@@ -284,27 +292,24 @@
 	        data-message-id={message.id ?? ''}
         aria-label={`Message from ${message.username}`}
         aria-describedby={tooltipId || undefined}
-        on:mouseenter={handleBubbleMouseEnter}
-        on:mousemove={onMove}
-        on:mouseleave={handleBubbleMouseLeave}
-        on:pointerup={onPointerUp}
         on:touchstart={onTouchStart}
 	        on:touchmove={onTouchMove}
 	        on:touchend={onTouchEnd}
 	      >
 	        {#if isOwn && !message.deleted && (canEdit || canDelete)}
-	          <button
-	            type="button"
-	            class="msg-menu-trigger"
-	            data-aether-menu-trigger="true"
-	            aria-label="Message actions"
-	            title="Message actions"
-	            on:pointerdown|stopPropagation={onMenuTrigger}
-	            on:keydown|stopPropagation={(e) => {
-	              if (e.key === 'Enter' || e.key === ' ') {
-	                e.preventDefault();
-	                onMenuTrigger(e);
-	              }
+		          <button
+		            type="button"
+		            class="msg-menu-trigger"
+		            data-aether-menu-trigger="true"
+		            aria-label="Message actions"
+		            title="Message actions"
+		            on:pointerdown|stopPropagation={onMenuTrigger}
+		            on:pointerup|stopPropagation
+		            on:keydown|stopPropagation={(e) => {
+		              if (e.key === 'Enter' || e.key === ' ') {
+		                e.preventDefault();
+		                onMenuTrigger(e);
+		              }
 	            }}
 	          >
 	            ⋯
@@ -312,26 +317,43 @@
 
 	          {#if menuOpen}
 	            <div class="msg-menu" data-aether-menu="true" role="menu" aria-label="Message actions">
-	              {#if canEdit}
-	                <button type="button" class="msg-menu-item" role="menuitem" on:click={() => { closeMenu(); dispatch('edit', { message }); }}>
-	                  Edit
-	                </button>
-	              {/if}
-	              {#if canDelete}
-	                <button type="button" class="msg-menu-item danger" role="menuitem" on:click={() => { closeMenu(); dispatch('delete', { message }); }}>
-	                  Delete
-	                </button>
-	              {/if}
-	            </div>
-	          {/if}
-	        {/if}
+		              {#if canEdit}
+		                <button type="button" class="msg-menu-item" role="menuitem" on:click={() => { closeMenu(); dispatch('edit', { message }); }}>
+		                  Edit
+		                </button>
+		              {/if}
+		              {#if canDelete}
+		                <button type="button" class="msg-menu-item danger" role="menuitem" on:click={() => { closeMenu(); dispatch('delete', { message }); }}>
+		                  Delete
+		                </button>
+		              {/if}
+		            </div>
+		          {/if}
+		        {/if}
 
-		        <div class="flex items-center gap-[var(--space-sm)]">
-		          <AvatarDisplay username={message.username} avatarBase64={message.avatarBase64 ?? null} size={avatarSize} showRing={true} />
+			        <div
+			          class="identity flex items-center gap-[var(--space-sm)]"
+			          data-aether-identity="true"
+			          role="button"
+			          tabindex="0"
+			          aria-label={`User details for ${message.username}`}
+			          on:mouseenter={handleBubbleMouseEnter}
+			          on:mousemove={onMove}
+			          on:mouseleave={handleBubbleMouseLeave}
+			          on:pointerup={onPointerUp}
+			          on:keydown={(e) => {
+			            if (e.key === 'Enter' || e.key === ' ') {
+			              e.preventDefault();
+			              // Use element bounds as the tooltip anchor.
+			              dispatch('hoverEnter', { message, messageKey, position: getPositionFromEvent(e) });
+			            }
+			          }}
+			        >
+			          <AvatarDisplay username={message.username} avatarBase64={message.avatarBase64 ?? null} size={avatarSize} showRing={true} />
 
-	          <div class="meta min-w-0">
-	            <div class="meta-top">
-	              <div class="meta-name font-700 text-[var(--text-primary)]">{message.username}</div>
+		          <div class="meta min-w-0">
+		            <div class="meta-top">
+		              <div class="meta-name font-700 text-[var(--text-primary)]">{message.username}</div>
 	              <div class="age-badge" aria-label="User age">{message.age}</div>
 	            </div>
 	          </div>

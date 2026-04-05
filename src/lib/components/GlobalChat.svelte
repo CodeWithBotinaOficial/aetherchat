@@ -38,6 +38,18 @@
   let isTouch = false;
   let outsideListenerAttached = false;
 
+  function closeAllActionMenus(exceptKey = '') {
+    const except = String(exceptKey ?? '');
+    for (const k of Object.keys(bubbleRefs)) {
+      if (except && k === except) continue;
+      try {
+        bubbleRefs[k]?.closeMenuFromParent?.();
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   /** @type {HTMLDivElement|null} */
   let composerEl = null;
   let composerPad = 160;
@@ -92,6 +104,8 @@
 
   async function onHoverEnter(e) {
     const { message, messageKey, position } = e.detail;
+    // Tooltips and message action menus are mutually exclusive.
+    closeAllActionMenus();
     const cache = $avatarCache;
     const isOwnMsg = $user?.username === message.username;
     const avatarBase64 = isOwnMsg
@@ -379,13 +393,18 @@
                 tooltipId={tooltipUser && tooltipKey === String(m.id ?? `${m.timestamp}-${m.username}-${m.text}`) ? TOOLTIP_ID : ''}
                 on:hoverEnter={onHoverEnter}
                 on:hoverMove={onHoverMove}
-                on:hoverLeave={onHoverLeave}
-                on:reply={(ev) => addPendingReply(ev.detail.message)}
-                on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
-                    on:edit={(ev) => {
-                      const msg = ev?.detail?.message;
-                      if (!msg?.id) return;
-                      editingMessageId.set(msg.id);
+	                on:hoverLeave={onHoverLeave}
+	                on:reply={(ev) => addPendingReply(ev.detail.message)}
+	                on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
+	                on:menuOpen={(ev) => {
+	                  // Tooltips and message action menus are mutually exclusive.
+	                  onHoverLeave();
+	                  closeAllActionMenus(ev?.detail?.messageKey ?? '');
+	                }}
+	                    on:edit={(ev) => {
+	                      const msg = ev?.detail?.message;
+	                      if (!msg?.id) return;
+	                      editingMessageId.set(msg.id);
                       composerValue = String(msg.text ?? '');
                       setPendingReplies(Array.isArray(msg.replies) ? msg.replies : null);
                     }}

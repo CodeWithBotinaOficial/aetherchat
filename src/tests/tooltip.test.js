@@ -76,19 +76,19 @@ async function mountWithOneMessage() {
     }
   ]);
 
-  const bubble = await waitFor(() => {
-    const el = document.querySelector('[data-aether-bubble="true"]');
-    if (!el) throw new Error('bubble not ready');
+  const identity = await waitFor(() => {
+    const el = document.querySelector('[data-aether-identity="true"]');
+    if (!el) throw new Error('identity not ready');
     return el;
   });
 
-  return { component, bubble };
+  return { component, identity };
 }
 
 it('Moving cursor from bubble to tooltip does not close the tooltip', async () => {
-  const { component, bubble } = await mountWithOneMessage();
+  const { component, identity } = await mountWithOneMessage();
 
-  bubble.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: 120, clientY: 120 }));
+  identity.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: 120, clientY: 120 }));
 
   const tooltip = await waitFor(() => {
     const el = document.querySelector('[data-aether-tooltip="true"]');
@@ -96,7 +96,7 @@ it('Moving cursor from bubble to tooltip does not close the tooltip', async () =
     return el;
   });
 
-  bubble.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+  identity.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
   tooltip.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
 
   // Wait longer than the hide delay (120ms) to ensure it would have closed.
@@ -111,16 +111,16 @@ it('Moving cursor from bubble to tooltip does not close the tooltip', async () =
 });
 
 it('Tooltip closes when cursor leaves the bubble and does not enter the tooltip', async () => {
-  const { component, bubble } = await mountWithOneMessage();
+  const { component, identity } = await mountWithOneMessage();
 
-  bubble.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: 120, clientY: 120 }));
+  identity.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: 120, clientY: 120 }));
   await waitFor(() => {
     const el = document.querySelector('[data-aether-tooltip="true"]');
     if (!el) throw new Error('tooltip not ready');
     return el;
   });
 
-  bubble.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+  identity.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 160));
   expect(document.querySelector('[data-aether-tooltip="true"]')).toBeNull();
 
@@ -140,13 +140,13 @@ it('On touch: tooltip opens on tap and closes on outside tap', async () => {
     return originalMatchMedia ? originalMatchMedia(q) : { matches: false, media: q, addEventListener() {}, removeEventListener() {} };
   };
 
-  const { component, bubble } = await mountWithOneMessage();
+  const { component, identity } = await mountWithOneMessage();
 
   const tap = new Event('pointerup', { bubbles: true });
   Object.defineProperty(tap, 'pointerType', { value: 'touch' });
   Object.defineProperty(tap, 'clientX', { value: 100 });
   Object.defineProperty(tap, 'clientY', { value: 100 });
-  bubble.dispatchEvent(tap);
+  identity.dispatchEvent(tap);
 
   await waitFor(() => {
     const el = document.querySelector('[data-aether-tooltip="true"]');
