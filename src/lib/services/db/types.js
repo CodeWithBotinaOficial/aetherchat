@@ -1,6 +1,3 @@
-// Thin public shim to preserve the original `$lib/services/db.js` import path.
-// The JSDoc typedefs stay here so `import('$lib/services/db.js').X` types keep working.
-
 /**
  * @typedef {Object} User
  * @property {number} [id]
@@ -113,4 +110,3 @@
  * @property {number} updatedAt
  */
 
-export * from './db/index.js';

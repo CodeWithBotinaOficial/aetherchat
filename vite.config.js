@@ -98,7 +98,9 @@ export default defineConfig(({ mode }) => {
     test: {
       environment: 'jsdom',
       globals: true,
-      setupFiles: ['./src/tests/setup.js']
+      setupFiles: ['./src/tests/setup.js'],
+      // Keep tests hermetic: stores/services can have module-level state/timers.
+      isolate: true
     }
   };
 });
