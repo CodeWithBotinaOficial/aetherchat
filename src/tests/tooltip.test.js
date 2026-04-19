@@ -19,6 +19,7 @@ async function clearAllTables() {
     db.knownPeers,
     db.usernameRegistry,
     db.peerIds,
+    db.cooldown,
     async () => {
       await Promise.all([
         db.users.clear(),
@@ -31,7 +32,8 @@ async function clearAllTables() {
         db.queuedActions.clear(),
         db.knownPeers.clear(),
         db.usernameRegistry.clear(),
-        db.peerIds.clear()
+        db.peerIds.clear(),
+        db.cooldown.clear()
       ]);
     }
   );

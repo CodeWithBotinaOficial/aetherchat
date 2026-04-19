@@ -18,6 +18,7 @@
   import { getGlobalMessagesPage } from '$lib/services/db.js';
   import { cssEscape } from '$lib/utils/replies.js';
   import { showToast } from '$lib/stores/toastStore.js';
+  import { openProfile } from '$lib/stores/profileStore.js';
 
   import ChatInput from '$lib/components/ChatInput.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -29,6 +30,7 @@
 
   // Tooltip state
   let tooltipUser = null;
+  let tooltipMessage = null;
   let tooltipPos = null;
   let tooltipKey = '';
   /** @type {(() => void) | null} */
@@ -111,18 +113,7 @@
     if (openMenuKey) return;
     // Tooltips and message action menus are mutually exclusive.
     closeAllActionMenus();
-    const cache = $avatarCache;
-    const isOwnMsg = $user?.username === message.username;
-    const avatarBase64 = isOwnMsg
-      ? ($user?.avatarBase64 ?? null)
-      : (message.avatarBase64 ?? cache?.get?.(message.peerId) ?? null);
-	    tooltipUser = {
-	      peerId: message.peerId,
-	      username: message.username,
-	      age: message.age,
-	      color: message.color,
-	      avatarBase64
-	    };
+    tooltipMessage = message;
     tooltipPos = position;
     tooltipKey = String(messageKey ?? '');
     tooltipCancelHide = bubbleRefs[tooltipKey]?.cancelHide ?? null;
@@ -130,11 +121,42 @@
     if (isTouch) attachOutsideClose();
   }
 
+  function isOwnMessage(m, u, p) {
+    const uname = String(u?.username ?? '').trim();
+    if (uname && String(m?.username ?? '') === uname) return true;
+    const myPeerId = String(p?.peerId ?? '').trim();
+    if (myPeerId && String(m?.peerId ?? '') === myPeerId) return true;
+    if (String(m?.peerId ?? '') === 'local') return true;
+    return false;
+  }
+
+  $: if (tooltipMessage) {
+    const m = tooltipMessage;
+    const cache = $avatarCache;
+    const own = isOwnMessage(m, $user, $peer);
+    const avatarBase64 = own
+      ? ($user?.avatarBase64 ?? null)
+      : (m.avatarBase64 ?? cache?.get?.(m.peerId) ?? null);
+    const bio = own
+      ? ($user?.bio ?? '')
+      : (typeof $peer?.connectedPeers?.get?.(m.peerId)?.bio === 'string' ? $peer.connectedPeers.get(m.peerId).bio : '');
+
+    tooltipUser = {
+      peerId: m.peerId,
+      username: own ? ($user?.username ?? m.username) : m.username,
+      age: own ? ($user?.age ?? m.age) : m.age,
+      color: own ? ($user?.color ?? m.color) : m.color,
+      avatarBase64,
+      bio
+    };
+  }
+
   function onHoverMove(e) {
     tooltipPos = e.detail.position;
   }
 
   function onHoverLeave() {
+    tooltipMessage = null;
     tooltipUser = null;
     tooltipPos = null;
     tooltipKey = '';
@@ -404,17 +426,18 @@
 		                message={m}
 		                messageKey={m.id ?? `${m.timestamp}-${m.username}-${m.text}`}
 		                bind:this={bubbleRefs[String(m.id ?? `${m.timestamp}-${m.username}-${m.text}`)]}
-		                isOwn={$user?.username === m.username}
-                    canEdit={$user?.username === m.username && !m.deleted && now - (m.timestamp ?? 0) <= 30 * 60 * 1000}
-                    canDelete={$user?.username === m.username && !m.deleted && now - (m.timestamp ?? 0) <= 30 * 60 * 1000}
+		                isOwn={isOwnMessage(m, $user, $peer)}
+                    canEdit={isOwnMessage(m, $user, $peer) && !m.deleted && now - (m.timestamp ?? 0) <= 30 * 60 * 1000}
+                    canDelete={isOwnMessage(m, $user, $peer) && !m.deleted && now - (m.timestamp ?? 0) <= 30 * 60 * 1000}
                 tooltipId={tooltipUser && tooltipKey === String(m.id ?? `${m.timestamp}-${m.username}-${m.text}`) ? TOOLTIP_ID : ''}
                 on:hoverEnter={onHoverEnter}
                 on:hoverMove={onHoverMove}
 	                on:hoverLeave={onHoverLeave}
 	                on:reply={(ev) => addPendingReply(ev.detail.message)}
 	                on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
-	                on:menuOpen={onMenuOpen}
+                on:menuOpen={onMenuOpen}
                   on:menuClose={onMenuClose}
+                  on:openProfile={openProfile}
 	                    on:edit={(ev) => {
 	                      const msg = ev?.detail?.message;
 	                      if (!msg?.id) return;

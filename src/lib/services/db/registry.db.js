@@ -62,6 +62,37 @@ export async function isUsernameTaken(username) {
 }
 
 /**
+ * @param {string} username
+ * @returns {Promise<import('./types.js').UsernameRegistryEntry|null>}
+ */
+export async function getUsernameRegistryEntry(username) {
+  try {
+    const norm = normalizeUsername(username);
+    if (!norm) return null;
+    return (await db.usernameRegistry.where('username').equals(norm).first()) ?? null;
+  } catch (err) {
+    console.error('getUsernameRegistryEntry failed', err);
+    throw err;
+  }
+}
+
+/**
+ * Remove a username registry entry (normalized match).
+ * @param {string} username
+ * @returns {Promise<number>} number of rows deleted
+ */
+export async function unregisterUsernameLocally(username) {
+  try {
+    const norm = normalizeUsername(username);
+    if (!norm) return 0;
+    return await db.usernameRegistry.where('username').equals(norm).delete();
+  } catch (err) {
+    console.error('unregisterUsernameLocally failed', err);
+    throw err;
+  }
+}
+
+/**
  * @returns {Promise<import('./types.js').UsernameRegistryEntry[]>}
  */
 export async function getFullUsernameRegistry() {

@@ -31,6 +31,7 @@
   import { cssEscape } from '$lib/utils/replies.js';
   import { decodePrivateBody } from '$lib/utils/privateMessageCodec.js';
   import { showToast } from '$lib/stores/toastStore.js';
+  import { openProfile } from '$lib/stores/profileStore.js';
 
   /** @type {HTMLDivElement|null} */
   let listEl = null;
@@ -417,6 +418,7 @@
 		              isOwn={m.direction === 'sent'}
                   canEdit={m.direction === 'sent' && !m.deleted && !m.queued}
                   canDelete={m.direction === 'sent' && !m.deleted && !m.queued}
+                  on:openProfile={openProfile}
 		              on:reply={(ev) => addPendingReply($activeChat.id, ev.detail.message)}
 		              on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
                   on:edit={(ev) => {

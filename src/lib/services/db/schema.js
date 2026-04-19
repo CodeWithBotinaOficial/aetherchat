@@ -25,6 +25,7 @@ export class AetherChatDB extends Dexie {
   /** @type {Dexie.Table<QueuedAction, string>} */ queuedActions;
   /** @type {Dexie.Table<{ id: string, chatId: string, timestamp: number, plaintext: string }, string>} */ sentMessagesPlaintext;
   /** @type {Dexie.Table<SessionKeyRing, string>} */ sessionKeys;
+  /** @type {Dexie.Table<{ id: 'cooldown', until: number }, string>} */ cooldown;
 
   /**
    * @param {string} [name='AetherChatDB']
@@ -292,6 +293,31 @@ export class AetherChatDB extends Dexie {
         await privates.toCollection().modify((m) => {
           if (!Object.prototype.hasOwnProperty.call(m, 'editedAt')) m.editedAt = null;
           if (!Object.prototype.hasOwnProperty.call(m, 'deleted')) m.deleted = false;
+        });
+      });
+
+    // Phase 13: user profile fields + account deletion cooldown table.
+    this.version(14)
+      .stores({
+        users: 'id, username, createdAt',
+        globalMessages: 'id, timestamp, peerId, username',
+        privateChats: 'id, myPeerId, myUsername, theirPeerId, theirUsername, createdAt, lastActivity',
+        privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+        knownPeers: '++id, peerId, lastSeen, username',
+        usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+        peerIds: 'username, peerId',
+        queuedMessages: 'id, chatId, theirPeerId, timestamp',
+        queuedActions: 'id, chatId, theirPeerId, timestamp, kind',
+        sentMessagesPlaintext: 'id, chatId, timestamp',
+        sessionKeys: 'id, updatedAt',
+        cooldown: 'id'
+      })
+      .upgrade(async (tx) => {
+        const users = tx.table('users');
+        await users.toCollection().modify((u) => {
+          if (!Object.prototype.hasOwnProperty.call(u, 'bio')) u.bio = '';
+          if (!Object.prototype.hasOwnProperty.call(u, 'usernameLastChangedAt')) u.usernameLastChangedAt = null;
+          if (!Object.prototype.hasOwnProperty.call(u, 'ageChangedOnce')) u.ageChangedOnce = false;
         });
       });
   }

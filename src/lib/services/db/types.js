@@ -4,7 +4,10 @@
  * @property {string} username
  * @property {number} age
  * @property {string} color
- * @property {string} avatarBase64
+ * @property {string|null} avatarBase64
+ * @property {string} [bio]
+ * @property {number|null} [usernameLastChangedAt]
+ * @property {boolean} [ageChangedOnce]
  * @property {number} createdAt
  */
 
@@ -109,4 +112,3 @@
  * @property {{ keyBase64: string, createdAt: number }[]} keys
  * @property {number} updatedAt
  */
-

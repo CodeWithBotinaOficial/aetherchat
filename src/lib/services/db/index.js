@@ -11,3 +11,4 @@ export * from './privateMessages.db.js';
 export * from './knownPeers.db.js';
 export * from './registry.db.js';
 
+export * from './cooldown.db.js';
