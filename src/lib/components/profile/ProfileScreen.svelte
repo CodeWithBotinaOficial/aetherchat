@@ -37,8 +37,8 @@
 <svelte:window on:keydown|capture={onKeydown} />
 
 {#if $isProfileOpen}
-  <div class="backdrop" transition:fade={{ duration: 140 }}>
-    <button type="button" class="hit" aria-label="Close profile" on:click={(e) => { if (e.target === e.currentTarget) closeProfile(); }}></button>
+  <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+  <div class="backdrop" transition:fade={{ duration: 140 }} on:click={(e) => { if (e.target === e.currentTarget) closeProfile(); }}>
     <div
       class={`panel ${isMobile ? 'mobile' : 'desktop'}`}
       transition:fly={{ y: isMobile ? 520 : 18, duration: 180 }}
@@ -83,15 +83,6 @@
     display: grid;
     place-items: center;
     padding: var(--space-lg);
-  }
-
-  .hit {
-    position: fixed;
-    inset: 0;
-    border: 0;
-    background: transparent;
-    padding: 0;
-    cursor: default;
   }
 
   .panel {
