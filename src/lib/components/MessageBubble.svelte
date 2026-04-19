@@ -1,5 +1,6 @@
 	<script>
 		  import { createEventDispatcher, onDestroy, onMount } from 'svelte';
+      import { user as userStore } from '$lib/stores/userStore.js';
 	  import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
 	  import { formatMessageTime } from '$lib/utils/time.js';
 	  import { previewText } from '$lib/utils/replies.js';
@@ -133,11 +134,24 @@
     if (suppressTap) return;
     const pointerType = e?.pointerType;
     if (pointerType && pointerType === 'mouse') return;
+    if (isOwn) {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      dispatch('openProfile');
+      return;
+    }
     dispatch('hoverEnter', {
       message,
       messageKey,
       position: getPositionFromEvent(e)
     });
+  }
+
+  function onIdentityClick(e) {
+    if (!isOwn) return;
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    dispatch('openProfile');
   }
 
 	  function triggerReply() {
@@ -251,7 +265,11 @@
 	    ? `0 0 0 3px color-mix(in srgb, ${message.color} 15%, transparent)`
 	    : 'none';
 
-		  $: avatarSize = isDesktop ? 48 : isMobile ? 36 : 42;
+	  $: avatarSize = isDesktop ? 48 : isMobile ? 36 : 42;
+
+    $: displayUsername = isOwn ? ($userStore?.username ?? message.username) : message.username;
+    $: displayAge = isOwn ? ($userStore?.age ?? message.age) : message.age;
+    $: displayAvatar = isOwn ? ($userStore?.avatarBase64 ?? (message.avatarBase64 ?? null)) : (message.avatarBase64 ?? null);
 		</script>
 
 	<div class={`message-row flex w-full ${isOwn ? 'justify-end' : 'justify-start'}`}>
@@ -290,7 +308,7 @@
 			        role="group"
 			        data-aether-bubble="true"
 	        data-message-id={message.id ?? ''}
-        aria-label={`Message from ${message.username}`}
+        aria-label={`Message from ${displayUsername}`}
         aria-describedby={tooltipId || undefined}
         on:touchstart={onTouchStart}
 	        on:touchmove={onTouchMove}
@@ -341,20 +359,25 @@
 			          on:mousemove={onMove}
 			          on:mouseleave={handleBubbleMouseLeave}
 			          on:pointerup={onPointerUp}
+                on:click={onIdentityClick}
 			          on:keydown={(e) => {
 			            if (e.key === 'Enter' || e.key === ' ') {
 			              e.preventDefault();
-			              // Use element bounds as the tooltip anchor.
-			              dispatch('hoverEnter', { message, messageKey, position: getPositionFromEvent(e) });
+                    if (isOwn) {
+                      dispatch('openProfile');
+                    } else {
+			                // Use element bounds as the tooltip anchor.
+			                dispatch('hoverEnter', { message, messageKey, position: getPositionFromEvent(e) });
+                    }
 			            }
 			          }}
 			        >
-			          <AvatarDisplay username={message.username} avatarBase64={message.avatarBase64 ?? null} size={avatarSize} showRing={true} />
+			          <AvatarDisplay username={displayUsername} avatarBase64={displayAvatar} size={avatarSize} showRing={true} />
 
 		          <div class="meta min-w-0">
 		            <div class="meta-top">
-		              <div class="meta-name font-700 text-[var(--text-primary)]">{message.username}</div>
-	              <div class="age-badge" aria-label="User age">{message.age}</div>
+		              <div class="meta-name font-700 text-[var(--text-primary)]">{displayUsername}</div>
+	              <div class="age-badge" aria-label="User age">{displayAge}</div>
 	            </div>
 	          </div>
 	        </div>

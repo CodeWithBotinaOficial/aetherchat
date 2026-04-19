@@ -128,6 +128,18 @@
         <strong>4.4 USERNAME UNIQUENESS:</strong> The Platform uses a decentralized mechanism to prevent duplicate usernames. In rare race conditions,
         duplicates may occur. We are not liable for any confusion arising from username collisions.
       </p>
+      <p>
+        <strong>4.5 USERNAME CHANGES:</strong> Username changes are limited to once every 24 hours. When you change your username, your previous username
+        is released and may be claimed by another user immediately. This change cannot be undone.
+      </p>
+      <p>
+        <strong>4.6 AGE UPDATES:</strong> You may update your age only once after initial registration. After saving, your age becomes permanently locked
+        for that profile.
+      </p>
+      <p>
+        <strong>4.7 BIOGRAPHY:</strong> You may provide an optional public biography of up to 120 characters. If provided, it may be visible to other
+        users.
+      </p>
 
       <hr class="rule" />
 
@@ -216,6 +228,14 @@
       <p>
         <strong>7.7 YOUR RIGHTS:</strong> You may delete all locally stored data at any time by clearing your browser's site data for this domain. This
         action is irreversible.
+      </p>
+      <p>
+        <strong>7.8 ACCOUNT DELETION:</strong> You may permanently delete your account and all associated data at any time from the Profile screen.
+        Deletion is irreversible. A 48-hour waiting period applies before a new account can be created from the same browser.
+      </p>
+      <p>
+        <strong>7.9 LOCAL DELETION EFFECTS:</strong> Upon account deletion, all locally stored messages, chat history, and profile data are permanently
+        removed from your device.
       </p>
 
       <hr class="rule" />

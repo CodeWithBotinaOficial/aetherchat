@@ -15,9 +15,11 @@ import {
   getGlobalMessage,
   getGlobalMessages,
   getKnownPeers,
+  getUsernameRegistryEntry,
   isUsernameTaken,
   mergeUsernameRegistry,
   registerUsernameLocally,
+  unregisterUsernameLocally,
   saveKnownPeer
 } from '$lib/services/db.js';
 import {
@@ -261,7 +263,7 @@ function setCachedAvatar(peerId, avatarBase64) {
 }
 
 /**
- * @typedef {'HANDSHAKE'|'HANDSHAKE_ACK'|'GLOBAL_MSG'|'GLOBAL_MSG_EDIT'|'GLOBAL_MSG_DELETE'|'PRESENCE_ANNOUNCE'|'HEARTBEAT'|'PRIVATE_KEY_EXCHANGE'|'PRIVATE_KEY_EXCHANGE_ACK'|'PRIVATE_MSG'|'PRIVATE_MSG_EDIT'|'PRIVATE_MSG_DELETE'|'PRIVATE_MSG_ACK'|'PRIVATE_CHAT_CLOSED'|'USER_LIST'|'PEER_DISCONNECT'|'LOBBY_JOIN'|'NETWORK_STATE'|'NEW_PEER'|'USERNAME_CHECK'|'USERNAME_TAKEN'|'USERNAME_REGISTERED'|'STATE_DIGEST'|'SYNC_REQUEST'|'SYNC_RESPONSE'|'LOBBY_HOST_CHANGED'} MessageType
+ * @typedef {'HANDSHAKE'|'HANDSHAKE_ACK'|'GLOBAL_MSG'|'GLOBAL_MSG_EDIT'|'GLOBAL_MSG_DELETE'|'PRESENCE_ANNOUNCE'|'HEARTBEAT'|'PRIVATE_KEY_EXCHANGE'|'PRIVATE_KEY_EXCHANGE_ACK'|'PRIVATE_MSG'|'PRIVATE_MSG_EDIT'|'PRIVATE_MSG_DELETE'|'PRIVATE_MSG_ACK'|'PRIVATE_CHAT_CLOSED'|'USER_LIST'|'PEER_DISCONNECT'|'LOBBY_JOIN'|'NETWORK_STATE'|'NEW_PEER'|'USERNAME_CHECK'|'USERNAME_TAKEN'|'USERNAME_REGISTERED'|'USERNAME_CHANGED'|'PROFILE_UPDATED'|'USER_DELETED'|'STATE_DIGEST'|'SYNC_REQUEST'|'SYNC_RESPONSE'|'LOBBY_HOST_CHANGED'} MessageType
  */
 
 /**
@@ -270,6 +272,7 @@ function setCachedAvatar(peerId, avatarBase64) {
  * @property {string} color
  * @property {number} age
  * @property {string} [avatarBase64]
+ * @property {string} [bio]
  * @property {number} [createdAt]
  */
 
@@ -481,6 +484,9 @@ const ALLOWED_TYPES = new Set([
   'USERNAME_CHECK',
   'USERNAME_TAKEN',
   'USERNAME_REGISTERED',
+  'USERNAME_CHANGED',
+  'PROFILE_UPDATED',
+  'USER_DELETED',
   'STATE_DIGEST',
   'SYNC_REQUEST',
   'SYNC_RESPONSE',
@@ -712,6 +718,7 @@ function upsertConnectedPeer(peerId, conn, info) {
       color: info?.color ?? prev?.color ?? '',
       age: info?.age ?? prev?.age ?? 0,
       avatarBase64: info?.avatarBase64 ?? prev?.avatarBase64 ?? null,
+      bio: typeof info?.bio === 'string' ? info.bio : (prev?.bio ?? ''),
       connection: conn ?? prev?.connection
     });
     return { ...s, connectedPeers: next };
@@ -850,7 +857,11 @@ async function sendHandshake(conn, profile) {
   const publicKey = await ensureLocalPublicKeyBase64();
   safeSend(
     conn,
-    buildMessage('HANDSHAKE', id, effectiveProfile, { publicKey, avatarBase64: effectiveProfile.avatarBase64 ?? null })
+    buildMessage('HANDSHAKE', id, effectiveProfile, {
+      publicKey,
+      avatarBase64: effectiveProfile.avatarBase64 ?? null,
+      bio: effectiveProfile.bio ?? ''
+    })
   );
 }
 
@@ -862,7 +873,11 @@ async function sendHandshakeAck(conn, profile) {
   const publicKey = await ensureLocalPublicKeyBase64();
   safeSend(
     conn,
-    buildMessage('HANDSHAKE_ACK', id, effectiveProfile, { publicKey, avatarBase64: effectiveProfile.avatarBase64 ?? null })
+    buildMessage('HANDSHAKE_ACK', id, effectiveProfile, {
+      publicKey,
+      avatarBase64: effectiveProfile.avatarBase64 ?? null,
+      bio: effectiveProfile.bio ?? ''
+    })
   );
 }
 
@@ -1709,7 +1724,8 @@ function announcePresence(profile) {
       username: profile.username,
       color: profile.color,
       age: profile.age,
-      avatarBase64: profile.avatarBase64 ?? null
+      avatarBase64: profile.avatarBase64 ?? null,
+      bio: profile.bio ?? ''
     },
     timestamp: Date.now()
   });
@@ -1724,12 +1740,14 @@ export async function handleMessage(msg, fromConn, profile) {
   if (msg.type === 'HANDSHAKE') {
     remoteIdentityKeys.set(remotePeerId, msg.payload?.publicKey ?? '');
     const avatarBase64 = typeof msg.payload?.avatarBase64 === 'string' && msg.payload.avatarBase64.length > 0 ? msg.payload.avatarBase64 : null;
+    const bio = typeof msg.payload?.bio === 'string' ? msg.payload.bio : '';
     if (avatarBase64) setCachedAvatar(remotePeerId, avatarBase64);
     upsertConnectedPeer(remotePeerId, fromConn, {
       username: msg.from.username,
       color: msg.from.color,
       age: msg.from.age,
-      avatarBase64
+      avatarBase64,
+      bio
     });
     await saveKnownPeer({ username: msg.from.username, peerId: remotePeerId, lastSeen: Date.now() });
 
@@ -1865,6 +1883,7 @@ export async function handleMessage(msg, fromConn, profile) {
   if (msg.type === 'PRESENCE_ANNOUNCE') {
     const avatarBase64 =
       typeof msg.payload?.avatarBase64 === 'string' && msg.payload.avatarBase64.length > 0 ? msg.payload.avatarBase64 : null;
+    const bio = typeof msg.payload?.bio === 'string' ? msg.payload.bio : '';
     if (avatarBase64) setCachedAvatar(remotePeerId, avatarBase64);
 
     const theirUsername = msg.payload?.username ?? msg.from.username;
@@ -1872,7 +1891,8 @@ export async function handleMessage(msg, fromConn, profile) {
       username: theirUsername,
       color: msg.payload?.color ?? msg.from.color,
       age: typeof msg.payload?.age === 'number' ? msg.payload.age : msg.from.age,
-      avatarBase64
+      avatarBase64,
+      bio
     });
     await saveKnownPeer({ username: msg.from.username, peerId: remotePeerId, lastSeen: msg.timestamp ?? Date.now() });
 
@@ -1988,6 +2008,120 @@ export async function handleMessage(msg, fromConn, profile) {
       registeredAt,
       lastSeenAt: Date.now()
     });
+    return;
+  }
+
+  if (msg.type === 'USERNAME_CHANGED') {
+    const oldUsername = msg.payload?.oldUsername;
+    const newUsername = msg.payload?.newUsername;
+    const peerId = msg.payload?.peerId;
+    const changedAt = msg.payload?.changedAt;
+    if (typeof oldUsername !== 'string' || oldUsername.trim().length === 0) return;
+    if (typeof newUsername !== 'string' || newUsername.trim().length === 0) return;
+    if (typeof peerId !== 'string' || peerId.length === 0) return;
+    if (typeof changedAt !== 'number') return;
+
+    try {
+      await unregisterUsernameLocally(oldUsername);
+      await registerUsernameLocally({
+        username: newUsername,
+        peerId,
+        registeredAt: changedAt,
+        lastSeenAt: Date.now()
+      });
+    } catch (err) {
+      console.error('USERNAME_CHANGED registry update failed', err);
+    }
+
+    // Update connected peer display metadata immediately.
+    upsertConnectedPeer(remotePeerId, fromConn, { username: newUsername });
+    try {
+      await saveKnownPeer({ username: newUsername, peerId: remotePeerId, lastSeen: Date.now() });
+    } catch {
+      // ignore
+    }
+
+    // Best-effort: update any private chat entries that reference this peer.
+    try {
+      for (const chat of get(privateChatStore).chats.values()) {
+        if (chat?.theirPeerId !== remotePeerId) continue;
+        upsertChatEntry({ id: chat.id, theirUsername: newUsername });
+        const existing = await getPrivateChat(chat.id);
+        if (existing) await upsertPrivateChat({ ...existing, theirUsername: newUsername });
+      }
+    } catch {
+      // ignore
+    }
+    return;
+  }
+
+  if (msg.type === 'PROFILE_UPDATED') {
+    const avatarBase64 =
+      typeof msg.payload?.avatarBase64 === 'string' && msg.payload.avatarBase64.length > 0 ? msg.payload.avatarBase64 : null;
+    const bio = typeof msg.payload?.bio === 'string' ? msg.payload.bio : null;
+
+    if (avatarBase64) setCachedAvatar(remotePeerId, avatarBase64);
+
+    upsertConnectedPeer(remotePeerId, fromConn, {
+      avatarBase64: avatarBase64 ?? undefined,
+      bio: bio ?? undefined
+    });
+
+    // Best-effort: also update private chat cached avatar for this peer.
+    try {
+      for (const chat of get(privateChatStore).chats.values()) {
+        if (chat?.theirPeerId !== remotePeerId) continue;
+        if (avatarBase64) {
+          upsertChatEntry({ id: chat.id, theirAvatarBase64: avatarBase64 });
+          const existing = await getPrivateChat(chat.id);
+          if (existing) await upsertPrivateChat({ ...existing, theirAvatarBase64: avatarBase64 });
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return;
+  }
+
+  if (msg.type === 'USER_DELETED') {
+    const username = msg.payload?.username;
+    const peerId = msg.payload?.peerId;
+    if (typeof username !== 'string' || username.trim().length === 0) return;
+    if (typeof peerId !== 'string' || peerId.length === 0) return;
+    // Basic consistency: require envelope peerId to match payload peerId.
+    if (peerId !== remotePeerId) return;
+
+    // Security: ignore if the deletion isn't coming from the peerId currently registered for that username.
+    const entry = await getUsernameRegistryEntry(username);
+    if (!entry || entry.peerId !== remotePeerId) return;
+
+    try {
+      await unregisterUsernameLocally(username);
+    } catch (err) {
+      console.error('USER_DELETED unregister failed', err);
+    }
+
+    // Remove from knownPeers + connectedPeers.
+    try {
+      await db.knownPeers.where('peerId').equals(remotePeerId).delete();
+    } catch {
+      // ignore
+    }
+    removeConnectedPeer(remotePeerId);
+    setChatOnlineStatus(remotePeerId, false);
+
+    // Mark any private chats with this peer as deleted, but keep message history.
+    const placeholder = '[ User deleted their account ]';
+    try {
+      for (const chat of get(privateChatStore).chats.values()) {
+        if (chat?.theirPeerId !== remotePeerId) continue;
+        upsertChatEntry({ id: chat.id, theirUsername: placeholder, isOnline: false });
+        const existing = await getPrivateChat(chat.id);
+        if (existing) await upsertPrivateChat({ ...existing, theirUsername: placeholder });
+      }
+    } catch {
+      // ignore
+    }
     return;
   }
 
@@ -2572,7 +2706,7 @@ export async function initPeer(profile) {
     cachedProfile =
       profile && profile.username
         ? profile
-        : { username: 'pre-registration', color: 'hsl(0, 0%, 70%)', age: 0, avatarBase64: null, createdAt: Date.now() };
+        : { username: 'pre-registration', color: 'hsl(0, 0%, 70%)', age: 0, avatarBase64: null, bio: '', createdAt: Date.now() };
     setConnectionState('connecting', { error: null, reconnectAttempt: 0 });
 
     // If the peer already exists (e.g. we connected pre-registration), update cached profile
@@ -3132,6 +3266,93 @@ export function broadcastUsernameRegistered(profile) {
       peerId: id,
       registeredAt: profile.createdAt ?? Date.now()
     },
+    timestamp: Date.now()
+  });
+}
+
+/**
+ * Update the in-memory local profile references used for outgoing messages/handshakes.
+ * This does not touch IndexedDB; callers should persist separately.
+ * @param {UserProfile|null} profile
+ */
+export function setLocalUserProfile(profile) {
+  userProfileRef = profile ?? null;
+  if (profile) cachedProfile = profile;
+
+  // Refresh connected peers with updated metadata (best-effort).
+  if (!profile || profile.username === 'pre-registration') return;
+  try {
+    const state = get(peerStore);
+    for (const entry of state.connectedPeers.values()) {
+      sendHandshake(entry.connection, profile).catch((err) => console.error('refresh handshake failed', err));
+    }
+    announcePresence(profile);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Lightweight broadcast when avatar/bio changes (not username).
+ * Recipients update their tooltip/avatar caches immediately.
+ * @param {{ bio?: string, avatarBase64?: string|null }} patch
+ * @param {UserProfile} profile
+ */
+export function broadcastProfileUpdated(patch, profile) {
+  const state = get(peerStore);
+  const id = state.peerId;
+  if (!id) return;
+  if (!profile?.username || profile.username === 'pre-registration') return;
+
+  const payload = {};
+  if (Object.prototype.hasOwnProperty.call(patch, 'bio')) payload.bio = patch.bio ?? '';
+  if (Object.prototype.hasOwnProperty.call(patch, 'avatarBase64')) payload.avatarBase64 = patch.avatarBase64 ?? null;
+
+  broadcastToAll({
+    type: 'PROFILE_UPDATED',
+    from: buildFromProfile(profile),
+    payload,
+    timestamp: Date.now()
+  });
+
+  // Keep the existing presence flow in sync as well.
+  announcePresence(profile);
+}
+
+/**
+ * Broadcast a username rename so peers can update their local registries.
+ * @param {{ oldUsername: string, newUsername: string, peerId: string, changedAt: number }} payload
+ * @param {UserProfile} profile
+ */
+export function broadcastUsernameChanged(payload, profile) {
+  const state = get(peerStore);
+  const id = state.peerId;
+  if (!id) return;
+  if (!profile?.username || profile.username === 'pre-registration') return;
+
+  broadcastToAll({
+    type: 'USERNAME_CHANGED',
+    from: buildFromProfile(profile),
+    payload,
+    timestamp: Date.now()
+  });
+}
+
+/**
+ * Broadcast account deletion so peers remove this user from registries + connected lists.
+ * @param {{ username: string, peerId: string }} payload
+ * @param {UserProfile} profile
+ */
+export function broadcastUserDeleted(payload, profile) {
+  const state = get(peerStore);
+  const id = state.peerId;
+  if (!id) return;
+  if (!profile?.username || profile.username === 'pre-registration') return;
+
+  broadcastToAll({
+    type: 'USER_DELETED',
+    from: buildFromProfile(profile),
+    payload,
     timestamp: Date.now()
   });
 }

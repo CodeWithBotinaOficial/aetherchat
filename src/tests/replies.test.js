@@ -1,5 +1,6 @@
 import { get } from 'svelte/store';
 import { fireEvent, render } from '@testing-library/svelte';
+import { waitFor } from '@testing-library/dom';
 import GlobalChat from '$lib/components/GlobalChat.svelte';
 import MessageBubble from '$lib/components/MessageBubble.svelte';
 import { db } from '$lib/services/db.js';
@@ -33,6 +34,7 @@ async function clearAllTables() {
     db.knownPeers,
     db.usernameRegistry,
     db.peerIds,
+    db.cooldown,
     async () => {
       await Promise.all([
         db.users.clear(),
@@ -45,7 +47,8 @@ async function clearAllTables() {
         db.queuedActions.clear(),
         db.knownPeers.clear(),
         db.usernameRegistry.clear(),
-        db.peerIds.clear()
+        db.peerIds.clear(),
+        db.cooldown.clear()
       ]);
     }
   );
@@ -155,7 +158,10 @@ it('Sending a message includes the replies array and clears pendingReplies (Glob
   expect(sendBtn).toBeTruthy();
   await fireEvent.click(sendBtn);
 
-  await new Promise((r) => setTimeout(r, 20));
+  await waitFor(() => {
+    if (get(globalPendingReplies).length !== 0) throw new Error('pendingReplies not cleared yet');
+    return true;
+  });
 
   const msgs = get(globalMessages);
   expect(msgs.length).toBeGreaterThan(1);

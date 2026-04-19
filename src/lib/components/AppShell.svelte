@@ -11,8 +11,10 @@
   import TopBar from '$lib/components/TopBar.svelte';
   import BottomNav from '$lib/components/BottomNav.svelte';
   import ToastHost from '$lib/components/ToastHost.svelte';
+  import ProfileScreen from '$lib/components/profile/ProfileScreen.svelte';
   import { totalUnread, setChatOnlineStatus } from '$lib/stores/privateChatStore.js';
   import { flushQueueForPeer, onMessage } from '$lib/services/peer.js';
+  import { openProfile } from '$lib/stores/profileStore.js';
 
   const tabs = [
     { key: 'global', label: 'Global Chat', icon: 'globe' },
@@ -78,6 +80,7 @@
       avatarBase64={$user?.avatarBase64 ?? null}
       connectedPeers={connectedPeers}
       status={topBarStatus}
+      on:openProfile={openProfile}
     />
   {/if}
 
@@ -113,7 +116,7 @@
       </div>
 
       <div class="profile">
-        <div class="profile-row">
+        <button type="button" class="profile-row" on:click={openProfile} aria-label="Open profile" title="Profile">
           <AvatarDisplay
             username={$user?.username ?? ''}
             avatarBase64={$user?.avatarBase64 ?? null}
@@ -128,7 +131,7 @@
               {connectedPeers} peer{connectedPeers === 1 ? '' : 's'}
             </div>
           </div>
-        </div>
+        </button>
       </div>
     </aside>
 
@@ -149,6 +152,8 @@
     <BottomNav active={$activeTab} privateUnread={$totalUnread} on:select={(e) => activeTab.set(e.detail.key)} />
   {/if}
 </div>
+
+<ProfileScreen />
 
 {#if import.meta.env.DEV}
   <P2PDebugPanel />
@@ -268,6 +273,21 @@
     gap: 10px;
     align-items: center;
     min-width: 0;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    color: inherit;
+    text-align: left;
+  }
+
+  @media (hover: hover) {
+    .profile-row:hover {
+      background: var(--bg-elevated);
+      border-radius: var(--radius-md);
+      padding: 10px;
+      margin: -10px;
+    }
   }
 
   .profile-meta {

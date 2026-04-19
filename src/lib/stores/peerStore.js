@@ -6,6 +6,7 @@ import { writable } from 'svelte/store';
  * @property {string} color
  * @property {number} age
  * @property {string|null} [avatarBase64]
+ * @property {string} [bio]
  * @property {any} connection
  */
 

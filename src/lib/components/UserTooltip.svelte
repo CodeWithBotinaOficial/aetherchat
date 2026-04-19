@@ -2,9 +2,10 @@
   import { createEventDispatcher, tick } from 'svelte';
   import { fade, scale } from 'svelte/transition';
   import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
+  import { truncateWithEllipsis } from '$lib/utils/replies.js';
   import { initiatePrivateChat } from '$lib/services/peer.js';
 
-  /** @type {{ peerId?: string, username: string, age: number, color: string, avatarBase64: string | null } | null} */
+  /** @type {{ peerId?: string, username: string, age: number, color: string, avatarBase64: string | null, bio?: string } | null} */
   export let user = null;
   /** @type {{ x: number, y: number } | null} */
   export let position = null;
@@ -62,6 +63,9 @@
     }
   }
 
+  $: bioRaw = typeof user?.bio === 'string' ? user.bio.trim() : '';
+  $: bioText = bioRaw ? truncateWithEllipsis(bioRaw, 120) : '';
+
   function handleTooltipMouseEnter() {
     cancelHide?.();
   }
@@ -99,6 +103,11 @@
             {user.age}
           </div>
         </div>
+        {#if bioText}
+          <div class="mt-[6px] text-[var(--font-size-xs)] text-[var(--text-muted)] leading-[1.35]">
+            {bioText}
+          </div>
+        {/if}
         <div class="mt-[2px] text-[var(--font-size-xs)] text-[var(--text-muted)] font-mono">
           P2P identity
         </div>

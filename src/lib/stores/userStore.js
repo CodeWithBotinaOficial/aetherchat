@@ -12,7 +12,11 @@ export const user = writable(null);
 
 export const isRegistered = derived(user, ($u) => $u !== null);
 
-async function loadUserFromDb() {
+/**
+ * Explicit hydration (called by app boot). Kept out of module init so the app
+ * can enforce the account deletion cooldown check before loading profile data.
+ */
+export async function hydrateUserFromDb() {
   try {
     const u = await getUser();
     if (u) user.set(u);
@@ -20,9 +24,6 @@ async function loadUserFromDb() {
     console.error('userStore load failed', err);
   }
 }
-
-// Fire-and-forget initialization.
-loadUserFromDb();
 
 /**
  * @param {string} username
@@ -38,7 +39,10 @@ export async function registerUser(username, age, avatarBase64) {
       username,
       age,
       color,
-      avatarBase64: avatar,
+      avatarBase64: avatar ?? null,
+      bio: '',
+      usernameLastChangedAt: null,
+      ageChangedOnce: false,
       createdAt: Date.now()
     };
 

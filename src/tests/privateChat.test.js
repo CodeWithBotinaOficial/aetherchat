@@ -45,30 +45,32 @@ async function clearAllTables() {
     db.users,
     db.globalMessages,
     db.privateChats,
-	    db.privateMessages,
-	    db.sentMessagesPlaintext,
-	    db.sessionKeys,
-	    db.queuedMessages,
-	    db.queuedActions,
-	    db.knownPeers,
-	    db.usernameRegistry,
-	    db.peerIds,
-	    async () => {
-	      await Promise.all([
-	        db.users.clear(),
-	        db.globalMessages.clear(),
-	        db.privateChats.clear(),
-	        db.privateMessages.clear(),
-	        db.sentMessagesPlaintext.clear(),
-	        db.sessionKeys.clear(),
-	        db.queuedMessages.clear(),
-	        db.queuedActions.clear(),
-	        db.knownPeers.clear(),
-	        db.usernameRegistry.clear(),
-	        db.peerIds.clear()
-	      ]);
-	    }
-	  );
+    db.privateMessages,
+    db.sentMessagesPlaintext,
+    db.sessionKeys,
+    db.queuedMessages,
+    db.queuedActions,
+    db.knownPeers,
+    db.usernameRegistry,
+    db.peerIds,
+    db.cooldown,
+    async () => {
+      await Promise.all([
+        db.users.clear(),
+        db.globalMessages.clear(),
+        db.privateChats.clear(),
+        db.privateMessages.clear(),
+        db.sentMessagesPlaintext.clear(),
+        db.sessionKeys.clear(),
+        db.queuedMessages.clear(),
+        db.queuedActions.clear(),
+        db.knownPeers.clear(),
+        db.usernameRegistry.clear(),
+        db.peerIds.clear(),
+        db.cooldown.clear()
+      ]);
+    }
+  );
 }
 
 	beforeEach(async () => {

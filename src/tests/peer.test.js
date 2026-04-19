@@ -246,6 +246,7 @@ vi.mock('$lib/services/crypto.js', () => {
   handleMessage,
   initPeer,
   joinLobby,
+  setLocalUserProfile,
   validateProtocolMessage
 } from '$lib/services/peer.js';
 
@@ -337,6 +338,45 @@ it('initPeer creates a Peer with a random UUID (not the lobby ID)', async () => 
   expect(MockPeer.ctorCalls[0].id).not.toBe(LOBBY_PEER_ID);
   expect(MockPeer.ctorCalls[0].options.host).toBe('0.peerjs.com');
   expect(MockPeer.ctorCalls[0].options.secure).toBe(true);
+});
+
+it('HANDSHAKE payload includes bio', async () => {
+  peerStore.update((s) => ({ ...s, peerId: 'local-main', isConnected: true }));
+  const conn = new MockConn('remote-main', {});
+
+  handleIncomingConnection(conn, { ...me, bio: 'hello there' });
+  conn.emit('open');
+  await flushMicrotasks();
+
+  expect(conn.send).toHaveBeenCalled();
+  const sent = conn.send.mock.calls.map((c) => c[0]);
+  const handshake = sent.find((m) => m?.type === 'HANDSHAKE');
+  expect(handshake).toBeTruthy();
+  expect(handshake.payload.bio).toBe('hello there');
+});
+
+it('PRESENCE_ANNOUNCE payload includes bio', async () => {
+  const send = vi.fn();
+  peerStore.set({
+    peerId: 'local-main',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    lastSyncAt: null,
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'x', age: 1, bio: '', connection: { send, open: true } }]])
+  });
+
+  setLocalUserProfile({ ...me, bio: 'my bio' });
+  await flushMicrotasks();
+
+  const sent = send.mock.calls.map((c) => c[0]);
+  const presence = sent.find((m) => m?.type === 'PRESENCE_ANNOUNCE');
+  expect(presence).toBeTruthy();
+  expect(presence.payload.bio).toBe('my bio');
 });
 
 it('joinLobby resolves as guest when another peer is already hosting', async () => {

@@ -1,4 +1,5 @@
 <script>
+  import { createEventDispatcher } from 'svelte';
   import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
 
   export let username = '';
@@ -6,6 +7,8 @@
   export let connectedPeers = 0;
   /** @type {'connected'|'connecting'|'offline'} */
   export let status = 'offline';
+
+  const dispatch = createEventDispatcher();
 
   $: statusText =
     status === 'connected'
@@ -23,10 +26,10 @@
 
     <div class="right">
       <div class="status" aria-label="Connection status">{statusText}</div>
-      <div class="me">
+      <button type="button" class="me" on:click={() => dispatch('openProfile')} aria-label="Open profile" title="Profile">
         <div class="name">{username || '...'}</div>
         <AvatarDisplay username={username || ''} avatarBase64={avatarBase64} size={28} showRing={true} />
-      </div>
+      </button>
     </div>
   </div>
 </header>
@@ -80,6 +83,10 @@
     align-items: center;
     gap: 8px;
     min-width: 0;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    color: inherit;
   }
 
   .name {

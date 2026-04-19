@@ -110,6 +110,26 @@ These overlays are mutually exclusive:
 
 ---
 
+## 👤 User Profiles
+
+You can manage your profile after registration:
+
+- **Open the Profile screen**:
+  - Desktop: click your user card (avatar + username) at the bottom-left of the sidebar.
+  - Mobile: tap your avatar + username area in the TopBar.
+  - From chat: click/tap your own message bubble’s avatar or username.
+- **Editable fields**:
+  - Username: can be changed **once every 24 hours**. Your previous username is released immediately.
+  - Age: can be updated **once** after registration, then permanently locked.
+  - Biography: optional public bio up to **120 characters** (shown in user tooltips).
+  - Avatar: upload a PNG/JPG (max 500KB) or remove to revert to an initials avatar.
+- **Account deletion**:
+  - Available in the Profile screen’s Danger Zone.
+  - Requires typing your exact username to confirm (case-sensitive).
+  - After deletion, this browser enforces a **48-hour cooldown** before a new account can be created.
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites
