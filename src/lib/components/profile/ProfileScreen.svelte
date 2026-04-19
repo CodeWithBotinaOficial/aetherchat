@@ -38,7 +38,7 @@
 
 {#if $isProfileOpen}
   <div class="backdrop" transition:fade={{ duration: 140 }}>
-    <button type="button" class="hit" aria-label="Close profile" on:click={closeProfile}></button>
+    <button type="button" class="hit" aria-label="Close profile" on:click={(e) => { if (e.target === e.currentTarget) closeProfile(); }}></button>
     <div
       class={`panel ${isMobile ? 'mobile' : 'desktop'}`}
       transition:fly={{ y: isMobile ? 520 : 18, duration: 180 }}
