@@ -114,10 +114,12 @@ These overlays are mutually exclusive:
 
 You can manage your profile after registration:
 
-- **Open the Profile screen**:
+- **Open your Wall**:
   - Desktop: click your user card (avatar + username) at the bottom-left of the sidebar.
   - Mobile: tap your avatar + username area in the TopBar.
-  - From chat: click/tap your own message bubble’s avatar or username.
+  - From chat: click/tap your own message bubble’s avatar circle or username.
+- **Edit your profile**:
+  - Open your Wall and press **Edit Profile**.
 - **Editable fields**:
   - Username: can be changed **once every 24 hours**. Your previous username is released immediately.
   - Age: can be updated **once** after registration, then permanently locked.
@@ -129,6 +131,33 @@ You can manage your profile after registration:
   - After deletion, this browser enforces a **48-hour cooldown** before a new account can be created.
 
 ---
+
+## 🧱 Social Features
+
+AetherChat includes a lightweight social layer built on top of the P2P network.
+
+- **Walls**
+  - Every user has a wall (profile page) that shows their avatar, username, bio, follow stats, and recent wall comments.
+  - Open **your own wall**: click your avatar/username in the desktop sidebar or the mobile TopBar.
+  - Open **someone else’s wall**:
+    - Click their **avatar circle** or **username** in a message bubble, or
+    - Open the user tooltip and press **View Profile**.
+
+- **Following**
+  - Following is stored locally and shared peer-to-peer when peers are online.
+  - Follow counts can differ between nodes due to the P2P model.
+
+- **Wall comments**
+  - Anyone can post a comment on any wall.
+  - Only the **comment author** can edit their comment text.
+  - The **comment author** or the **wall owner** can delete a comment.
+
+- **Unfollow cascade**
+  - Unfollowing a user permanently removes **all of your comments** from that user’s wall.
+  - Re-following does not restore previously deleted comments.
+
+- **Privacy note**
+  - Wall data is synced peer-to-peer. There is no central server, and different peers may show different follower/following counts.
 
 ## 🚀 Getting Started
 

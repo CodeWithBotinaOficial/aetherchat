@@ -11,6 +11,8 @@ import Dexie from 'dexie';
  * @typedef {import('./types.js').QueuedMessage} QueuedMessage
  * @typedef {import('./types.js').QueuedAction} QueuedAction
  * @typedef {import('./types.js').SessionKeyRing} SessionKeyRing
+ * @typedef {import('./types.js').Follow} Follow
+ * @typedef {import('./types.js').WallComment} WallComment
  */
 
 export class AetherChatDB extends Dexie {
@@ -26,6 +28,8 @@ export class AetherChatDB extends Dexie {
   /** @type {Dexie.Table<{ id: string, chatId: string, timestamp: number, plaintext: string }, string>} */ sentMessagesPlaintext;
   /** @type {Dexie.Table<SessionKeyRing, string>} */ sessionKeys;
   /** @type {Dexie.Table<{ id: 'cooldown', until: number }, string>} */ cooldown;
+  /** @type {Dexie.Table<Follow, number>} */ follows;
+  /** @type {Dexie.Table<WallComment, string>} */ wallComments;
 
   /**
    * @param {string} [name='AetherChatDB']
@@ -320,6 +324,43 @@ export class AetherChatDB extends Dexie {
           if (!Object.prototype.hasOwnProperty.call(u, 'ageChangedOnce')) u.ageChangedOnce = false;
         });
       });
+
+    // Phase 15: social wall and follow system.
+    this.version(15).stores({
+      users: 'id, username, createdAt',
+      globalMessages: 'id, timestamp, peerId, username',
+      privateChats: 'id, myPeerId, myUsername, theirPeerId, theirUsername, createdAt, lastActivity',
+      privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+      knownPeers: '++id, peerId, lastSeen, username',
+      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+      peerIds: 'username, peerId',
+      queuedMessages: 'id, chatId, theirPeerId, timestamp',
+      queuedActions: 'id, chatId, theirPeerId, timestamp, kind',
+      sentMessagesPlaintext: 'id, chatId, timestamp',
+      sessionKeys: 'id, updatedAt',
+      cooldown: 'id',
+      follows: '++id, followerPeerId, targetPeerId, [followerPeerId+targetPeerId]',
+      wallComments: 'id, wallOwnerPeerId, authorPeerId, createdAt'
+    });
+
+    // Phase 16: wall comment compound indexes for cascades + newest-first queries.
+    this.version(16).stores({
+      users: 'id, username, createdAt',
+      globalMessages: 'id, timestamp, peerId, username',
+      privateChats: 'id, myPeerId, myUsername, theirPeerId, theirUsername, createdAt, lastActivity',
+      privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+      knownPeers: '++id, peerId, lastSeen, username',
+      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+      peerIds: 'username, peerId',
+      queuedMessages: 'id, chatId, theirPeerId, timestamp',
+      queuedActions: 'id, chatId, theirPeerId, timestamp, kind',
+      sentMessagesPlaintext: 'id, chatId, timestamp',
+      sessionKeys: 'id, updatedAt',
+      cooldown: 'id',
+      follows: '++id, followerPeerId, targetPeerId, [followerPeerId+targetPeerId]',
+      wallComments:
+        'id, wallOwnerPeerId, authorPeerId, createdAt, [wallOwnerPeerId+authorPeerId], [wallOwnerPeerId+createdAt]'
+    });
   }
 }
 

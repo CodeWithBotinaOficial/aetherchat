@@ -1,5 +1,6 @@
 import { get } from 'svelte/store';
 import { fireEvent } from '@testing-library/svelte';
+import { waitFor } from '@testing-library/dom';
 import GlobalChat from '$lib/components/GlobalChat.svelte';
 import PrivateChatWindow from '$lib/components/PrivateChatWindow.svelte';
 import { db, saveGlobalMessage } from '$lib/services/db.js';
@@ -23,6 +24,8 @@ async function clearAllTables() {
     db.usernameRegistry,
     db.peerIds,
     db.cooldown,
+    db.follows,
+    db.wallComments,
     async () => {
       await Promise.all([
         db.users.clear(),
@@ -36,7 +39,9 @@ async function clearAllTables() {
         db.knownPeers.clear(),
         db.usernameRegistry.clear(),
         db.peerIds.clear(),
-        db.cooldown.clear()
+        db.cooldown.clear(),
+        db.follows.clear(),
+        db.wallComments.clear()
       ]);
     }
   );
@@ -125,7 +130,12 @@ it('GlobalChat: saving an edit updates the message in-place and persists to DB',
   const component = new GlobalChat({ target: document.body });
   await wait(40);
 
-  await fireEvent.pointerDown(document.querySelector('.msg-menu-trigger'));
+  const trigger = await waitFor(() => {
+    const el = document.querySelector('.msg-menu-trigger');
+    if (!el) throw new Error('menu trigger not ready');
+    return el;
+  });
+  await fireEvent.pointerDown(trigger);
   await fireEvent.click(Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'Edit'));
 
   const textarea = document.querySelector('textarea');

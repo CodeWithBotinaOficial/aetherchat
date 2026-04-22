@@ -129,17 +129,11 @@
     hideTimeout = null;
   }
 
-  function onPointerUp(e) {
+  function onTooltipPointerUp(e) {
     // Touch / pen: open tooltip on tap.
     if (suppressTap) return;
     const pointerType = e?.pointerType;
     if (pointerType && pointerType === 'mouse') return;
-    if (isOwn) {
-      e?.preventDefault?.();
-      e?.stopPropagation?.();
-      dispatch('openProfile');
-      return;
-    }
     dispatch('hoverEnter', {
       message,
       messageKey,
@@ -147,11 +141,10 @@
     });
   }
 
-  function onIdentityClick(e) {
-    if (!isOwn) return;
+  function openWallFromZone(e) {
     e?.preventDefault?.();
     e?.stopPropagation?.();
-    dispatch('openProfile');
+    dispatch('openWall', { message, isOwn });
   }
 
 	  function triggerReply() {
@@ -349,38 +342,54 @@
 		          {/if}
 		        {/if}
 
-			        <div
-			          class="identity flex items-center gap-[var(--space-sm)]"
-			          data-aether-identity="true"
-			          role="button"
-			          tabindex="0"
-			          aria-label={`User details for ${message.username}`}
-			          on:mouseenter={handleBubbleMouseEnter}
-			          on:mousemove={onMove}
-			          on:mouseleave={handleBubbleMouseLeave}
-			          on:pointerup={onPointerUp}
-                on:click={onIdentityClick}
-			          on:keydown={(e) => {
-			            if (e.key === 'Enter' || e.key === ' ') {
-			              e.preventDefault();
-                    if (isOwn) {
-                      dispatch('openProfile');
-                    } else {
-			                // Use element bounds as the tooltip anchor.
-			                dispatch('hoverEnter', { message, messageKey, position: getPositionFromEvent(e) });
-                    }
-			            }
-			          }}
-			        >
-			          <AvatarDisplay username={displayUsername} avatarBase64={displayAvatar} size={avatarSize} showRing={true} />
+          <div class="identity-row">
+            <button
+              type="button"
+              class="avatar-zone"
+              data-aether-avatar-zone="true"
+              aria-label={`Open wall for ${displayUsername}`}
+              title="Open wall"
+              on:click={openWallFromZone}
+              on:pointerdown|stopPropagation
+            >
+              <AvatarDisplay username={displayUsername} avatarBase64={displayAvatar} size={avatarSize} showRing={true} />
+            </button>
 
-		          <div class="meta min-w-0">
-		            <div class="meta-top">
-		              <div class="meta-name font-700 text-[var(--text-primary)]">{displayUsername}</div>
-	              <div class="age-badge" aria-label="User age">{displayAge}</div>
-	            </div>
-	          </div>
-	        </div>
+            <div class="meta min-w-0">
+              <div class="meta-top">
+                <button
+                  type="button"
+                  class="name-zone meta-name font-700 text-[var(--text-primary)]"
+                  data-aether-username-zone="true"
+                  on:click={openWallFromZone}
+                  on:pointerdown|stopPropagation
+                  aria-label={`Open wall for ${displayUsername}`}
+                  title="Open wall"
+                >
+                  {displayUsername}
+                </button>
+                <div class="age-badge" aria-label="User age">{displayAge}</div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            class="tooltip-zone"
+            data-aether-tooltip-zone="true"
+            role="button"
+            tabindex="0"
+            aria-label={`User details for ${displayUsername}`}
+            on:mouseenter={handleBubbleMouseEnter}
+            on:mousemove={onMove}
+            on:mouseleave={handleBubbleMouseLeave}
+            on:pointerup={onTooltipPointerUp}
+            on:keydown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                dispatch('hoverEnter', { message, messageKey, position: getPositionFromEvent(e) });
+              }
+            }}
+          >
 
 		        {#if Array.isArray(message.replies) && message.replies.length > 0}
 		          <div class="mt-[var(--space-xs)] grid gap-[6px]">
@@ -442,6 +451,7 @@
             {/if}
           {/if}
         </div>
+        </div>
       </div>
     </div>
 
@@ -469,6 +479,36 @@
 		    will-change: transform;
 		    position: relative;
 		  }
+
+      .identity-row {
+        display: flex;
+        align-items: center;
+        gap: 10px; /* >= 8px separation between interactive avatar and username */
+      }
+
+      .avatar-zone,
+      .name-zone {
+        border: 0;
+        background: transparent;
+        padding: 0;
+        color: inherit;
+      }
+
+      .name-zone {
+        text-align: left;
+        cursor: pointer;
+        max-width: 100%;
+      }
+
+      .tooltip-zone {
+        margin-top: 6px;
+        outline: none;
+      }
+
+      .tooltip-zone:focus-visible {
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+        border-radius: var(--radius-sm);
+      }
 
 	  @media (min-width: 1024px) {
 	    .bubble {

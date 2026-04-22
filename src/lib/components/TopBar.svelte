@@ -26,7 +26,7 @@
 
     <div class="right">
       <div class="status" aria-label="Connection status">{statusText}</div>
-      <button type="button" class="me" on:click={() => dispatch('openProfile')} aria-label="Open profile" title="Profile">
+      <button type="button" class="me" on:click={() => dispatch('openWall')} aria-label="Open my wall" title="My wall">
         <div class="name">{username || '...'}</div>
         <AvatarDisplay username={username || ''} avatarBase64={avatarBase64} size={28} showRing={true} />
       </button>

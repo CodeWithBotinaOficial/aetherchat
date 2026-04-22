@@ -112,3 +112,27 @@
  * @property {{ keyBase64: string, createdAt: number }[]} keys
  * @property {number} updatedAt
  */
+
+/**
+ * @typedef {Object} Follow
+ * @property {number} [id]
+ * @property {string} followerPeerId
+ * @property {string} followerUsername
+ * @property {string} targetPeerId
+ * @property {string} targetUsername
+ * @property {number} followedAt
+ */
+
+/**
+ * @typedef {Object} WallComment
+ * @property {string} id
+ * @property {string} wallOwnerPeerId
+ * @property {string} authorPeerId
+ * @property {string} authorUsername
+ * @property {string} authorColor
+ * @property {string|null} authorAvatarBase64
+ * @property {string} text
+ * @property {number} createdAt
+ * @property {number|null} editedAt
+ * @property {boolean} deleted
+ */

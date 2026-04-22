@@ -20,6 +20,8 @@ async function clearAllTables() {
     db.usernameRegistry,
     db.peerIds,
     db.cooldown,
+    db.follows,
+    db.wallComments,
     async () => {
       await Promise.all([
         db.users.clear(),
@@ -33,7 +35,9 @@ async function clearAllTables() {
         db.knownPeers.clear(),
         db.usernameRegistry.clear(),
         db.peerIds.clear(),
-        db.cooldown.clear()
+        db.cooldown.clear(),
+        db.follows.clear(),
+        db.wallComments.clear()
       ]);
     }
   );
@@ -69,9 +73,9 @@ async function mountWithOneOwnMessage() {
     { id: 'm1', peerId: 'local', username: 'alice', age: 22, color: 'hsl(1, 65%, 65%)', text: 'hello', timestamp: Date.now() }
   ]);
 
-  const identity = await waitFor(() => {
-    const el = document.querySelector('[data-aether-identity="true"]');
-    if (!el) throw new Error('identity not ready');
+  const tooltipZone = await waitFor(() => {
+    const el = document.querySelector('[data-aether-tooltip-zone="true"]');
+    if (!el) throw new Error('tooltip zone not ready');
     return el;
   });
   const menuTrigger = await waitFor(() => {
@@ -79,13 +83,13 @@ async function mountWithOneOwnMessage() {
     if (!el) throw new Error('menu trigger not ready');
     return el;
   });
-  return { component, identity, menuTrigger };
+  return { component, tooltipZone, menuTrigger };
 }
 
 it('Opening the action menu closes any visible tooltip', async () => {
-  const { component, identity, menuTrigger } = await mountWithOneOwnMessage();
+  const { component, tooltipZone, menuTrigger } = await mountWithOneOwnMessage();
 
-  identity.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: 120, clientY: 120 }));
+  tooltipZone.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: 120, clientY: 120 }));
   await waitFor(() => {
     const el = document.querySelector('[data-aether-tooltip="true"]');
     if (!el) throw new Error('tooltip not ready');
@@ -108,7 +112,7 @@ it('Opening the action menu closes any visible tooltip', async () => {
 });
 
 it('Opening the tooltip closes any open action menu', async () => {
-  const { component, identity, menuTrigger } = await mountWithOneOwnMessage();
+  const { component, tooltipZone, menuTrigger } = await mountWithOneOwnMessage();
 
   menuTrigger.dispatchEvent(new Event('pointerdown', { bubbles: true }));
   await waitFor(() => {
@@ -117,7 +121,7 @@ it('Opening the tooltip closes any open action menu', async () => {
     return el;
   });
 
-  identity.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: 120, clientY: 120 }));
+  tooltipZone.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: 120, clientY: 120 }));
 
   // While the action menu is open, tooltip opening is suppressed so the menu
   // stays open while the cursor moves into it.
@@ -133,8 +137,8 @@ it('Opening the tooltip closes any open action menu', async () => {
   });
 
   // Now tooltip can open normally.
-  identity.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
-  identity.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: 120, clientY: 120 }));
+  tooltipZone.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+  tooltipZone.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: 120, clientY: 120 }));
   await waitFor(() => {
     const el = document.querySelector('[data-aether-tooltip="true"]');
     if (!el) throw new Error('tooltip not ready');

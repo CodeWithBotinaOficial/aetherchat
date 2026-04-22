@@ -46,6 +46,8 @@ async function clearAllTables() {
     db.usernameRegistry,
     db.peerIds,
     db.cooldown,
+    db.follows,
+    db.wallComments,
     async () => {
       await Promise.all([
         db.users.clear(),
@@ -59,7 +61,9 @@ async function clearAllTables() {
         db.knownPeers.clear(),
         db.usernameRegistry.clear(),
         db.peerIds.clear(),
-        db.cooldown.clear()
+        db.cooldown.clear(),
+        db.follows.clear(),
+        db.wallComments.clear()
       ]);
     }
   );

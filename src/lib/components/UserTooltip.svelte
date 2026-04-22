@@ -4,6 +4,7 @@
   import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
   import { truncateWithEllipsis } from '$lib/utils/replies.js';
   import { initiatePrivateChat } from '$lib/services/peer.js';
+  import { peer } from '$lib/stores/peerStore.js';
 
   /** @type {{ peerId?: string, username: string, age: number, color: string, avatarBase64: string | null, bio?: string } | null} */
   export let user = null;
@@ -63,6 +64,18 @@
     }
   }
 
+	  function handleViewProfile() {
+	    if (!user) return;
+	    if (!user?.peerId) return;
+	    dispatch('viewProfile', { user });
+	    dispatch('close');
+	  }
+
+  $: myPeerId = $peer?.peerId ?? null;
+  $: isSelf = Boolean(user?.peerId && myPeerId && user.peerId === myPeerId);
+  $: canViewProfile = Boolean(user?.peerId && myPeerId && !isSelf);
+  $: canStartPrivateChat = Boolean(user?.peerId && myPeerId && !isSelf);
+
   $: bioRaw = typeof user?.bio === 'string' ? user.bio.trim() : '';
   $: bioText = bioRaw ? truncateWithEllipsis(bioRaw, 120) : '';
 
@@ -115,21 +128,64 @@
     </div>
 
       <div class="mt-[var(--space-md)]">
-        <button
-          class="start-btn w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--accent)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-primary)] font-600"
-          on:click={handleStartPrivateChat}
-        >
-          Start Private Chat
-        </button>
+        <div class="btn-row">
+          {#if canViewProfile}
+            <button
+              class="btn btn-secondary"
+              on:click={handleViewProfile}
+              aria-label="View profile"
+              title="View profile"
+            >
+              View Profile
+            </button>
+          {/if}
+          {#if canStartPrivateChat}
+            <button
+              class="btn btn-primary"
+              on:click={handleStartPrivateChat}
+              aria-label="Start private chat"
+              title="Start private chat"
+            >
+              Start Private Chat
+            </button>
+          {/if}
+        </div>
       </div>
     </div>
   </div>
 {/if}
 
 <style>
+  .btn-row {
+    display: grid;
+    gap: 10px; /* >= 8px separation */
+  }
+
+  .btn {
+    width: 100%;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    padding: var(--space-sm) var(--space-md);
+    font-weight: 800;
+    color: var(--text-primary);
+  }
+
+  .btn-primary {
+    background: var(--accent);
+  }
+
+  .btn-secondary {
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+  }
+
   @media (hover: hover) {
-    .start-btn:hover {
+    .btn-primary:hover {
       background: var(--accent-hover);
+    }
+    .btn-secondary:hover {
+      background: var(--bg-overlay);
+      color: var(--text-primary);
     }
   }
 </style>

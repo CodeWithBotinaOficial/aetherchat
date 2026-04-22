@@ -19,6 +19,8 @@ beforeEach(async () => {
     db.usernameRegistry,
     db.peerIds,
     db.cooldown,
+    db.follows,
+    db.wallComments,
     async () => {
       await Promise.all([
         db.users.clear(),
@@ -32,7 +34,9 @@ beforeEach(async () => {
         db.knownPeers.clear(),
         db.usernameRegistry.clear(),
         db.peerIds.clear(),
-        db.cooldown.clear()
+        db.cooldown.clear(),
+        db.follows.clear(),
+        db.wallComments.clear()
       ]);
     }
   );

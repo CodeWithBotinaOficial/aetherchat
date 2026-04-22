@@ -19,6 +19,8 @@ import {
   broadcastUsernameChanged,
   checkUsernameAvailability,
   disconnectPeer,
+  isPeerOnline,
+  sendProtocolEnvelopeToPeer,
   setLocalUserProfile
 } from '$lib/services/peer.js';
 import { generateInitialsAvatar, validateAvatarFile } from '$lib/utils/avatar.js';
@@ -230,6 +232,57 @@ export async function deleteAccount() {
   // STEP 1: broadcast before mutating local state.
   broadcastUserDeleted({ username: u.username, peerId }, profile);
 
+  // STEP 1b: social deletion cascade (follows + wall comments).
+  // Note: these sends are best-effort; we do not queue social packets.
+  try {
+    if (peerId && peerId !== 'pending') {
+      const from = { peerId, username: u.username, color: u.color, age: u.age };
+
+      const outgoingFollows = await db.follows.where('followerPeerId').equals(peerId).toArray();
+      const authoredComments = await db.wallComments.where('authorPeerId').equals(peerId).toArray();
+
+      // 1) Delete all outgoing follows.
+      await db.follows.where('followerPeerId').equals(peerId).delete();
+      // 2) Delete all incoming follows.
+      await db.follows.where('targetPeerId').equals(peerId).delete();
+
+      // 3) Delete all comments authored by me.
+      await db.wallComments.where('authorPeerId').equals(peerId).delete();
+      // 4) Delete all comments on my wall.
+      await db.wallComments.where('wallOwnerPeerId').equals(peerId).delete();
+
+      // 5) Notify wall owners about comment deletions (only for comments on other walls).
+      for (const c of authoredComments) {
+        if (!c || typeof c !== 'object') continue;
+        if (c.wallOwnerPeerId === peerId) continue;
+        if (!c.wallOwnerPeerId || typeof c.wallOwnerPeerId !== 'string') continue;
+        if (!c.id || typeof c.id !== 'string') continue;
+        if (!isPeerOnline(c.wallOwnerPeerId)) continue;
+        sendProtocolEnvelopeToPeer(c.wallOwnerPeerId, {
+          type: 'WALL_COMMENT_DELETED',
+          from,
+          payload: { id: c.id, wallOwnerPeerId: c.wallOwnerPeerId, authorPeerId: peerId },
+          timestamp: Date.now()
+        });
+      }
+
+      // 6) Notify follow targets about UNFOLLOW.
+      for (const f of outgoingFollows) {
+        if (!f || typeof f !== 'object') continue;
+        if (!f.targetPeerId || typeof f.targetPeerId !== 'string') continue;
+        if (!isPeerOnline(f.targetPeerId)) continue;
+        sendProtocolEnvelopeToPeer(f.targetPeerId, {
+          type: 'UNFOLLOW',
+          from,
+          payload: { targetPeerId: f.targetPeerId, followerPeerId: peerId },
+          timestamp: Date.now()
+        });
+      }
+    }
+  } catch (err) {
+    console.error('deleteAccount social cascade failed', err);
+  }
+
   // STEP 2-8: delete local IndexedDB data (in the requested order).
   try {
     // 2) Delete all global messages authored by this user.
@@ -256,6 +309,14 @@ export async function deleteAccount() {
 
     // 7) Delete all knownPeers entries.
     await db.knownPeers.clear();
+
+    // 7b) Delete social tables.
+    try {
+      await db.follows.clear();
+      await db.wallComments.clear();
+    } catch {
+      // ignore
+    }
 
     // 8) Delete the user profile from IndexedDB.
     await db.users.delete(1);

@@ -12,9 +12,10 @@
   import BottomNav from '$lib/components/BottomNav.svelte';
   import ToastHost from '$lib/components/ToastHost.svelte';
   import ProfileScreen from '$lib/components/profile/ProfileScreen.svelte';
+  import WallScreen from '$lib/components/wall/WallScreen.svelte';
   import { totalUnread, setChatOnlineStatus } from '$lib/stores/privateChatStore.js';
   import { flushQueueForPeer, onMessage } from '$lib/services/peer.js';
-  import { openProfile } from '$lib/stores/profileStore.js';
+  import { openMyWall } from '$lib/stores/wall/actions.js';
 
   const tabs = [
     { key: 'global', label: 'Global Chat', icon: 'globe' },
@@ -80,7 +81,7 @@
       avatarBase64={$user?.avatarBase64 ?? null}
       connectedPeers={connectedPeers}
       status={topBarStatus}
-      on:openProfile={openProfile}
+      on:openWall={openMyWall}
     />
   {/if}
 
@@ -116,7 +117,7 @@
       </div>
 
       <div class="profile">
-        <button type="button" class="profile-row" on:click={openProfile} aria-label="Open profile" title="Profile">
+        <button type="button" class="profile-row" on:click={openMyWall} aria-label="Open my wall" title="My wall">
           <AvatarDisplay
             username={$user?.username ?? ''}
             avatarBase64={$user?.avatarBase64 ?? null}
@@ -151,8 +152,9 @@
   {#if isMobile}
     <BottomNav active={$activeTab} privateUnread={$totalUnread} on:select={(e) => activeTab.set(e.detail.key)} />
   {/if}
-</div>
+  </div>
 
+<WallScreen />
 <ProfileScreen />
 
 {#if import.meta.env.DEV}

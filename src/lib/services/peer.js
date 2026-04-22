@@ -69,6 +69,7 @@ import {
 } from '$lib/services/db.js';
 import { decodePrivateBody, encodePrivateBody } from '$lib/utils/privateMessageCodec.js';
 import { snapshotText } from '$lib/utils/replies.js';
+import * as social from '$lib/services/peer/social.js';
 
 // PeerJS public server has limitations (roughly ~50 connections per peer ID).
 // This MVP uses it for discovery and direct browser-to-browser messaging.
@@ -263,7 +264,7 @@ function setCachedAvatar(peerId, avatarBase64) {
 }
 
 /**
- * @typedef {'HANDSHAKE'|'HANDSHAKE_ACK'|'GLOBAL_MSG'|'GLOBAL_MSG_EDIT'|'GLOBAL_MSG_DELETE'|'PRESENCE_ANNOUNCE'|'HEARTBEAT'|'PRIVATE_KEY_EXCHANGE'|'PRIVATE_KEY_EXCHANGE_ACK'|'PRIVATE_MSG'|'PRIVATE_MSG_EDIT'|'PRIVATE_MSG_DELETE'|'PRIVATE_MSG_ACK'|'PRIVATE_CHAT_CLOSED'|'USER_LIST'|'PEER_DISCONNECT'|'LOBBY_JOIN'|'NETWORK_STATE'|'NEW_PEER'|'USERNAME_CHECK'|'USERNAME_TAKEN'|'USERNAME_REGISTERED'|'USERNAME_CHANGED'|'PROFILE_UPDATED'|'USER_DELETED'|'STATE_DIGEST'|'SYNC_REQUEST'|'SYNC_RESPONSE'|'LOBBY_HOST_CHANGED'} MessageType
+ * @typedef {'HANDSHAKE'|'HANDSHAKE_ACK'|'GLOBAL_MSG'|'GLOBAL_MSG_EDIT'|'GLOBAL_MSG_DELETE'|'PRESENCE_ANNOUNCE'|'HEARTBEAT'|'PRIVATE_KEY_EXCHANGE'|'PRIVATE_KEY_EXCHANGE_ACK'|'PRIVATE_MSG'|'PRIVATE_MSG_EDIT'|'PRIVATE_MSG_DELETE'|'PRIVATE_MSG_ACK'|'PRIVATE_CHAT_CLOSED'|'USER_LIST'|'PEER_DISCONNECT'|'LOBBY_JOIN'|'NETWORK_STATE'|'NEW_PEER'|'USERNAME_CHECK'|'USERNAME_TAKEN'|'USERNAME_REGISTERED'|'USERNAME_CHANGED'|'PROFILE_UPDATED'|'USER_DELETED'|'STATE_DIGEST'|'SYNC_REQUEST'|'SYNC_RESPONSE'|'LOBBY_HOST_CHANGED'|'FOLLOW'|'UNFOLLOW'|'WALL_COMMENT_ADDED'|'WALL_COMMENT_EDITED'|'WALL_COMMENT_DELETED'|'WALL_DATA_REQUEST'|'WALL_DATA_RESPONSE'} MessageType
  */
 
 /**
@@ -490,7 +491,14 @@ const ALLOWED_TYPES = new Set([
   'STATE_DIGEST',
   'SYNC_REQUEST',
   'SYNC_RESPONSE',
-  'LOBBY_HOST_CHANGED'
+  'LOBBY_HOST_CHANGED',
+  'FOLLOW',
+  'UNFOLLOW',
+  'WALL_COMMENT_ADDED',
+  'WALL_COMMENT_EDITED',
+  'WALL_COMMENT_DELETED',
+  'WALL_DATA_REQUEST',
+  'WALL_DATA_RESPONSE'
 ]);
 
 const REQUIRES_TO = new Set([
@@ -892,6 +900,29 @@ function sendToPeer(peerId, envelope) {
   if (!entry) return;
   if (entry.connection?.open === false) return;
   safeSend(entry.connection, envelope);
+}
+
+/**
+ * Public, low-level protocol send helpers.
+ * These are intentionally thin wrappers so feature stores can send new protocol
+ * message types without coupling to PeerJS internals.
+ */
+export function broadcastProtocolEnvelope(envelope) {
+  broadcastToAll(envelope);
+}
+
+export function sendProtocolEnvelopeToPeer(peerId, envelope) {
+  const pid = String(peerId ?? '').trim();
+  if (!pid) return;
+  sendToPeer(pid, envelope);
+}
+
+export function isPeerOnline(peerId) {
+  const pid = String(peerId ?? '').trim();
+  if (!pid) return false;
+  const entry = get(peerStore).connectedPeers.get(pid);
+  if (!entry) return false;
+  return entry.connection?.open !== false;
 }
 
 function flushGlobalOutbox() {
@@ -2052,6 +2083,13 @@ export async function handleMessage(msg, fromConn, profile) {
     } catch {
       // ignore
     }
+
+    // Social cleanup: remove follows + wall comments authored by this peer; close wall if open.
+    try {
+      await social.handleRemoteUserDeletedSocial(remotePeerId);
+    } catch (err) {
+      console.error('USER_DELETED social cleanup failed', err);
+    }
     return;
   }
 
@@ -2080,6 +2118,43 @@ export async function handleMessage(msg, fromConn, profile) {
     } catch {
       // ignore
     }
+    return;
+  }
+
+  // Social wall + follow system.
+  if (msg.type === 'FOLLOW') {
+    await social.handleFollowMessage(msg);
+    return;
+  }
+
+  if (msg.type === 'UNFOLLOW') {
+    await social.handleUnfollowMessage(msg);
+    return;
+  }
+
+  if (msg.type === 'WALL_COMMENT_ADDED') {
+    await social.handleWallCommentAddedMessage(msg);
+    return;
+  }
+
+  if (msg.type === 'WALL_COMMENT_EDITED') {
+    await social.handleWallCommentEditedMessage(msg);
+    return;
+  }
+
+  if (msg.type === 'WALL_COMMENT_DELETED') {
+    await social.handleWallCommentDeletedMessage(msg);
+    return;
+  }
+
+  if (msg.type === 'WALL_DATA_REQUEST') {
+    const response = await social.handleWallDataRequestMessage(msg);
+    if (response) sendToPeer(msg.from.peerId, response);
+    return;
+  }
+
+  if (msg.type === 'WALL_DATA_RESPONSE') {
+    await social.handleWallDataResponseMessage(msg);
     return;
   }
 

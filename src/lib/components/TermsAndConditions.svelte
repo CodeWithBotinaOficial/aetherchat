@@ -166,6 +166,24 @@
       </p>
       <p><strong>5.3</strong> You acknowledge that you are solely and exclusively responsible for all content you transmit using the Platform.</p>
 
+      <h2 class="h2">5.4 WALL AND SOCIAL FEATURES</h2>
+      <ul class="list">
+        <li>
+          Wall owners have the right to delete any comment posted on their wall regardless of who posted it. AetherChat does not moderate or intervene in
+          this process.
+        </li>
+        <li>
+          AetherChat guarantees that only the comment author can edit their own comment text. No other user, including the wall owner, can modify another
+          user's comment content.
+        </li>
+        <li>AetherChat does not guarantee that comments you post on other users' walls will remain visible. Wall owners control what is displayed on their walls.</li>
+        <li>
+          Unfollowing a user permanently removes all your comments from their wall. This action cannot be undone. Re-following does not restore deleted
+          comments.
+        </li>
+        <li>Upon account deletion, all your comments, follows, and wall data are permanently removed from the network.</li>
+      </ul>
+
       <hr class="rule" />
 
       <h2 class="h2">6. DISCLAIMER OF LIABILITY FOR USER CONTENT</h2>

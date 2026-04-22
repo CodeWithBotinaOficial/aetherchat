@@ -18,7 +18,7 @@
   import { getGlobalMessagesPage } from '$lib/services/db.js';
   import { cssEscape } from '$lib/utils/replies.js';
   import { showToast } from '$lib/stores/toastStore.js';
-  import { openProfile } from '$lib/stores/profileStore.js';
+  import { openMyWall, openWall } from '$lib/stores/wall/actions.js';
 
   import ChatInput from '$lib/components/ChatInput.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -166,6 +166,45 @@
 
   function onTooltipClose() {
     onHoverLeave();
+  }
+
+  function openWallFromBubble(ev) {
+    const m = ev?.detail?.message;
+    if (!m) return;
+    const pid = String(m.peerId ?? '').trim();
+
+    // Own messages: always open your wall (PeerJS IDs can be transient; never rely on username here).
+    if (!pid || pid === 'local' || isOwnMessage(m, $user, $peer)) {
+      void openMyWall();
+      return;
+    }
+
+    const cache = $avatarCache;
+    const avatarBase64 = m.avatarBase64 ?? cache?.get?.(pid) ?? null;
+    const bio = typeof $peer?.connectedPeers?.get?.(pid)?.bio === 'string' ? $peer.connectedPeers.get(pid).bio : '';
+
+    void openWall({
+      peerId: pid,
+      username: String(m.username ?? ''),
+      age: Number(m.age ?? 0),
+      color: String(m.color ?? ''),
+      avatarBase64,
+      bio
+    });
+  }
+
+  function openWallFromTooltip(ev) {
+    const u = ev?.detail?.user;
+    const pid = String(u?.peerId ?? '').trim();
+    if (!pid) return;
+    void openWall({
+      peerId: pid,
+      username: String(u?.username ?? ''),
+      age: Number(u?.age ?? 0),
+      color: String(u?.color ?? ''),
+      avatarBase64: u?.avatarBase64 ?? null,
+      bio: String(u?.bio ?? '')
+    });
   }
 
   function onMenuOpen(ev) {
@@ -437,7 +476,7 @@
 	                on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
                 on:menuOpen={onMenuOpen}
                   on:menuClose={onMenuClose}
-                  on:openProfile={openProfile}
+                  on:openWall={openWallFromBubble}
 	                    on:edit={(ev) => {
 	                      const msg = ev?.detail?.message;
 	                      if (!msg?.id) return;
@@ -484,6 +523,7 @@
     position={tooltipPos}
     cancelHide={tooltipCancelHide}
     on:close={onTooltipClose}
+    on:viewProfile={openWallFromTooltip}
   />
 </div>
 

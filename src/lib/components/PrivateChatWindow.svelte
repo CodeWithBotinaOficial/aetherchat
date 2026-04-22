@@ -31,7 +31,7 @@
   import { cssEscape } from '$lib/utils/replies.js';
   import { decodePrivateBody } from '$lib/utils/privateMessageCodec.js';
   import { showToast } from '$lib/stores/toastStore.js';
-  import { openProfile } from '$lib/stores/profileStore.js';
+  import { openMyWall, openWall } from '$lib/stores/wall/actions.js';
 
   /** @type {HTMLDivElement|null} */
   let listEl = null;
@@ -241,6 +241,7 @@
 	    const safeText = typeof m.text === 'string' ? m.text : '🔒 Encrypted message';
 	    return {
 	      id: m.id,
+        peerId: isOwn ? (get(peerStore)?.peerId ?? 'local') : chat.theirPeerId,
 	      username: isOwn ? (u?.username ?? 'me') : chat.theirUsername,
 	      age: isOwn ? (u?.age ?? 0) : (chat.theirAge ?? get(peerStore).connectedPeers.get(chat.theirPeerId)?.age ?? 0),
       color: isOwn ? (u?.color ?? 'hsl(0,0%,65%)') : chat.theirColor,
@@ -253,6 +254,27 @@
       delivered: Boolean(m?.delivered),
       queued: Boolean(m?.queued)
     };
+  }
+
+  function openWallFromBubble(ev) {
+    const isOwn = Boolean(ev?.detail?.isOwn);
+    const m = ev?.detail?.message;
+    if (isOwn) {
+      void openMyWall();
+      return;
+    }
+    if (!$activeChat || !m) return;
+    const pid = String($activeChat.theirPeerId ?? '').trim();
+    if (!pid) return;
+    const bio = typeof get(peerStore).connectedPeers.get(pid)?.bio === 'string' ? get(peerStore).connectedPeers.get(pid).bio : '';
+    void openWall({
+      peerId: pid,
+      username: String(m.username ?? $activeChat.theirUsername ?? ''),
+      age: Number(m.age ?? 0),
+      color: String(m.color ?? $activeChat.theirColor ?? ''),
+      avatarBase64: m.avatarBase64 ?? null,
+      bio
+    });
   }
 
   async function scrollToAndHighlight(messageId) {
@@ -413,14 +435,14 @@
 		      {:else}
 		        {#each $activeChat.messages as m (m.id)}
 		          <div class={`pc-msg ${m.direction === 'sent' ? 'pc-msg-own' : 'pc-msg-their'}`}>
-		            <MessageBubble
-		              message={msgToBubble(m, $activeChat)}
-		              isOwn={m.direction === 'sent'}
+                    <MessageBubble
+                      message={msgToBubble(m, $activeChat)}
+                      isOwn={m.direction === 'sent'}
                   canEdit={m.direction === 'sent' && !m.deleted && !m.queued}
                   canDelete={m.direction === 'sent' && !m.deleted && !m.queued}
-                  on:openProfile={openProfile}
-		              on:reply={(ev) => addPendingReply($activeChat.id, ev.detail.message)}
-		              on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
+                  on:openWall={openWallFromBubble}
+                      on:reply={(ev) => addPendingReply($activeChat.id, ev.detail.message)}
+                      on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
                   on:edit={(ev) => {
                     const msg = ev?.detail?.message;
                     if (!msg?.id || !$activeChat) return;
