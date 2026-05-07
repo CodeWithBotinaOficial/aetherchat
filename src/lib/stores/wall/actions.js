@@ -1,6 +1,5 @@
 import { get } from 'svelte/store';
-import { user } from '$lib/stores/userStore.js';
-import { peer as peerStore } from '$lib/stores/peerStore.js';
+import { stablePeerId, user } from '$lib/stores/userStore.js';
 import { currentWall, isWallOpen, markWallViewed } from './state.js';
 import {
   followUser,
@@ -16,28 +15,28 @@ import {
 } from '$lib/services/peer.js';
 
 /**
- * @typedef {Pick<import('$lib/services/db.js').User, 'username'|'age'|'color'|'avatarBase64'|'bio'>} UserProfile
+ * @typedef {Pick<import('$lib/services/db.js').User, 'username'|'dateOfBirth'|'color'|'avatarBase64'|'bio'>} UserProfile
  */
 
 function myPeerId() {
-  return String(get(peerStore)?.peerId ?? '').trim();
+  return String(get(stablePeerId) ?? '').trim();
 }
 
 /**
  * @param {UserProfile} u
- * @returns {{ peerId: string, username: string, color: string, age: number }}
+ * @returns {{ peerId: string, username: string, color: string, dateOfBirth: string|null }}
  */
 function buildFromLocalUser(u) {
   return {
     peerId: myPeerId(),
     username: String(u?.username ?? ''),
     color: String(u?.color ?? ''),
-    age: Number(u?.age ?? 0)
+    dateOfBirth: typeof u?.dateOfBirth === 'string' ? u.dateOfBirth : null
   };
 }
 
 /**
- * @param {{ peerId: string, username: string, color: string, age: number, avatarBase64: string|null, bio?: string }} owner
+ * @param {{ peerId: string, username: string, color: string, dateOfBirth: string|null, avatarBase64: string|null, bio?: string }} owner
  */
 export async function openWall(owner) {
   const pid = String(owner?.peerId ?? '').trim();
@@ -64,7 +63,7 @@ export async function openWall(owner) {
     ownerPeerId: pid,
     ownerUsername: String(owner?.username ?? ''),
     ownerColor: String(owner?.color ?? ''),
-    ownerAge: Number(owner?.age ?? 0),
+    ownerDateOfBirth: typeof owner?.dateOfBirth === 'string' ? owner.dateOfBirth : null,
     ownerAvatarBase64: owner?.avatarBase64 ?? null,
     ownerBio: String(owner?.bio ?? ''),
     comments,
@@ -96,7 +95,7 @@ export async function openMyWall() {
     peerId: pid,
     username: u.username,
     color: u.color,
-    age: u.age,
+    dateOfBirth: u.dateOfBirth ?? null,
     avatarBase64: u.avatarBase64 ?? null,
     bio: u.bio ?? ''
   });

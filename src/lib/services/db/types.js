@@ -2,7 +2,7 @@
  * @typedef {Object} User
  * @property {number} [id]
  * @property {string} username
- * @property {number} age
+ * @property {string|null} dateOfBirth ISO date string (YYYY-MM-DD) or null
  * @property {string} color
  * @property {string|null} avatarBase64
  * @property {string} [bio]
@@ -16,7 +16,7 @@
  * @property {string} id
  * @property {string} peerId
  * @property {string} username
- * @property {number} age
+ * @property {string|null} dateOfBirth ISO date string (YYYY-MM-DD) or null
  * @property {string} color
  * @property {string} text
  * @property {{ messageId: string, authorUsername: string, authorColor: string, textSnapshot: string, timestamp: number, deleted?: boolean }[] | null} [replies]
@@ -34,6 +34,7 @@
  * @property {string} theirUsername
  * @property {string} theirColor
  * @property {string|null} theirAvatarBase64
+ * @property {string|null} [theirDateOfBirth] ISO date string (YYYY-MM-DD) or null
  * @property {string|null} [lastMessagePreview]
  * @property {number} [unreadCount]
  * @property {number} createdAt

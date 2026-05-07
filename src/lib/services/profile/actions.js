@@ -16,6 +16,7 @@ import {
 import {
   broadcastProfileUpdated,
   broadcastUserDeleted,
+  broadcastUsernameReleased,
   broadcastUsernameChanged,
   checkUsernameAvailability,
   disconnectPeer,
@@ -24,6 +25,7 @@ import {
   setLocalUserProfile
 } from '$lib/services/peer.js';
 import { generateInitialsAvatar, validateAvatarFile } from '$lib/utils/avatar.js';
+import { calculateAge } from '$lib/utils/time.js';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const FORTY_EIGHT_HOURS_MS = 48 * 60 * 60 * 1000;
@@ -57,7 +59,7 @@ function toPeerProfile(u) {
   return {
     username: u.username,
     color: u.color,
-    age: u.age,
+    dateOfBirth: u.dateOfBirth ?? null,
     avatarBase64: u.avatarBase64 ?? null,
     bio: u.bio ?? '',
     createdAt: u.createdAt
@@ -125,18 +127,26 @@ export async function changeUsername(nextUsername) {
 }
 
 /**
- * @param {number} nextAge
+ * @param {string} nextDateOfBirth ISO date string (YYYY-MM-DD)
  * @returns {Promise<{ ok: true } | { ok: false, error: string }>}
  */
-export async function changeAge(nextAge) {
+export async function changeDateOfBirth(nextDateOfBirth) {
   const u = get(userStore);
   if (!u) return { ok: false, error: 'Not registered.' };
-  if (u.ageChangedOnce) return { ok: false, error: 'Age is locked.' };
+  if (u.ageChangedOnce) return { ok: false, error: 'Date of birth is locked.' };
 
-  const n = Number(nextAge);
-  if (!Number.isFinite(n) || n < 16) return { ok: false, error: 'Age must be at least 16.' };
+  const dob = String(nextDateOfBirth ?? '').trim();
+  if (!dob) return { ok: false, error: 'Date of birth is required.' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dob)) return { ok: false, error: 'Invalid date of birth.' };
 
-  const updated = { ...u, age: Math.floor(n), ageChangedOnce: true };
+  // Guard: must not be a future date.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  if (dob > todayIso) return { ok: false, error: 'Date of birth cannot be in the future.' };
+
+  const age = calculateAge(dob);
+  if (age < 16) return { ok: false, error: 'You must be at least 16 years old to use AetherChat.' };
+
+  const updated = { ...u, dateOfBirth: dob, ageChangedOnce: true };
   await saveUser(updated);
   userStore.set(updated);
 
@@ -230,13 +240,15 @@ export async function deleteAccount() {
   const profile = toPeerProfile(u);
 
   // STEP 1: broadcast before mutating local state.
+  // Release username first so peers can immediately reclaim it locally.
+  broadcastUsernameReleased({ username: u.username, peerId }, profile);
   broadcastUserDeleted({ username: u.username, peerId }, profile);
 
   // STEP 1b: social deletion cascade (follows + wall comments).
   // Note: these sends are best-effort; we do not queue social packets.
   try {
     if (peerId && peerId !== 'pending') {
-      const from = { peerId, username: u.username, color: u.color, age: u.age };
+      const from = { peerId, username: u.username, color: u.color, dateOfBirth: u.dateOfBirth ?? null };
 
       const outgoingFollows = await db.follows.where('followerPeerId').equals(peerId).toArray();
       const authoredComments = await db.wallComments.where('authorPeerId').equals(peerId).toArray();

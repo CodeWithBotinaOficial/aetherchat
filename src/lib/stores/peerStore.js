@@ -4,7 +4,7 @@ import { writable } from 'svelte/store';
  * @typedef {Object} ConnectedPeer
  * @property {string} username
  * @property {string} color
- * @property {number} age
+ * @property {string|null} dateOfBirth
  * @property {string|null} [avatarBase64]
  * @property {string} [bio]
  * @property {any} connection

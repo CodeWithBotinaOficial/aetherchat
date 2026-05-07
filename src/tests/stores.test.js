@@ -61,11 +61,11 @@ it('userStore initializes as null', () => {
 });
 
 it('registerUser updates the store with correct shape', async () => {
-  await registerUser('alice', 22, 'data:image/png;base64,abc');
+  await registerUser('alice', '2004-01-01', 'data:image/png;base64,abc');
   const u = get(user);
   expect(u).not.toBeNull();
   expect(u?.username).toBe('alice');
-  expect(u?.age).toBe(22);
+  expect(u?.dateOfBirth).toBe('2004-01-01');
   expect(typeof u?.color).toBe('string');
   expect(u?.color.length).toBeGreaterThan(0);
   expect(u?.avatarBase64).toContain('data:image/png;base64');
@@ -77,7 +77,7 @@ it('isRegistered derived store is false when user is null', () => {
 });
 
 it('isRegistered derived store is true after registerUser', async () => {
-  await registerUser('alice', 22, 'data:image/png;base64,abc');
+  await registerUser('alice', '2004-01-01', 'data:image/png;base64,abc');
   expect(get(isRegistered)).toBe(true);
 });
 
@@ -89,7 +89,7 @@ it('addGlobalMessage appends to the array', async () => {
   await addGlobalMessage({
     peerId: 'peer-1',
     username: 'alice',
-    age: 22,
+    dateOfBirth: '2004-01-01',
     color: 'hsl(1, 65%, 65%)',
     text: 'hello',
     timestamp: Date.now()

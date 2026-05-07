@@ -97,7 +97,7 @@ Private encryption note: private message bodies are encrypted as a small version
 
 AetherChat has two overlays that can appear near a message:
 
-- **User tooltip**: avatar/name/age and “Start Private Chat”
+- **User tooltip**: avatar/name/age (calculated from date of birth) and “Start Private Chat”
 - **Message action menu**: ⋯ dropdown with Edit/Delete (own messages only)
 
 These overlays are mutually exclusive:
@@ -122,9 +122,10 @@ You can manage your profile after registration:
   - Open your Wall and press **Edit Profile**.
 - **Editable fields**:
   - Username: can be changed **once every 24 hours**. Your previous username is released immediately.
-  - Age: can be updated **once** after registration, then permanently locked.
+  - Date of birth: can be updated **once** after registration, then permanently locked. Age is always calculated dynamically.
   - Biography: optional public bio up to **120 characters** (shown in user tooltips).
   - Avatar: upload a PNG/JPG (max 500KB) or remove to revert to an initials avatar.
+  - Birthday banner: when viewing a wall on the owner’s birthday, a small celebratory banner appears under their bio.
 - **Account deletion**:
   - Available in the Profile screen’s Danger Zone.
   - Requires typing your exact username to confirm (case-sensitive).

@@ -107,7 +107,7 @@ vi.mock('$lib/services/crypto.js', () => {
 
 import { LOBBY_PEER_ID, __test as peerTest, disconnectPeer, handleMessage } from '$lib/services/peer.js';
 
-const me = { username: 'alice', color: 'hsl(1, 65%, 65%)', age: 22 };
+const me = { username: 'alice', color: 'hsl(1, 65%, 65%)', dateOfBirth: '2004-01-01' };
 
 beforeEach(() => {
   MockPeer.instances = [];
@@ -137,7 +137,7 @@ it('electNewLobbyHost selects the alphabetically lowest peerId', async () => {
   peerStore.update((s) => ({
     ...s,
     peerId: 'b',
-    connectedPeers: new Map([['a', { username: 'a', color: 'x', age: 1, connection: { send: vi.fn() } }]])
+    connectedPeers: new Map([['a', { username: 'a', color: 'x', dateOfBirth: '2004-01-01', connection: { send: vi.fn() } }]])
   }));
   peerTest.setMainPeerForTest(new MockPeer('b', {}));
   peerTest.setProfileForTest(me);
@@ -150,7 +150,7 @@ it('electNewLobbyHost calls becomeLobbyHost only when elected peer is self', asy
   peerStore.update((s) => ({
     ...s,
     peerId: 'a',
-    connectedPeers: new Map([['b', { username: 'b', color: 'x', age: 1, connection: { send: vi.fn() } }]])
+    connectedPeers: new Map([['b', { username: 'b', color: 'x', dateOfBirth: '2004-01-01', connection: { send: vi.fn() } }]])
   }));
   peerTest.setMainPeerForTest(new MockPeer('a', {}));
   peerTest.setProfileForTest(me);
@@ -173,8 +173,8 @@ it('PEER_DISCONNECT from lobby host triggers re-election', async () => {
     lobbyPeer: null,
     currentLobbyHostId: 'host',
     connectedPeers: new Map([
-      ['host', { username: 'host', color: 'x', age: 1, connection: { send: vi.fn() } }],
-      ['b', { username: 'b', color: 'x', age: 1, connection: { send: remainingSend } }]
+      ['host', { username: 'host', color: 'x', dateOfBirth: '2004-01-01', connection: { send: vi.fn() } }],
+      ['b', { username: 'b', color: 'x', dateOfBirth: '2004-01-01', connection: { send: remainingSend } }]
     ])
   });
 
@@ -184,7 +184,7 @@ it('PEER_DISCONNECT from lobby host triggers re-election', async () => {
   await handleMessage(
     {
       type: 'PEER_DISCONNECT',
-      from: { peerId: 'host', username: 'host', color: 'hsl(2, 65%, 65%)', age: 33 },
+      from: { peerId: 'host', username: 'host', color: 'hsl(2, 65%, 65%)', dateOfBirth: '1990-01-01' },
       payload: {},
       timestamp: 1
     },
@@ -215,8 +215,8 @@ it('PEER_DISCONNECT from non-host peer does NOT trigger re-election', async () =
     lobbyPeer: null,
     currentLobbyHostId: 'host',
     connectedPeers: new Map([
-      ['host', { username: 'host', color: 'x', age: 1, connection: { send: vi.fn() } }],
-      ['b', { username: 'b', color: 'x', age: 1, connection: { send: vi.fn() } }]
+      ['host', { username: 'host', color: 'x', dateOfBirth: '2004-01-01', connection: { send: vi.fn() } }],
+      ['b', { username: 'b', color: 'x', dateOfBirth: '2004-01-01', connection: { send: vi.fn() } }]
     ])
   });
   peerTest.setMainPeerForTest(new MockPeer('a', {}));
@@ -225,7 +225,7 @@ it('PEER_DISCONNECT from non-host peer does NOT trigger re-election', async () =
   await handleMessage(
     {
       type: 'PEER_DISCONNECT',
-      from: { peerId: 'b', username: 'b', color: 'hsl(2, 65%, 65%)', age: 33 },
+      from: { peerId: 'b', username: 'b', color: 'hsl(2, 65%, 65%)', dateOfBirth: '1990-01-01' },
       payload: {},
       timestamp: 1
     },
@@ -248,7 +248,7 @@ it('New lobby host broadcasts LOBBY_HOST_CHANGED after election', async () => {
     isLobbyHost: false,
     lobbyPeer: null,
     currentLobbyHostId: 'old-host',
-    connectedPeers: new Map([['p2', { username: 'bob', color: 'x', age: 1, connection: { send } }]])
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'x', dateOfBirth: '2004-01-01', connection: { send } }]])
   });
   peerTest.setMainPeerForTest(new MockPeer('a', {}));
   peerTest.setProfileForTest(me);

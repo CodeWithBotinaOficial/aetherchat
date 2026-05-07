@@ -12,7 +12,8 @@ const config = {
     adapter: adapter({
       pages: 'build',
       assets: 'build',
-      fallback: 'index.html',
+      // Avoid overwriting the prerendered index.html with the SPA fallback.
+      fallback: '200.html',
       precompress: true,
       strict: true
     }),

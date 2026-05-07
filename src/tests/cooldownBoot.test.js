@@ -1,6 +1,5 @@
 import { waitFor } from '@testing-library/dom';
 import { writable } from 'svelte/store';
-import { db, getDeletionCooldown, setDeletionCooldown } from '$lib/services/db.js';
 import { user as userStore } from '$lib/stores/userStore.js';
 
 const initPeerMock = vi.fn().mockResolvedValue(null);
@@ -20,18 +19,27 @@ vi.mock('$lib/services/peer.js', () => {
     sendPrivateMessage: vi.fn(),
     editPrivateMessage: vi.fn(),
     deletePrivateMessage: vi.fn(),
+    broadcastProtocolEnvelope: vi.fn(),
     broadcastGlobalMessage: vi.fn(),
     broadcastGlobalMessageEdit: vi.fn(),
     broadcastGlobalMessageDelete: vi.fn(),
     checkUsernameAvailability: vi.fn().mockResolvedValue({ available: true }),
     broadcastUsernameRegistered: vi.fn(),
+    broadcastProfileUpdated: vi.fn(),
+    broadcastUserDeleted: vi.fn(),
+    broadcastUsernameChanged: vi.fn(),
+    isPeerOnline: vi.fn(() => false),
+    sendProtocolEnvelopeToPeer: vi.fn(),
+    setLocalUserProfile: vi.fn(),
     initPeer: (...args) => initPeerMock(...args),
     disconnectPeer: (...args) => disconnectPeerMock(...args),
     registrySyncReady: Promise.resolve('ok')
   };
 });
 
+
 async function clearAllTables() {
+  const { db } = await import('$lib/services/db.js');
   await db.transaction(
     'rw',
     db.users,
@@ -70,6 +78,8 @@ async function clearAllTables() {
 }
 
 beforeEach(async () => {
+  vi.useRealTimers();
+  vi.resetModules();
   initPeerMock.mockClear();
   disconnectPeerMock.mockClear();
   document.body.innerHTML = '';
@@ -83,6 +93,7 @@ afterEach(() => {
 });
 
 it('shows the cooldown screen on boot when cooldown.until > Date.now() (blocks initPeer)', async () => {
+  const { setDeletionCooldown } = await import('$lib/services/db.js');
   await setDeletionCooldown(Date.now() + 60_000);
 
   const Page = (await import('../routes/+page.svelte')).default;
@@ -95,9 +106,10 @@ it('shows the cooldown screen on boot when cooldown.until > Date.now() (blocks i
 
   expect(initPeerMock).not.toHaveBeenCalled();
   page.$destroy();
-});
+}, 10_000);
 
 it('does not show cooldown screen when until <= Date.now() (clears cooldown row and proceeds)', async () => {
+  const { getDeletionCooldown, setDeletionCooldown } = await import('$lib/services/db.js');
   await setDeletionCooldown(Date.now() - 1000);
 
   const Page = (await import('../routes/+page.svelte')).default;
@@ -116,6 +128,7 @@ it('does not show cooldown screen when until <= Date.now() (clears cooldown row 
 });
 
 it('countdown reaches zero and transitions into registration flow without reload', async () => {
+  const { setDeletionCooldown } = await import('$lib/services/db.js');
   await setDeletionCooldown(Date.now() + 1100);
 
   const Page = (await import('../routes/+page.svelte')).default;

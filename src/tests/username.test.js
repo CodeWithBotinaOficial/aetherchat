@@ -128,7 +128,7 @@ it('checkUsernameAvailability resolves available:true after 2s timeout with no r
     (s) =>
       ({
         ...s,
-        connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 1, connection: { send } }]])
+        connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01', connection: { send } }]])
       }) // ensure network layer runs
   );
 
@@ -142,7 +142,7 @@ it('checkUsernameAvailability returns available:false when a peer responds USERN
   const send = vi.fn();
   peerStore.update((s) => ({
     ...s,
-    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 1, connection: { send } }]])
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01', connection: { send } }]])
   }));
 
   const promise = checkUsernameAvailability('alice');
@@ -156,12 +156,12 @@ it('checkUsernameAvailability returns available:false when a peer responds USERN
   await handleMessage(
     {
       type: 'USERNAME_TAKEN',
-      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 1 },
+      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01' },
       payload: { checkId, username: 'alice' },
       timestamp: Date.now()
     },
     null,
-    { username: 'local', color: 'hsl(1, 65%, 65%)', age: 1 }
+    { username: 'local', color: 'hsl(1, 65%, 65%)', dateOfBirth: '2004-01-01' }
   );
 
   const res = await promise;
@@ -202,12 +202,12 @@ it('USERNAME_REGISTERED message updates local registry immediately', async () =>
   await handleMessage(
     {
       type: 'USERNAME_REGISTERED',
-      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 1 },
+      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01' },
       payload: { username: 'Alice', peerId: 'p2', registeredAt: 123 },
       timestamp: 999
     },
     null,
-    { username: 'local', color: 'hsl(1, 65%, 65%)', age: 1 }
+    { username: 'local', color: 'hsl(1, 65%, 65%)', dateOfBirth: '2004-01-01' }
   );
 
   expect(await isUsernameTaken('alice')).toBe(true);

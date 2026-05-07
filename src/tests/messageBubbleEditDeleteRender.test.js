@@ -6,7 +6,7 @@ it('Edited message renders an edited indicator', async () => {
     message: {
       id: 'm1',
       username: 'alice',
-      age: 22,
+      dateOfBirth: '2004-01-01',
       color: 'hsl(1, 65%, 65%)',
       text: 'hello',
       timestamp: 1,
@@ -26,7 +26,7 @@ it('Deleted message renders deletion placeholder styling', async () => {
     message: {
       id: 'm2',
       username: 'alice',
-      age: 22,
+      dateOfBirth: '2004-01-01',
       color: 'hsl(1, 65%, 65%)',
       text: '[ This message was deleted ]',
       timestamp: 1,
@@ -42,4 +42,3 @@ it('Deleted message renders deletion placeholder styling', async () => {
   expect(el.className).toMatch(/\bmsg-deleted\b/);
   expect(el.textContent).toContain('deleted');
 });
-

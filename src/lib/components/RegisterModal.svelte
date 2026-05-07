@@ -3,16 +3,19 @@
   import { get } from 'svelte/store';
   import { peer as peerStore } from '$lib/stores/peerStore.js';
   import { registerUsernameLocally } from '$lib/services/db.js';
-  import { validateAvatarFile } from '$lib/utils/avatar.js';
+	  import { generateInitialsAvatar, validateAvatarFile } from '$lib/utils/avatar.js';
   import { getUserColor } from '$lib/utils/colors.js';
   import { registerUser } from '$lib/stores/userStore.js';
   import { broadcastUsernameRegistered, checkUsernameAvailability } from '$lib/services/peer.js';
+  import { calculateAge } from '$lib/utils/time.js';
 
   const dispatch = createEventDispatcher();
 
   let username = '';
-  let age = 18;
+  let dateOfBirth = '';
   let usernameError = '';
+  /** @type {string} */
+  let dateOfBirthError;
   /** @type {'typing'|'checking'|'available'|'taken_local'|'taken_network'|'offline_warning'} */
   let availabilityState = 'typing';
   let takenSuggestion = '';
@@ -26,7 +29,7 @@
 
   const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
   const USERNAME_ID = 'aetherchat-username';
-  const AGE_ID = 'aetherchat-age';
+  const DOB_ID = 'aetherchat-dob';
   const AVATAR_ID = 'aetherchat-avatar';
 
   function validateUsernameLocal(value) {
@@ -42,8 +45,7 @@
         avatarBase64 = null;
         return;
       }
-      const { generateInitialsAvatar } = await import('$lib/utils/avatar.js');
-      avatarBase64 = await generateInitialsAvatar(username, getUserColor(username));
+	      avatarBase64 = await generateInitialsAvatar(username, getUserColor(username));
     } catch (err) {
       console.error('refreshPreview failed', err);
       avatarBase64 = null;
@@ -89,16 +91,28 @@
     if (!hasUploadedAvatar) void refreshPreview();
   }
 
-  $: isTooYoung = Number(age) < 16;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  $: computedAge = dateOfBirth ? calculateAge(dateOfBirth) : 0;
+  $: isTooYoung = Boolean(dateOfBirth) && computedAge < 16;
   $: isTaken = availabilityState === 'taken_local' || availabilityState === 'taken_network';
+  $: isDobEmpty = !dateOfBirth || String(dateOfBirth).trim().length === 0;
+  $: isDobFuture = Boolean(dateOfBirth) && String(dateOfBirth) > todayIso;
+  $: dateOfBirthError =
+    isDobEmpty
+      ? 'Date of birth is required.'
+      : isDobFuture
+        ? 'Date of birth cannot be in the future.'
+        : isTooYoung
+          ? 'You must be at least 16 years old to use AetherChat.'
+          : '';
   $: canSubmit =
     !isSubmitting &&
-    !isTooYoung &&
     !usernameError &&
+    !dateOfBirthError &&
     !isTaken &&
     availabilityState !== 'checking' &&
     Boolean(username) &&
-    Number(age) >= 16;
+    Boolean(dateOfBirth);
 
   function applySuggestion() {
     if (!takenSuggestion) return;
@@ -155,7 +169,7 @@
       const uname = username.trim();
       const now = Date.now();
 
-      await registerUser(uname, Number(age), avatarBase64 ?? undefined);
+      await registerUser(uname, String(dateOfBirth), avatarBase64 ?? undefined);
 
       // Update our local registry immediately for offline uniqueness checks.
       const peerId = get(peerStore).peerId ?? 'pending';
@@ -171,7 +185,7 @@
       broadcastUsernameRegistered({
         username: uname,
         color: getUserColor(uname),
-        age: Number(age),
+        dateOfBirth: String(dateOfBirth),
         avatarBase64: avatarBase64 ?? null,
         createdAt: now
       });
@@ -273,19 +287,18 @@
       </div>
 
       <div class="grid gap-[var(--space-sm)]">
-        <label for={AGE_ID} class="text-[var(--font-size-sm)] text-[var(--text-secondary)]">Age</label>
+        <label for={DOB_ID} class="text-[var(--font-size-sm)] text-[var(--text-secondary)]">Date of birth</label>
         <input
-          id={AGE_ID}
+          id={DOB_ID}
           class="w-full min-h-[44px] rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-primary)] outline-none focus:border-[var(--border-focus)]"
-          type="number"
-          min="0"
-          max="120"
-          bind:value={age}
+          type="date"
+          bind:value={dateOfBirth}
+          max={todayIso}
         />
-        {#if isTooYoung}
-          <div class="text-[var(--font-size-xs)] text-[var(--warning)]">
-            You must be at least 16 to use AetherChat.
-          </div>
+        {#if dateOfBirthError}
+          <div class="text-[var(--font-size-xs)] text-[var(--warning)]">{dateOfBirthError}</div>
+        {:else if dateOfBirth}
+          <div class="text-[var(--font-size-xs)] text-[var(--text-muted)]">Age: {computedAge}</div>
         {/if}
       </div>
 
@@ -347,74 +360,5 @@
 </div>
 
 <style>
-  .modal-overlay {
-    padding: var(--space-lg) var(--space-md);
-  }
-
-  .modal-shell {
-    max-width: 480px;
-    display: flex;
-    flex-direction: column;
-    max-height: calc(100dvh - (var(--space-lg) * 2));
-  }
-
-  .modal-body {
-    flex: 1;
-    min-height: 0;
-  }
-
-  /* Mobile: full-screen modal (no card feel) */
-  @media (max-width: 639px) {
-    .modal-overlay {
-      padding: 0;
-      place-items: stretch;
-    }
-
-    .modal-shell {
-      height: 100dvh;
-      max-width: none;
-      border-radius: 0;
-      border: 0;
-      box-shadow: none;
-    }
-
-    .modal-header {
-      padding-top: calc(var(--space-lg) + env(safe-area-inset-top, 0px));
-    }
-
-    .modal-body {
-      padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom, 0px));
-    }
-
-    .avatar-drop {
-      min-height: 44px;
-    }
-
-    .upload-link {
-      padding: 10px 12px;
-      border-radius: var(--radius-md);
-      border: 1px solid var(--border);
-      background: var(--bg-elevated);
-      color: var(--text-primary);
-      min-height: 44px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-    }
-  }
-
-  @media (hover: hover) {
-    .suggestion-btn:hover {
-      background: var(--accent-subtle);
-    }
-
-    .upload-link:hover {
-      color: var(--accent-hover);
-      text-decoration: underline;
-    }
-
-    .submit-btn:hover:not(:disabled) {
-      background: var(--accent-hover);
-    }
-  }
+  @import './RegisterModal.css';
 </style>

@@ -65,6 +65,9 @@ it('handleSubmit re-checks availability and blocks if username just became taken
   const usernameInput = screen.getByLabelText(/username/i);
   await fireEvent.input(usernameInput, { target: { value: 'alice' } });
 
+  const dobInput = screen.getByLabelText(/date of birth/i);
+  await fireEvent.input(dobInput, { target: { value: '2000-01-01' } });
+
   await vi.advanceTimersByTimeAsync(650);
   await Promise.resolve();
 
@@ -85,4 +88,3 @@ it('handleSubmit re-checks availability and blocks if username just became taken
 
   vi.useRealTimers();
 });
-

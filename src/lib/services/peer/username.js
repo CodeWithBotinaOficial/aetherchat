@@ -1,7 +1,17 @@
 import { get } from 'svelte/store';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
-import { isUsernameTaken, registerUsernameLocally } from '$lib/services/db.js';
-import { broadcastToAll, buildFromProfile, cachedProfile, onMessage, sendToPeer } from './shared.js';
+import { privateChatStore, setChatOnlineStatus, upsertChatEntry } from '$lib/stores/privateChatStore.js';
+import {
+  db,
+  getPrivateChat,
+  getUsernameRegistryEntry,
+  isUsernameTaken,
+  registerUsernameLocally,
+  unregisterUsernameLocally,
+  upsertPrivateChat
+} from '$lib/services/db.js';
+import { broadcastToAll, buildFromProfile, cachedProfile, onMessage, sendToPeer, upsertConnectedPeer } from './shared.js';
+import { handleRemoteUserDeletedSocial } from './social.js';
 
 /**
  * Try a few suggestions; registry checks are local only.
@@ -65,7 +75,12 @@ export async function checkUsernameAvailability(desiredUsername) {
     const from =
       cachedProfile && cachedProfile.username
         ? buildFromProfile(cachedProfile)
-        : { peerId: get(peerStore).peerId ?? 'pre-registration', username: 'pre-registration', color: 'hsl(0, 0%, 70%)', age: 0 };
+        : {
+            peerId: get(peerStore).peerId ?? 'pre-registration',
+            username: 'pre-registration',
+            color: 'hsl(0, 0%, 70%)',
+            dateOfBirth: null
+          };
 
     broadcastToAll({
       type: 'USERNAME_CHECK',
@@ -129,3 +144,128 @@ export async function handleUsernameRegistered(msg) {
   });
 }
 
+export async function handleUsernameChanged(msg, fromConn) {
+  const oldUsername = msg.payload?.oldUsername;
+  const newUsername = msg.payload?.newUsername;
+  const peerId = msg.payload?.peerId;
+  const changedAt = msg.payload?.changedAt;
+  if (typeof oldUsername !== 'string' || oldUsername.trim().length === 0) return;
+  if (typeof newUsername !== 'string' || newUsername.trim().length === 0) return;
+  if (typeof peerId !== 'string' || peerId.length === 0) return;
+  if (typeof changedAt !== 'number') return;
+
+  const remotePeerId = msg.from.peerId;
+  try {
+    await unregisterUsernameLocally(oldUsername);
+    await registerUsernameLocally({ username: newUsername, peerId, registeredAt: changedAt, lastSeenAt: Date.now() });
+  } catch (err) {
+    console.error('USERNAME_CHANGED registry update failed', err);
+  }
+
+  upsertConnectedPeer(remotePeerId, fromConn, { username: newUsername });
+
+  try {
+    for (const chat of get(privateChatStore).chats.values()) {
+      if (chat?.theirPeerId !== remotePeerId) continue;
+      upsertChatEntry({ id: chat.id, theirUsername: newUsername });
+      const existing = await getPrivateChat(chat.id);
+      if (existing) await upsertPrivateChat({ ...existing, theirUsername: newUsername });
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export async function handleUserDeletedMessage(msg) {
+  const username = msg.payload?.username;
+  const peerId = msg.payload?.peerId;
+  if (typeof username !== 'string' || username.trim().length === 0) return;
+  if (typeof peerId !== 'string' || peerId.length === 0) return;
+  if (peerId !== msg.from.peerId) return;
+
+  const entry = await getUsernameRegistryEntry(username);
+  if (!entry || entry.peerId !== msg.from.peerId) return;
+
+  try {
+    await unregisterUsernameLocally(username);
+  } catch (err) {
+    console.error('USER_DELETED unregister failed', err);
+  }
+
+  try {
+    await db.knownPeers.where('peerId').equals(msg.from.peerId).delete();
+  } catch {
+    // ignore
+  }
+
+  // Remove from connectedPeers.
+  const remotePeerId = msg.from.peerId;
+  const state = get(peerStore);
+  if (state.connectedPeers.has(remotePeerId)) {
+    state.connectedPeers.get(remotePeerId)?.connection?.close?.();
+  }
+  // Store mutation is handled by net connection close; update status + remove entry defensively.
+  setChatOnlineStatus(remotePeerId, false);
+
+  // Mark any private chats with this peer as deleted, but keep message history.
+  const placeholder = '[ User deleted their account ]';
+  try {
+    for (const chat of get(privateChatStore).chats.values()) {
+      if (chat?.theirPeerId !== remotePeerId) continue;
+      upsertChatEntry({ id: chat.id, theirUsername: placeholder, isOnline: false });
+      const existing = await getPrivateChat(chat.id);
+      if (existing) await upsertPrivateChat({ ...existing, theirUsername: placeholder });
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    await handleRemoteUserDeletedSocial(remotePeerId);
+  } catch (err) {
+    console.error('USER_DELETED social cleanup failed', err);
+  }
+}
+
+export async function handleUsernameReleasedMessage(msg) {
+  const username = msg.payload?.username;
+  const peerId = msg.payload?.peerId;
+  if (typeof username !== 'string' || username.trim().length === 0) return;
+  if (typeof peerId !== 'string' || peerId.length === 0) return;
+  if (peerId !== msg.from.peerId) return;
+
+  try {
+    await unregisterUsernameLocally(username);
+  } catch (err) {
+    console.error('USERNAME_RELEASED unregister failed', err);
+  }
+  try {
+    await db.knownPeers.where('peerId').equals(peerId).delete();
+  } catch {
+    // ignore
+  }
+}
+
+export function broadcastUsernameChanged(payload, profile) {
+  const state = get(peerStore);
+  const id = state.peerId;
+  if (!id) return;
+  if (!profile?.username || profile.username === 'pre-registration') return;
+  broadcastToAll({ type: 'USERNAME_CHANGED', from: buildFromProfile(profile), payload, timestamp: Date.now() });
+}
+
+export function broadcastUserDeleted(payload, profile) {
+  const state = get(peerStore);
+  const id = state.peerId;
+  if (!id) return;
+  if (!profile?.username || profile.username === 'pre-registration') return;
+  broadcastToAll({ type: 'USER_DELETED', from: buildFromProfile(profile), payload, timestamp: Date.now() });
+}
+
+export function broadcastUsernameReleased(payload, profile) {
+  const state = get(peerStore);
+  const id = state.peerId;
+  if (!id) return;
+  if (!profile?.username || profile.username === 'pre-registration') return;
+  broadcastToAll({ type: 'USERNAME_RELEASED', from: buildFromProfile(profile), payload, timestamp: Date.now() });
+}
