@@ -6,7 +6,7 @@ import {
   getFollowerCount,
   getFollowingCount,
   deleteFollowsInvolvingPeer
-} from '$lib/services/db/walls.db.js';
+} from '$lib/services/db/follows.db.js';
 import {
   editWallCommentText,
   getWallComment,

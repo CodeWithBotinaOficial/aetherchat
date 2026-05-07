@@ -1,5 +1,6 @@
 import { get } from 'svelte/store';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
+import { user as userStore } from '$lib/stores/userStore.js';
 import { saveKnownPeer } from '$lib/services/db.js';
 import { setChatOnlineStatus } from '$lib/stores/privateChatStore.js';
 
@@ -32,7 +33,7 @@ export function startHeartbeat(profile) {
     const id = state.peerId;
     if (!id) return;
     const p = profile ?? cachedProfile;
-    if (!p) return;
+    if (!p || p.username === 'pre-registration') return;
     broadcastToAll(buildMessage('HEARTBEAT', id, p, {}, Date.now()));
   }, 30_000);
 }
@@ -47,16 +48,23 @@ export function announcePresence(profile) {
   const state = get(peerStore);
   const id = state.peerId;
   if (!id) return;
-  if (!profile) return;
+
+  const p = profile ?? get(userStore) ?? cachedProfile;
+  if (!p || p.username === 'pre-registration') {
+    // If we're not registered yet, wait for registration before announcing.
+    // The userStore subscription in AppShell will eventually trigger this again.
+    return;
+  }
+
   broadcastToAll({
     type: 'PRESENCE_ANNOUNCE',
-    from: buildFromProfile(profile),
+    from: buildFromProfile(p),
     payload: {
-      username: profile.username,
-      color: profile.color,
-      dateOfBirth: profile.dateOfBirth ?? null,
-      avatarBase64: profile.avatarBase64 ?? null,
-      bio: profile.bio ?? ''
+      username: p.username,
+      color: p.color,
+      dateOfBirth: p.dateOfBirth ?? null,
+      avatarBase64: p.avatarBase64 ?? null,
+      bio: p.bio ?? ''
     },
     timestamp: Date.now()
   });

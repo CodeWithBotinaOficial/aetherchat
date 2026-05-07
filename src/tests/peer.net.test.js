@@ -27,6 +27,8 @@ beforeEach(async () => {
   hoisted.privateChatStoreState.pendingKeyExchanges = new Map();
 
   peerTest.clearConfirmedPrivateSessionsForTest();
+  peerTest.resetInitializingForTest();
+  peerTest.resetInitializingLobbyForTest();
 
   const cryptoMod = await import('$lib/services/crypto.js');
   const sid = cryptoMod.buildSessionId('alice', 'bob');

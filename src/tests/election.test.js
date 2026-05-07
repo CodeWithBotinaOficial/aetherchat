@@ -112,6 +112,8 @@ const me = { username: 'alice', color: 'hsl(1, 65%, 65%)', dateOfBirth: '2004-01
 beforeEach(() => {
   MockPeer.instances = [];
   globalThis._PeerJS = { Peer: MockPeer, default: MockPeer };
+  peerTest.resetInitializingForTest();
+  peerTest.resetInitializingLobbyForTest();
 
   peerStore.set({
     peerId: null,

@@ -7,7 +7,7 @@ import {
   getFollowingCount,
   isFollowing as isFollowingDb,
   unfollowUser
-} from '$lib/services/db/walls.db.js';
+} from '$lib/services/db/follows.db.js';
 import { getWallComments, hardDeleteCommentsByAuthorOnWall } from '$lib/services/db/wallComments.db.js';
 import {
   isPeerOnline,
