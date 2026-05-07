@@ -21,6 +21,8 @@ import {
 } from './shared.js';
 import { connectToPeerIfUnknownFromShared, cachedProfile } from './shared.js';
 
+let isInitializingLobby = false;
+
 /**
  * @param {number|string} index
  */
@@ -299,6 +301,9 @@ export async function joinLobby(localPeer, profile, attempt = 0) {
  * @param {import('./types.js').UserProfile} profile
  */
 export async function becomeLobbyHost(localPeer, profile, attempt = 0, lobbyId = null) {
+  if (isInitializingLobby) return { role: 'standalone' };
+  isInitializingLobby = true;
+
   return await new Promise((resolve) => {
     const mod = globalThis._PeerJS;
     const Peer = mod?.Peer ?? mod?.default ?? PeerCtor;
@@ -307,6 +312,7 @@ export async function becomeLobbyHost(localPeer, profile, attempt = 0, lobbyId =
     const hostPeer = new Peer(desired, { ...PEERJS_CONFIG, debug });
 
     hostPeer.on('open', () => {
+      isInitializingLobby = false;
       setLobbyPeer(hostPeer);
       setActiveLobbyId(desired);
       resolveRegistrySync('first-peer');
@@ -329,6 +335,7 @@ export async function becomeLobbyHost(localPeer, profile, attempt = 0, lobbyId =
     });
 
     hostPeer.on('error', (err) => {
+      isInitializingLobby = false;
       if (err?.type === 'unavailable-id') {
         try {
           hostPeer.destroy?.();
@@ -373,6 +380,11 @@ export async function handleLobbyHostChangedMessage(msg) {
   if (typeof newHostPeerId === 'string' && newHostPeerId.length > 0) {
     peerStore.update((s) => ({ ...s, currentLobbyHostId: newHostPeerId }));
   }
+}
+
+/** @internal test-only */
+export function resetInitializingLobbyForTest() {
+  isInitializingLobby = false;
 }
 
 function getPeerJsDebugLevel() {

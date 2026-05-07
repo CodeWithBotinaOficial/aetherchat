@@ -38,9 +38,16 @@ import {
   setCachedProfile,
   reconnectAttempts
 } from './shared.js';
-import { attemptReconnect } from './net.js';
+import { attemptReconnect, resetInitializingForTest } from './net.js';
+import { resetInitializingLobbyForTest } from './lobby.js';
 
 export const __test = {
+  resetInitializingForTest() {
+    resetInitializingForTest();
+  },
+  resetInitializingLobbyForTest() {
+    resetInitializingLobbyForTest();
+  },
   setMainPeerForTest(p) {
     setMainPeer(p);
   },

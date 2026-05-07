@@ -1,5 +1,6 @@
 import { get } from 'svelte/store';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
+import { refreshStablePeerId } from '$lib/stores/userStore.js';
 import { getStoredPeerId, registerUsernameLocally, setStoredPeerId } from '$lib/services/db.js';
 
 import {
@@ -40,6 +41,8 @@ import { announcePresence, startHeartbeat, stopHeartbeat } from './presence.js';
 import { startGossipInterval, stopGossipInterval } from './sync.js';
 import { handleIncomingConnection, reconnectToKnownPeers, sendHandshake } from './net.connections.js';
 
+let isInitializing = false;
+
 function getPeerJsDebugLevel() {
   const raw = import.meta.env?.VITE_PEERJS_DEBUG;
   const n = Number.parseInt(String(raw ?? ''), 10);
@@ -67,13 +70,48 @@ async function ensurePeerCtor() {
 function scheduleUnavailableIdRetry(profile) {
   const delays = UNAVAILABLE_ID_RETRY_DELAYS_MS;
   const attempt = unavailableIdAttempts ?? 0;
-  const delay = delays[Math.min(attempt, delays.length - 1)] ?? 1500;
+
+  if (attempt >= 3) {
+    console.error('PeerJS: max unavailable-id retries reached');
+    setUnavailableIdAttempts(0);
+    setUnavailableIdRetryTimer(null);
+    isInitializing = false;
+    peerStore.update((s) => ({ ...s, connectionState: 'failed', error: 'unavailable-id' }));
+    return;
+  }
+
+  const delay = Math.max(1000, delays[Math.min(attempt, delays.length - 1)] ?? 1500);
   if (unavailableIdRetryTimer) clearTimeout(unavailableIdRetryTimer);
+
   setUnavailableIdRetryTimer(setTimeout(() => {
-    setUnavailableIdAttempts(attempt + 1);
-    // Force a fresh ID on retry so we don't keep trying an ID that the server still considers taken.
-    setForcedPeerId(generateEphemeralPeerId());
-    initPeer(profile).catch((err) => console.error('unavailable-id retry initPeer failed', err));
+    (async () => {
+      setUnavailableIdAttempts(attempt + 1);
+
+      // Clean up previous failed instance properly before retrying.
+      if (localPeerRef) {
+        try {
+          localPeerRef.destroy();
+        } catch {
+          // ignore
+        }
+        setLocalPeerRef(null);
+        setMainPeer(null);
+      }
+      await Promise.resolve();
+
+      // Force a fresh ID on retry so we don't keep trying an ID that the server still considers taken.
+      const newId = generateEphemeralPeerId();
+      setForcedPeerId(newId);
+
+      // Persist the new ID so future boots use this one instead of the taken one.
+      if (profile?.username && profile.username !== 'pre-registration') {
+        await setStoredPeerId(profile.username, newId).catch(() => {});
+        await refreshStablePeerId().catch(() => {});
+      }
+
+      isInitializing = false;
+      await initPeer(profile);
+    })().catch((err) => console.error('unavailable-id retry failed', err));
   }, delay));
 }
 
@@ -96,49 +134,34 @@ async function handlePeerDisconnect() {
     (async () => {
       setReconnectAttempts((reconnectAttempts ?? 0) + 1);
 
-      if (!localPeerRef) {
-        setMainPeer(null);
-        await initPeer(userProfileRef);
-        return;
-      }
-
-      if (localPeerRef.destroyed) {
-        setMainPeer(null);
-        setLocalPeerRef(null);
-        await initPeer(userProfileRef);
-        return;
-      }
-
-      if (localPeerRef.disconnected) {
-        try {
-          localPeerRef.reconnect();
-        } catch (err) {
-          console.error('Reconnect failed:', err);
+      if (localPeerRef && !localPeerRef.destroyed) {
+        if (localPeerRef.disconnected) {
           try {
-            localPeerRef.destroy();
-          } catch {
-            // ignore
+            localPeerRef.reconnect();
+            return;
+          } catch (err) {
+            console.warn('Reconnect failed, destroying and recreating:', err);
           }
-          setLocalPeerRef(null);
-          setMainPeer(null);
-          await initPeer(userProfileRef);
         }
-        return;
+        try {
+          localPeerRef.destroy();
+        } catch {
+          // ignore
+        }
       }
 
-      try {
-        localPeerRef.destroy();
-      } catch {
-        // ignore
-      }
       setLocalPeerRef(null);
       setMainPeer(null);
+      await Promise.resolve();
       await initPeer(userProfileRef);
     })().catch((err) => console.error('handlePeerDisconnect timer failed', err));
   }, delay));
 }
 
 export async function initPeer(profile) {
+  if (isInitializing) return mainPeer;
+  isInitializing = true;
+
   try {
     setUserProfileRef(profile ?? null);
     setCachedProfile(
@@ -156,6 +179,7 @@ export async function initPeer(profile) {
     setConnectionState('connecting', { error: null, reconnectAttempt: 0 });
 
     if (mainPeer && !mainPeer.destroyed) {
+      isInitializing = false;
       const shouldRefresh = Boolean(profile?.createdAt) && profile?.username && profile.username !== 'pre-registration';
       if (shouldRefresh) {
         for (const entry of get(peerStore).connectedPeers.values()) {
@@ -196,6 +220,7 @@ export async function initPeer(profile) {
     }
 
     peer.on('open', (id) => {
+      isInitializing = false;
       setUnavailableIdAttempts(0);
       setUnavailableIdRetryTimer(null);
       setReconnectAttempts(0);
@@ -215,7 +240,10 @@ export async function initPeer(profile) {
 
       // Persist stable peerId mapping (used for ownership checks during boot).
       if (profile?.username && profile.username !== 'pre-registration') {
-        setStoredPeerId(profile.username, id).catch(() => {});
+        (async () => {
+          await setStoredPeerId(profile.username, id).catch(() => {});
+          await refreshStablePeerId().catch(() => {});
+        })().catch(() => {});
       }
 
       (async () => {
@@ -255,6 +283,8 @@ export async function initPeer(profile) {
         return;
       }
 
+      isInitializing = false;
+
       switch (err?.type) {
         case 'network':
         case 'server-error':
@@ -284,6 +314,7 @@ export async function initPeer(profile) {
 
     return peer;
   } catch (err) {
+    isInitializing = false;
     console.error('initPeer failed', err);
     peerStore.update((s) => ({ ...s, error: 'init-failed', connectionState: 'failed' }));
     throw err;
@@ -292,6 +323,11 @@ export async function initPeer(profile) {
 
 export async function attemptReconnect() {
   await handlePeerDisconnect();
+}
+
+/** @internal test-only */
+export function resetInitializingForTest() {
+  isInitializing = false;
 }
 
 export function setLocalUserProfile(profile) {

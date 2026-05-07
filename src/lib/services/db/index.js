@@ -13,5 +13,5 @@ export * from './registry.db.js';
 
 export * from './cooldown.db.js';
 
-export * from './walls.db.js';
+export * from './follows.db.js';
 export * from './wallComments.db.js';

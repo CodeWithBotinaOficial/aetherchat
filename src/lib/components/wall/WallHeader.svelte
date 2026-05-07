@@ -57,7 +57,7 @@
         <button
           type="button"
           class={`btn ${wall.isFollowing ? 'btn-secondary' : 'btn-primary'}`}
-          on:click={toggleFollowWallOwner}
+          on:click|stopPropagation={toggleFollowWallOwner}
           aria-label={wall.isFollowing ? 'Unfollow' : 'Follow'}
           title={wall.isFollowing ? 'Unfollow' : 'Follow'}
         >
@@ -67,7 +67,7 @@
         <button
           type="button"
           class="btn btn-secondary"
-          on:click={async () => {
+          on:click|stopPropagation={async () => {
             try {
               await initiatePrivateChat(wall.ownerPeerId, wall.ownerUsername, wall.ownerColor, wall.ownerAvatarBase64 ?? null);
             } catch (err) {
