@@ -83,7 +83,7 @@ afterEach(() => {
 });
 
 it('addPendingReply adds a message to the array and ignores duplicates (global)', () => {
-  const msg = { id: 'm1', username: 'alice', color: 'hsl(1, 65%, 65%)', text: 'hello', age: 1, peerId: 'p1', timestamp: 1 };
+  const msg = { id: 'm1', username: 'alice', color: 'hsl(1, 65%, 65%)', text: 'hello', dateOfBirth: '2004-01-01', peerId: 'p1', timestamp: 1 };
   addGlobalPendingReply(msg);
   addGlobalPendingReply(msg);
   expect(get(globalPendingReplies)).toHaveLength(1);
@@ -91,14 +91,14 @@ it('addPendingReply adds a message to the array and ignores duplicates (global)'
 });
 
 it('removePendingReply removes the correct entry (global)', () => {
-  addGlobalPendingReply({ id: 'm1', username: 'alice', color: 'hsl(1, 65%, 65%)', text: 'hello', age: 1, peerId: 'p1', timestamp: 1 });
-  addGlobalPendingReply({ id: 'm2', username: 'bob', color: 'hsl(2, 65%, 65%)', text: 'yo', age: 2, peerId: 'p2', timestamp: 2 });
+  addGlobalPendingReply({ id: 'm1', username: 'alice', color: 'hsl(1, 65%, 65%)', text: 'hello', dateOfBirth: '2004-01-01', peerId: 'p1', timestamp: 1 });
+  addGlobalPendingReply({ id: 'm2', username: 'bob', color: 'hsl(2, 65%, 65%)', text: 'yo', dateOfBirth: '2004-01-01', peerId: 'p2', timestamp: 2 });
   removeGlobalPendingReply('m1');
   expect(get(globalPendingReplies).map((r) => r.messageId)).toEqual(['m2']);
 });
 
 it('clearPendingReplies empties the array (global)', () => {
-  addGlobalPendingReply({ id: 'm1', username: 'alice', color: 'hsl(1, 65%, 65%)', text: 'hello', age: 1, peerId: 'p1', timestamp: 1 });
+  addGlobalPendingReply({ id: 'm1', username: 'alice', color: 'hsl(1, 65%, 65%)', text: 'hello', dateOfBirth: '2004-01-01', peerId: 'p1', timestamp: 1 });
   clearGlobalPendingReplies();
   expect(get(globalPendingReplies)).toEqual([]);
 });
@@ -142,12 +142,12 @@ it('addPendingReply/remove/clear work per private chat context', () => {
 });
 
 it('Sending a message includes the replies array and clears pendingReplies (GlobalChat offline path)', async () => {
-  user.set({ id: 1, username: 'alice', age: 22, color: 'hsl(1, 65%, 65%)', avatarBase64: null, createdAt: 1 });
+  user.set({ id: 1, username: 'alice', dateOfBirth: '2004-01-01', color: 'hsl(1, 65%, 65%)', avatarBase64: null, createdAt: 1 });
   const component = new GlobalChat({ target: document.body });
   await new Promise((r) => setTimeout(r, 30));
 
   globalMessages.set([
-    { id: 'orig1', peerId: 'p1', username: 'bob', age: 33, color: 'hsl(2, 65%, 65%)', text: 'original', timestamp: 10 }
+    { id: 'orig1', peerId: 'p1', username: 'bob', dateOfBirth: '1990-01-01', color: 'hsl(2, 65%, 65%)', text: 'original', timestamp: 10 }
   ]);
   await new Promise((r) => setTimeout(r, 0));
 
@@ -180,7 +180,7 @@ it('Sending a message includes the replies array and clears pendingReplies (Glob
 
 it('A message with replies: null renders no quoted cards', async () => {
   render(MessageBubble, {
-    message: { id: 'm1', username: 'alice', age: 1, color: 'hsl(1, 65%, 65%)', text: 'hello', timestamp: 1, replies: null },
+    message: { id: 'm1', username: 'alice', dateOfBirth: '2004-01-01', color: 'hsl(1, 65%, 65%)', text: 'hello', timestamp: 1, replies: null },
     isOwn: true
   });
   expect(document.querySelectorAll('.quote-card').length).toBe(0);
@@ -192,7 +192,7 @@ it('A message with one reply renders one quoted card with truncated preview and 
     message: {
       id: 'm2',
       username: 'alice',
-      age: 1,
+      dateOfBirth: '2004-01-01',
       color: 'hsl(1, 65%, 65%)',
       text: 'hello',
       timestamp: 1,
@@ -218,7 +218,7 @@ it('A deleted cited message renders a muted non-clickable quoted card', async ()
     message: {
       id: 'm-del-quote',
       username: 'alice',
-      age: 1,
+      dateOfBirth: '2004-01-01',
       color: 'hsl(1, 65%, 65%)',
       text: 'hello',
       timestamp: 1,
@@ -262,7 +262,7 @@ it('Swipe threshold: below 60px does not trigger reply; above 60px triggers repl
   }
 
   const { component } = render(MessageBubble, {
-    message: { id: 'm-swipe', username: 'alice', age: 1, color: 'hsl(1, 65%, 65%)', text: 'hello', timestamp: 1 },
+    message: { id: 'm-swipe', username: 'alice', dateOfBirth: '2004-01-01', color: 'hsl(1, 65%, 65%)', text: 'hello', timestamp: 1 },
     isOwn: true
   });
 

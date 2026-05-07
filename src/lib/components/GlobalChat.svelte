@@ -16,32 +16,37 @@
   import { user } from '$lib/stores/userStore.js';
   import { avatarCache, broadcastGlobalMessage, broadcastGlobalMessageDelete, broadcastGlobalMessageEdit } from '$lib/services/peer.js';
   import { getGlobalMessagesPage } from '$lib/services/db.js';
-  import { cssEscape } from '$lib/utils/replies.js';
   import { showToast } from '$lib/stores/toastStore.js';
   import { openMyWall, openWall } from '$lib/stores/wall/actions.js';
+  import { scrollToAndHighlight as scrollToAndHighlightHelper } from '$lib/components/globalChat/scroll.js';
+  import { createOutsideClose } from '$lib/components/globalChat/outsideClose.js';
+  import { handleGlobalChatSend } from '$lib/components/globalChat/send.js';
+  import { setupGlobalChatMount } from '$lib/components/globalChat/mount.js';
 
   import ChatInput from '$lib/components/ChatInput.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import MessageBubble from '$lib/components/MessageBubble.svelte';
   import UserTooltip from '$lib/components/UserTooltip.svelte';
 
-  /** @type {HTMLDivElement|null} */
-  let listEl = null;
+  /** @type {HTMLDivElement|null} */ let listEl = null;
 
   // Tooltip state
   let tooltipUser = null;
   let tooltipMessage = null;
   let tooltipPos = null;
   let tooltipKey = '';
-  /** @type {(() => void) | null} */
-  let tooltipCancelHide = null;
+  /** @type {(() => void) | null} */ let tooltipCancelHide = null;
   const TOOLTIP_ID = 'aether-user-tooltip';
   const bubbleRefs = Object.create(null);
   // While an action menu is open, suppress tooltip opening (so the user can move
   // from the ⋯ trigger into the menu without it closing).
   let openMenuKey = '';
   let isTouch = false;
-  let outsideListenerAttached = false;
+  const outsideClose = createOutsideClose({
+    isOpen: () => Boolean(tooltipUser),
+    isHit: (n) => n?.dataset?.aetherTooltip === 'true' || n?.dataset?.aetherBubble === 'true',
+    onClose: () => onHoverLeave()
+  });
 
   function closeAllActionMenus(exceptKey = '') {
     const except = String(exceptKey ?? '');
@@ -55,17 +60,13 @@
     }
   }
 
-  /** @type {HTMLDivElement|null} */
-  let composerEl = null;
+  /** @type {HTMLDivElement|null} */ let composerEl = null;
   let composerPad = 160;
-  let cleanupResize = () => {};
   let now = Date.now();
-  let nowTimer = 0;
 
   let composerValue = '';
   let showMsgDelete = false;
-  /** @type {{ messageId: string } | null} */
-  let msgDeleteTarget = null;
+  /** @type {{ messageId: string } | null} */ let msgDeleteTarget = null;
 
   // Simple windowed list for large histories.
   const EST_ITEM_H = 84;
@@ -141,19 +142,10 @@
       ? ($user?.bio ?? '')
       : (typeof $peer?.connectedPeers?.get?.(m.peerId)?.bio === 'string' ? $peer.connectedPeers.get(m.peerId).bio : '');
 
-    tooltipUser = {
-      peerId: m.peerId,
-      username: own ? ($user?.username ?? m.username) : m.username,
-      age: own ? ($user?.age ?? m.age) : m.age,
-      color: own ? ($user?.color ?? m.color) : m.color,
-      avatarBase64,
-      bio
-    };
+    tooltipUser = { peerId: m.peerId, username: own ? ($user?.username ?? m.username) : m.username, dateOfBirth: own ? ($user?.dateOfBirth ?? m.dateOfBirth ?? null) : (m.dateOfBirth ?? null), color: own ? ($user?.color ?? m.color) : m.color, avatarBase64, bio };
   }
 
-  function onHoverMove(e) {
-    tooltipPos = e.detail.position;
-  }
+  function onHoverMove(e) { tooltipPos = e.detail.position; }
 
   function onHoverLeave() {
     tooltipMessage = null;
@@ -161,12 +153,10 @@
     tooltipPos = null;
     tooltipKey = '';
     tooltipCancelHide = null;
-    detachOutsideClose();
+    outsideClose.detach();
   }
 
-  function onTooltipClose() {
-    onHoverLeave();
-  }
+  function onTooltipClose() { onHoverLeave(); }
 
   function openWallFromBubble(ev) {
     const m = ev?.detail?.message;
@@ -186,7 +176,7 @@
     void openWall({
       peerId: pid,
       username: String(m.username ?? ''),
-      age: Number(m.age ?? 0),
+      dateOfBirth: typeof m?.dateOfBirth === 'string' ? m.dateOfBirth : null,
       color: String(m.color ?? ''),
       avatarBase64,
       bio
@@ -200,7 +190,7 @@
     void openWall({
       peerId: pid,
       username: String(u?.username ?? ''),
-      age: Number(u?.age ?? 0),
+      dateOfBirth: typeof u?.dateOfBirth === 'string' ? u.dateOfBirth : null,
       color: String(u?.color ?? ''),
       avatarBase64: u?.avatarBase64 ?? null,
       bio: String(u?.bio ?? '')
@@ -214,167 +204,56 @@
     closeAllActionMenus(openMenuKey);
   }
 
-  function onMenuClose(ev) {
-    const key = String(ev?.detail?.messageKey ?? '');
-    if (key && key === openMenuKey) openMenuKey = '';
-  }
+  function onMenuClose(ev) { const key = String(ev?.detail?.messageKey ?? ''); if (key && key === openMenuKey) openMenuKey = ''; }
 
   async function onSend(e) {
-    const u = $user;
-    if (!u) return;
-
-    const rawPending = Array.isArray(e?.detail?.replies) ? e.detail.replies : [];
-    const byId = new Map(($globalMessages ?? []).map((m) => [m?.id, m]));
-    const replies = rawPending.map((r) => {
-      const original = byId.get(r.messageId) ?? null;
-      return {
-        messageId: r.messageId,
-        authorUsername: r.authorUsername,
-        authorColor: r.authorColor,
-        textSnapshot: r.textSnapshot,
-        timestamp: typeof original?.timestamp === 'number' ? original.timestamp : (typeof r?.timestamp === 'number' ? r.timestamp : 0),
-        deleted: Boolean(r?.deleted)
-      };
+    await handleGlobalChatSend({
+      evt: e,
+      user: $user,
+      peerId: $peer?.peerId ?? null,
+      editingMessageId: $editingMessageId,
+      messages: $globalMessages ?? [],
+      broadcastGlobalMessageEdit,
+      broadcastGlobalMessage,
+      addGlobalMessage,
+      clearPendingReplies,
+      setEditingMessageId: (id) => editingMessageId.set(id),
+      setComposerValue: (v) => { composerValue = v; },
+      computeRange,
+      scrollToBottom
     });
-    const safeReplies = replies.length > 0 ? replies : null;
-
-    // Save edit in-place (no reorder).
-    if ($editingMessageId) {
-      await broadcastGlobalMessageEdit(
-        $editingMessageId,
-        e.detail.text,
-        { username: u.username, color: u.color, age: u.age, avatarBase64: u.avatarBase64 ?? null, createdAt: u.createdAt },
-        safeReplies
-      );
-      editingMessageId.set(null);
-      composerValue = '';
-      clearPendingReplies();
-      computeRange($globalMessages);
-      return;
-    }
-
-    if ($peer.peerId) {
-      // Peer service handles optimistic add + network broadcast.
-      await broadcastGlobalMessage(e.detail.text, {
-        username: u.username,
-        color: u.color,
-        age: u.age,
-        avatarBase64: u.avatarBase64
-      }, safeReplies);
-    } else {
-      // Offline fallback: local-only message.
-      await addGlobalMessage({
-        peerId: 'local',
-        username: u.username,
-        age: u.age,
-        color: u.color,
-        avatarBase64: u.avatarBase64 ?? null,
-        text: e.detail.text,
-        replies: safeReplies,
-        timestamp: Date.now()
-      });
-    }
-
-    clearPendingReplies();
-    await scrollToBottom();
-    computeRange($globalMessages);
   }
 
   async function scrollToAndHighlight(messageId) {
-    const id = String(messageId ?? '').trim();
-    if (!id || !listEl) return;
-
-    const prefersReduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
-
-    const tryFindEl = () => listEl?.querySelector?.(`[data-message-id="${cssEscape(id)}"]`) ?? null;
-
-    // Ensure the message is in memory (page older messages if needed).
-    let guard = 0;
-    while (!($globalMessages ?? []).some((m) => m?.id === id) && guard < 12) {
-      guard += 1;
-      const oldest = $globalMessages?.[0]?.timestamp ?? Date.now();
-      const page = await getGlobalMessagesPage(oldest, 80);
-      if (!page || page.length === 0) break;
-      prependGlobalMessages(page);
-      await tick();
-    }
-
-    const idx = ($globalMessages ?? []).findIndex((m) => m?.id === id);
-    if (idx < 0) {
-      showToast('Original message not available.');
-      return;
-    }
-
-    if (windowed) {
-      listEl.scrollTop = Math.max(0, idx * EST_ITEM_H - EST_ITEM_H * 2);
-      computeRange($globalMessages);
-      await tick();
-    }
-
-    const el = tryFindEl();
-    if (!el) {
-      // One more range recompute pass after scrolling.
-      computeRange($globalMessages);
-      await tick();
-    }
-    const el2 = tryFindEl();
-    if (!el2) {
-      showToast('Original message not available.');
-      return;
-    }
-
-    el2.scrollIntoView({ behavior: prefersReduced ? 'auto' : 'smooth', block: 'center' });
-    if (prefersReduced) return;
-    el2.classList.add('aether-highlight');
-    setTimeout(() => el2.classList.remove('aether-highlight'), 1500);
+    await scrollToAndHighlightHelper({
+      messageId: String(messageId ?? ''),
+      listEl,
+      getMessages: () => $globalMessages ?? [],
+      windowed,
+      estItemH: EST_ITEM_H,
+      computeRange,
+      tick,
+      getGlobalMessagesPage,
+      prependGlobalMessages,
+      showToast
+    });
   }
 
   onMount(() => {
-    isTouch = window.matchMedia?.('(hover: none)').matches || (navigator.maxTouchPoints ?? 0) > 0;
-    nowTimer = setInterval(() => {
-      now = Date.now();
-    }, 30_000);
-
-    // Keep enough bottom padding so the fixed composer never covers messages on mobile.
-    try {
-      if (typeof ResizeObserver !== 'undefined') {
-        const ro = new ResizeObserver(() => {
-          if (!composerEl) return;
-          composerPad = composerEl.offsetHeight + 20;
-        });
-        if (composerEl) ro.observe(composerEl);
-        if (composerEl) composerPad = composerEl.offsetHeight + 20;
-        cleanupResize = () => ro.disconnect();
-      }
-    } catch {
-      cleanupResize = () => {};
-    }
-
-    const unsubscribe = globalMessages.subscribe((msgs) => {
-      computeRange(msgs);
-      if (listEl && maybeAutoScroll()) void scrollToBottom();
+    return setupGlobalChatMount({
+      getComposerEl: () => composerEl,
+      setComposerPad: (n) => { composerPad = n; },
+      getListEl: () => listEl,
+      setIsTouch: (v) => { isTouch = v; },
+      setNow: (n) => { now = n; },
+      globalMessagesStore: globalMessages,
+      loadGlobalMessages,
+      tick,
+      getMessages: () => $globalMessages ?? [],
+      computeRange,
+      maybeAutoScroll,
+      scrollToBottom
     });
-
-    (async () => {
-      try {
-        await loadGlobalMessages();
-        await tick();
-        await scrollToBottom();
-        computeRange($globalMessages);
-      } catch (err) {
-        console.error('GlobalChat init failed', err);
-      }
-    })();
-
-    return () => {
-      unsubscribe();
-      try {
-        cleanupResize();
-      } catch {
-        // ignore
-      }
-      clearInterval(nowTimer);
-    };
   });
 
   $: msgs = $globalMessages;
@@ -384,31 +263,8 @@
   $: padBottom = windowed ? Math.max(0, (msgs.length - end) * EST_ITEM_H) : 0;
 
   function attachOutsideClose() {
-    if (outsideListenerAttached) return;
-    outsideListenerAttached = true;
-
-    const handler = (ev) => {
-      if (!tooltipUser) return;
-      const path = ev.composedPath?.() ?? [];
-      const hit = path.some(
-        (n) => n?.dataset?.aetherTooltip === 'true' || n?.dataset?.aetherBubble === 'true'
-      );
-      if (!hit) onHoverLeave();
-    };
-
-    document.addEventListener('pointerdown', handler, true);
-    document.addEventListener('mousedown', handler, true);
-
-    detachOutsideClose = () => {
-      if (!outsideListenerAttached) return;
-      outsideListenerAttached = false;
-      document.removeEventListener('pointerdown', handler, true);
-      document.removeEventListener('mousedown', handler, true);
-      detachOutsideClose = () => {};
-    };
+    outsideClose.attach();
   }
-
-  let detachOutsideClose = () => {};
   $: isEditing = Boolean($editingMessageId);
   $: editLabel = (() => {
     if (!$editingMessageId) return '';
@@ -434,7 +290,7 @@
     await broadcastGlobalMessageDelete(target.messageId, {
       username: u.username,
       color: u.color,
-      age: u.age,
+      dateOfBirth: u.dateOfBirth ?? null,
       avatarBase64: u.avatarBase64 ?? null,
       createdAt: u.createdAt
     });
@@ -541,38 +397,4 @@
   />
 {/if}
 
-	<style>
-	  .gc {
-	    --chat-pad-x: clamp(12px, 2.2vw, 32px);
-	    --chat-pad-y: clamp(12px, 1.8vw, 24px);
-	    --msg-gap: clamp(10px, 1.3vh, 16px);
-	  }
-
-	  .gc-scroll {
-	    padding: var(--chat-pad-y) var(--chat-pad-x);
-	  }
-
-	  @media (max-width: 639px) {
-	    .gc-input {
-	      position: fixed;
-	      left: 0;
-	      right: 0;
-      bottom: calc(56px + env(safe-area-inset-bottom, 0px));
-      z-index: 45;
-    }
-
-    .gc-list {
-      padding-bottom: var(--composer-pad, 160px);
-    }
-  }
-
-	  @media (min-width: 640px) {
-	    .gc-input {
-	      position: static;
-	    }
-	  }
-
-		  .gc-inner {
-		    width: 100%;
-		  }
-		</style>
+<style src="./GlobalChat.css"></style>

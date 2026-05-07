@@ -91,7 +91,7 @@
       initPeer({
         username: u.username,
         color: u.color,
-        age: u.age,
+        dateOfBirth: u.dateOfBirth ?? null,
         avatarBase64: u.avatarBase64 ?? null,
         bio: u.bio ?? '',
         createdAt: u.createdAt
@@ -148,7 +148,7 @@
         initPeer({
           username: u.username,
           color: u.color,
-          age: u.age,
+          dateOfBirth: u.dateOfBirth ?? null,
           avatarBase64: u.avatarBase64 ?? null,
           bio: u.bio ?? '',
           createdAt: u.createdAt

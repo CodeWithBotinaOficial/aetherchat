@@ -5,8 +5,9 @@
   import { truncateWithEllipsis } from '$lib/utils/replies.js';
   import { initiatePrivateChat } from '$lib/services/peer.js';
   import { peer } from '$lib/stores/peerStore.js';
+  import { calculateAge } from '$lib/utils/time.js';
 
-  /** @type {{ peerId?: string, username: string, age: number, color: string, avatarBase64: string | null, bio?: string } | null} */
+  /** @type {{ peerId?: string, username: string, dateOfBirth: string|null, color: string, avatarBase64: string | null, bio?: string } | null} */
   export let user = null;
   /** @type {{ x: number, y: number } | null} */
   export let position = null;
@@ -78,6 +79,7 @@
 
   $: bioRaw = typeof user?.bio === 'string' ? user.bio.trim() : '';
   $: bioText = bioRaw ? truncateWithEllipsis(bioRaw, 120) : '';
+  $: displayAge = user?.dateOfBirth ? calculateAge(user.dateOfBirth) : 0;
 
   function handleTooltipMouseEnter() {
     cancelHide?.();
@@ -113,7 +115,7 @@
           <div
             class="rounded-[var(--radius-full)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-sm)] py-[2px] text-[var(--font-size-xs)] text-[var(--text-secondary)]"
           >
-            {user.age}
+            {displayAge}
           </div>
         </div>
         {#if bioText}

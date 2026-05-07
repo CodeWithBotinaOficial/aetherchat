@@ -1,6 +1,5 @@
 import { get } from 'svelte/store';
-import { peer as peerStore } from '$lib/stores/peerStore.js';
-import { user as userStore } from '$lib/stores/userStore.js';
+import { stablePeerId, user as userStore } from '$lib/stores/userStore.js';
 import {
   followUser,
   unfollowUser,
@@ -27,7 +26,7 @@ import {
 } from '$lib/stores/wall/state.js';
 
 function myPeerId() {
-  return String(get(peerStore)?.peerId ?? '').trim();
+  return String(get(stablePeerId) ?? '').trim();
 }
 
 function localUser() {
@@ -39,7 +38,7 @@ function buildFromLocalUser(u) {
     peerId: myPeerId(),
     username: String(u?.username ?? ''),
     color: String(u?.color ?? ''),
-    age: Number(u?.age ?? 0)
+    dateOfBirth: typeof u?.dateOfBirth === 'string' ? u.dateOfBirth : null
   };
 }
 
@@ -276,4 +275,3 @@ export async function handleRemoteUserDeletedSocial(peerId) {
     isWallOpen.set(false);
   }
 }
-

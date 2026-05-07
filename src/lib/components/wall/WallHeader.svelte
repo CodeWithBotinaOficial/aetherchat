@@ -2,14 +2,17 @@
   import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
   import WallStats from './WallStats.svelte';
   import WallOwnerActions from './WallOwnerActions.svelte';
-  import { peer } from '$lib/stores/peerStore.js';
+  import { stablePeerId } from '$lib/stores/userStore.js';
   import { initiatePrivateChat } from '$lib/services/peer.js';
   import { toggleFollowWallOwner } from '$lib/stores/wall/actions.js';
+  import { calculateAge, isBirthday } from '$lib/utils/time.js';
 
   export let wall = null;
 
-  $: myPeerId = $peer?.peerId ?? null;
+  $: myPeerId = $stablePeerId ?? null;
   $: isOwner = Boolean(wall && myPeerId && wall.ownerPeerId === myPeerId);
+  $: displayAge = wall?.ownerDateOfBirth ? calculateAge(wall.ownerDateOfBirth) : 0;
+  $: showBirthday = wall?.ownerDateOfBirth ? isBirthday(wall.ownerDateOfBirth) : false;
 </script>
 
 {#if wall}
@@ -23,9 +26,17 @@
       />
 
       <div class="meta">
-        <div class="name">{wall.ownerUsername}</div>
+        <div class="name-row">
+          <div class="name">{wall.ownerUsername}</div>
+          {#if wall.ownerDateOfBirth}
+            <div class="age-badge" aria-label="Age">{displayAge}</div>
+          {/if}
+        </div>
         {#if wall.ownerBio?.trim?.()}
           <div class="bio">{wall.ownerBio}</div>
+        {/if}
+        {#if showBirthday}
+          <div class="birthday-banner">🎂 Today is {wall.ownerUsername}'s birthday! Wish them a happy birthday! 🎉</div>
         {/if}
 
         <div class="stats-row">
@@ -91,6 +102,13 @@
     min-width: 0;
   }
 
+  .name-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
   .name {
     font-weight: 900;
     letter-spacing: -0.02em;
@@ -99,12 +117,36 @@
     overflow-wrap: anywhere;
   }
 
+  .age-badge {
+    height: 24px;
+    padding: 0 10px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+  }
+
   .bio {
     margin-top: 6px;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
     line-height: 1.45;
     overflow-wrap: anywhere;
+  }
+
+  .birthday-banner {
+    margin-top: 10px;
+    border-radius: var(--radius-md);
+    border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border));
+    background: color-mix(in srgb, var(--warning) 12%, var(--bg-elevated));
+    color: var(--text-primary);
+    padding: 10px 12px;
+    font-size: var(--font-size-sm);
+    font-weight: 800;
   }
 
   .stats-row {

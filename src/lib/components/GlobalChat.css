@@ -1,0 +1,34 @@
+.gc {
+  --chat-pad-x: clamp(12px, 2.2vw, 32px);
+  --chat-pad-y: clamp(12px, 1.8vw, 24px);
+  --msg-gap: clamp(10px, 1.3vh, 16px);
+}
+
+.gc-scroll {
+  padding: var(--chat-pad-y) var(--chat-pad-x);
+}
+
+@media (max-width: 639px) {
+  .gc-input {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+    z-index: 45;
+  }
+
+  .gc-list {
+    padding-bottom: var(--composer-pad, 160px);
+  }
+}
+
+@media (min-width: 640px) {
+  .gc-input {
+    position: static;
+  }
+}
+
+.gc-inner {
+  width: 100%;
+}
+

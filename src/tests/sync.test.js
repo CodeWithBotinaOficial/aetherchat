@@ -56,7 +56,7 @@ async function clearAllTables() {
   );
 }
 
-const localProfile = { username: 'local', color: 'hsl(1, 65%, 65%)', age: 22 };
+const localProfile = { username: 'local', color: 'hsl(1, 65%, 65%)', dateOfBirth: '2004-01-01' };
 
 beforeEach(async () => {
   await clearAllTables();
@@ -89,18 +89,18 @@ it('handleNetworkState merges messages without duplicates', async () => {
     peers: [],
     usernameRegistry: [],
     globalHistory: [
-      { id: 'm-1', peerId: 'p1', username: 'a', age: 1, color: 'hsl(2, 65%, 65%)', text: 'one', timestamp: 10 },
-      { id: 'm-2', peerId: 'p1', username: 'a', age: 1, color: 'hsl(2, 65%, 65%)', text: 'two', timestamp: 20 }
+      { id: 'm-1', peerId: 'p1', username: 'a', dateOfBirth: '2004-01-01', color: 'hsl(2, 65%, 65%)', text: 'one', timestamp: 10 },
+      { id: 'm-2', peerId: 'p1', username: 'a', dateOfBirth: '2004-01-01', color: 'hsl(2, 65%, 65%)', text: 'two', timestamp: 20 }
     ]
   };
 
   await handleMessage(
-    { type: 'NETWORK_STATE', from: { peerId: 'host', username: 'host', color: 'hsl(3, 65%, 65%)', age: 1 }, payload, timestamp: 1 },
+    { type: 'NETWORK_STATE', from: { peerId: 'host', username: 'host', color: 'hsl(3, 65%, 65%)', dateOfBirth: '2004-01-01' }, payload, timestamp: 1 },
     null,
     localProfile
   );
   await handleMessage(
-    { type: 'NETWORK_STATE', from: { peerId: 'host', username: 'host', color: 'hsl(3, 65%, 65%)', age: 1 }, payload, timestamp: 2 },
+    { type: 'NETWORK_STATE', from: { peerId: 'host', username: 'host', color: 'hsl(3, 65%, 65%)', dateOfBirth: '2004-01-01' }, payload, timestamp: 2 },
     null,
     localProfile
   );
@@ -117,7 +117,7 @@ it('handleNetworkState merges usernameRegistry correctly', async () => {
   };
 
   await handleMessage(
-    { type: 'NETWORK_STATE', from: { peerId: 'host', username: 'host', color: 'hsl(3, 65%, 65%)', age: 1 }, payload, timestamp: 1 },
+    { type: 'NETWORK_STATE', from: { peerId: 'host', username: 'host', color: 'hsl(3, 65%, 65%)', dateOfBirth: '2004-01-01' }, payload, timestamp: 1 },
     null,
     localProfile
   );
@@ -131,16 +131,16 @@ it('handleNetworkState connects to all peers in the list', async () => {
 
   const payload = {
     peers: [
-      { peerId: 'local', username: 'local', color: 'hsl(1, 65%, 65%)', age: 22 },
-      { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 1 },
-      { peerId: 'p3', username: 'carol', color: 'hsl(3, 65%, 65%)', age: 1 }
+      { peerId: 'local', username: 'local', color: 'hsl(1, 65%, 65%)', dateOfBirth: '2004-01-01' },
+      { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01' },
+      { peerId: 'p3', username: 'carol', color: 'hsl(3, 65%, 65%)', dateOfBirth: '2004-01-01' }
     ],
     usernameRegistry: [],
     globalHistory: []
   };
 
   await handleMessage(
-    { type: 'NETWORK_STATE', from: { peerId: 'host', username: 'host', color: 'hsl(3, 65%, 65%)', age: 1 }, payload, timestamp: 1 },
+    { type: 'NETWORK_STATE', from: { peerId: 'host', username: 'host', color: 'hsl(3, 65%, 65%)', dateOfBirth: '2004-01-01' }, payload, timestamp: 1 },
     null,
     localProfile
   );
@@ -150,18 +150,18 @@ it('handleNetworkState connects to all peers in the list', async () => {
 });
 
 it('STATE_DIGEST triggers SYNC_REQUEST when remote has newer messages', async () => {
-  await db.globalMessages.add({ id: 'm-old', peerId: 'p1', username: 'a', age: 1, color: 'hsl(2, 65%, 65%)', text: 'old', timestamp: 10 });
+  await db.globalMessages.add({ id: 'm-old', peerId: 'p1', username: 'a', dateOfBirth: '2004-01-01', color: 'hsl(2, 65%, 65%)', text: 'old', timestamp: 10 });
 
   const send = vi.fn();
   peerStore.update((s) => ({
     ...s,
-    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 1, connection: { send } }]])
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01', connection: { send } }]])
   }));
 
   await handleMessage(
     {
       type: 'STATE_DIGEST',
-      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 1 },
+      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01' },
       payload: { latestGlobalMsgTimestamp: 999, usernameRegistryCount: 0, peerId: 'p2' },
       timestamp: 1
     },
@@ -175,18 +175,18 @@ it('STATE_DIGEST triggers SYNC_REQUEST when remote has newer messages', async ()
 });
 
 it('STATE_DIGEST does NOT trigger SYNC_REQUEST when local is up to date', async () => {
-  await db.globalMessages.add({ id: 'm-new', peerId: 'p1', username: 'a', age: 1, color: 'hsl(2, 65%, 65%)', text: 'new', timestamp: 100 });
+  await db.globalMessages.add({ id: 'm-new', peerId: 'p1', username: 'a', dateOfBirth: '2004-01-01', color: 'hsl(2, 65%, 65%)', text: 'new', timestamp: 100 });
 
   const send = vi.fn();
   peerStore.update((s) => ({
     ...s,
-    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 1, connection: { send } }]])
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01', connection: { send } }]])
   }));
 
   await handleMessage(
     {
       type: 'STATE_DIGEST',
-      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 1 },
+      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01' },
       payload: { latestGlobalMsgTimestamp: 50, usernameRegistryCount: 0, peerId: 'p2' },
       timestamp: 1
     },
@@ -198,20 +198,20 @@ it('STATE_DIGEST does NOT trigger SYNC_REQUEST when local is up to date', async 
 });
 
 it('SYNC_REQUEST response contains only messages after sinceTimestamp', async () => {
-  await db.globalMessages.add({ id: 'm-10', peerId: 'p1', username: 'a', age: 1, color: 'hsl(2, 65%, 65%)', text: '10', timestamp: 10 });
-  await db.globalMessages.add({ id: 'm-20', peerId: 'p1', username: 'a', age: 1, color: 'hsl(2, 65%, 65%)', text: '20', timestamp: 20 });
-  await db.globalMessages.add({ id: 'm-30', peerId: 'p1', username: 'a', age: 1, color: 'hsl(2, 65%, 65%)', text: '30', timestamp: 30 });
+  await db.globalMessages.add({ id: 'm-10', peerId: 'p1', username: 'a', dateOfBirth: '2004-01-01', color: 'hsl(2, 65%, 65%)', text: '10', timestamp: 10 });
+  await db.globalMessages.add({ id: 'm-20', peerId: 'p1', username: 'a', dateOfBirth: '2004-01-01', color: 'hsl(2, 65%, 65%)', text: '20', timestamp: 20 });
+  await db.globalMessages.add({ id: 'm-30', peerId: 'p1', username: 'a', dateOfBirth: '2004-01-01', color: 'hsl(2, 65%, 65%)', text: '30', timestamp: 30 });
 
   const send = vi.fn();
   peerStore.update((s) => ({
     ...s,
-    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', age: 1, connection: { send } }]])
+    connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01', connection: { send } }]])
   }));
 
   await handleMessage(
     {
       type: 'SYNC_REQUEST',
-      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 1 },
+      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01' },
       payload: { sinceTimestamp: 20, knownUsernames: [] },
       timestamp: 1
     },
@@ -229,9 +229,9 @@ it('SYNC_RESPONSE merges new messages into DB and updates store', async () => {
   await handleMessage(
     {
       type: 'SYNC_RESPONSE',
-      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 1 },
+      from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01' },
       payload: {
-        newMessages: [{ id: 'm-99', peerId: 'p2', username: 'bob', age: 1, color: 'hsl(2, 65%, 65%)', text: 'hi', timestamp: 55 }],
+        newMessages: [{ id: 'm-99', peerId: 'p2', username: 'bob', dateOfBirth: '2004-01-01', color: 'hsl(2, 65%, 65%)', text: 'hi', timestamp: 55 }],
         registryEntries: []
       },
       timestamp: 1
@@ -245,10 +245,10 @@ it('SYNC_RESPONSE merges new messages into DB and updates store', async () => {
 });
 
 it('SYNC_RESPONSE does not create duplicates on repeated sync', async () => {
-  const msg = { id: 'm-99', peerId: 'p2', username: 'bob', age: 1, color: 'hsl(2, 65%, 65%)', text: 'hi', timestamp: 55 };
+  const msg = { id: 'm-99', peerId: 'p2', username: 'bob', dateOfBirth: '2004-01-01', color: 'hsl(2, 65%, 65%)', text: 'hi', timestamp: 55 };
   const envelope = {
     type: 'SYNC_RESPONSE',
-    from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 1 },
+    from: { peerId: 'p2', username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01' },
     payload: { newMessages: [msg], registryEntries: [] },
     timestamp: 1
   };

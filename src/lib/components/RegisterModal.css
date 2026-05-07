@@ -1,0 +1,71 @@
+.modal-overlay {
+  padding: var(--space-lg) var(--space-md);
+}
+
+.modal-shell {
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - (var(--space-lg) * 2));
+}
+
+.modal-body {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Mobile: full-screen modal (no card feel) */
+@media (max-width: 639px) {
+  .modal-overlay {
+    padding: 0;
+    place-items: stretch;
+  }
+
+  .modal-shell {
+    height: 100dvh;
+    max-width: none;
+    border-radius: 0;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .modal-header {
+    padding-top: calc(var(--space-lg) + env(safe-area-inset-top, 0px));
+  }
+
+  .modal-body {
+    padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .avatar-drop {
+    min-height: 44px;
+  }
+
+  .upload-link {
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+@media (hover: hover) {
+  .suggestion-btn:hover {
+    background: var(--accent-subtle);
+  }
+
+  .upload-link:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+  }
+
+  .submit-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+}
+

@@ -1,14 +1,11 @@
 <script>
-  import { peer } from '$lib/stores/peerStore.js';
+  import { isOwnPeerId } from '$lib/stores/userStore.js';
   import WallCommentInput from './WallCommentInput.svelte';
   import WallCommentItem from './WallCommentItem.svelte';
 
   export let wall = null;
 
   let expanded = false;
-
-  $: myPeerId = $peer?.peerId ?? null;
-  $: isOwner = Boolean(wall && myPeerId && wall.ownerPeerId === myPeerId);
 
   $: all = Array.isArray(wall?.comments) ? wall.comments : [];
   $: visible = expanded ? all.slice(0, 50) : all.slice(0, 10);
@@ -27,8 +24,8 @@
         {#each visible as c (c.id)}
           <WallCommentItem
             comment={c}
-            canEdit={Boolean(myPeerId && c.authorPeerId === myPeerId)}
-            canDelete={Boolean(myPeerId && (c.authorPeerId === myPeerId || isOwner))}
+            canEdit={isOwnPeerId(c.authorPeerId)}
+            canDelete={Boolean(isOwnPeerId(c.authorPeerId) || isOwnPeerId(wall.ownerPeerId))}
           />
         {/each}
       </div>
@@ -89,4 +86,3 @@
     }
   }
 </style>
-

@@ -75,7 +75,7 @@ async function mountWithOneMessage() {
     {
       peerId: 'p1',
       username: 'alice',
-      age: 22,
+      dateOfBirth: '2004-01-01',
       color: 'hsl(1, 65%, 65%)',
       text: 'hello tooltip',
       timestamp: Date.now()

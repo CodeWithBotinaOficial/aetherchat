@@ -19,7 +19,7 @@ import { writable } from 'svelte/store';
  * @property {string} ownerPeerId
  * @property {string} ownerUsername
  * @property {string} ownerColor
- * @property {number} ownerAge
+ * @property {string|null} ownerDateOfBirth
  * @property {string|null} ownerAvatarBase64
  * @property {string} ownerBio
  * @property {WallComment[]} comments

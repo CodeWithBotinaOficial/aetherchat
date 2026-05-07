@@ -56,20 +56,20 @@ export let activeLobbyId = null;
 /** @type {UserProfile|null} */
 export let cachedProfile = null;
 export let userProfileRef = null;
-// These are mutated by peer runtime modules; ESLint cannot see cross-module assignments.
-// eslint-disable-next-line prefer-const
 export let reconnectAttempts = 0;
-// eslint-disable-next-line prefer-const
 export let reconnectTimer = null;
-// eslint-disable-next-line prefer-const
 export let unavailableIdAttempts = 0;
-// eslint-disable-next-line prefer-const
 export let unavailableIdRetryTimer = null;
-// eslint-disable-next-line prefer-const
 export let unloadHookInstalled = false;
 /** @type {string|null} */
-// eslint-disable-next-line prefer-const
 export let forcedPeerId = null;
+
+export const setReconnectAttempts = (n) => { reconnectAttempts = n; };
+export const setReconnectTimer = (t) => { reconnectTimer = t; };
+export const setUnavailableIdAttempts = (n) => { unavailableIdAttempts = n; };
+export const setUnavailableIdRetryTimer = (t) => { unavailableIdRetryTimer = t; };
+export const setUnloadHookInstalled = (v) => { unloadHookInstalled = Boolean(v); };
+export const setForcedPeerId = (id) => { forcedPeerId = id; };
 
 export const setActiveLobbyId = (id) => { activeLobbyId = id; };
 export const setPeerCtor = (ctor) => { PeerCtor = ctor; };
@@ -95,7 +95,7 @@ export function setUserProfileRef(p) {
 export const remoteIdentityKeys = new Map(); // peerId -> base64 public key (from HANDSHAKE/ACK)
 /** @type {Map<string, any>} */
 export const lobbyConnections = new Map(); // peerId -> DataConnection (to lobby peer)
-/** @type {Map<string, { peerId: string, username: string, color: string, age: number }>} */
+/** @type {Map<string, { peerId: string, username: string, color: string, dateOfBirth: string|null }>} */
 export const lobbyPeerList = new Map(); // peerId -> peer info (main peer IDs)
 /** @type {Map<string, ProtocolEnvelope>} */
 export const pendingGlobalOutbox = new Map(); // messageId -> envelope (flush when peers connect)
@@ -146,7 +146,7 @@ export function buildMessage(type, peerId, profile, payload, timestamp = Date.no
       peerId,
       username: profile.username,
       color: profile.color,
-      age: profile.age
+      dateOfBirth: profile.dateOfBirth ?? null
     },
     payload,
     timestamp
@@ -163,11 +163,11 @@ export function buildDirectMessage(type, peerId, profile, to, payload, timestamp
 /**
  * @param {UserProfile} profile
  * @param {string} [peerIdOverride]
- * @returns {{peerId: string, username: string, color: string, age: number}}
+ * @returns {{peerId: string, username: string, color: string, dateOfBirth: string|null}}
  */
 export function buildFromProfile(profile, peerIdOverride) {
   const peerId = peerIdOverride ?? get(peerStore).peerId ?? '';
-  return { peerId, username: profile.username, color: profile.color, age: profile.age };
+  return { peerId, username: profile.username, color: profile.color, dateOfBirth: profile.dateOfBirth ?? null };
 }
 
 /**
@@ -181,7 +181,8 @@ export function validateProtocolMessage(msg) {
   if (typeof msg.from.peerId !== 'string' || msg.from.peerId.length === 0) return false;
   if (typeof msg.from.username !== 'string' || msg.from.username.length === 0) return false;
   if (typeof msg.from.color !== 'string' || msg.from.color.length === 0) return false;
-  if (typeof msg.from.age !== 'number') return false;
+  if (typeof msg.from.dateOfBirth !== 'string' && msg.from.dateOfBirth !== null) return false;
+  if (typeof msg.from.dateOfBirth === 'string' && !/^\d{4}-\d{2}-\d{2}$/.test(msg.from.dateOfBirth)) return false;
   if (typeof msg.timestamp !== 'number') return false;
   if (typeof msg.payload === 'undefined') return false;
   if (typeof msg.to !== 'undefined') {
@@ -205,7 +206,7 @@ export function upsertConnectedPeer(peerId, conn, info) {
     next.set(peerId, {
       username: info?.username ?? prev?.username ?? 'unknown',
       color: info?.color ?? prev?.color ?? '',
-      age: info?.age ?? prev?.age ?? 0,
+      dateOfBirth: Object.prototype.hasOwnProperty.call(info ?? {}, 'dateOfBirth') ? (info?.dateOfBirth ?? null) : (prev?.dateOfBirth ?? null),
       avatarBase64: info?.avatarBase64 ?? prev?.avatarBase64 ?? null,
       connection: conn ?? prev?.connection
     });
@@ -354,4 +355,15 @@ export function setElectNewLobbyHostImpl(fn) {
 export function electNewLobbyHostFromShared() {
   if (!electNewLobbyHostImpl) return;
   return electNewLobbyHostImpl();
+}
+
+let connectToPeerIfUnknownImpl = null;
+
+export function setConnectToPeerIfUnknownImpl(fn) {
+  connectToPeerIfUnknownImpl = fn;
+}
+
+export function connectToPeerIfUnknownFromShared(peerInfo, profile) {
+  if (!connectToPeerIfUnknownImpl) return;
+  return connectToPeerIfUnknownImpl(peerInfo, profile);
 }

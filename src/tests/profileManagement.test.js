@@ -8,7 +8,7 @@ import { deletionCooldownUntil } from '$lib/stores/cooldownStore.js';
 
 import * as peerSvc from '$lib/services/peer.js';
 import {
-  changeAge,
+  changeDateOfBirth,
   changeBio,
   changeUsername,
   deleteAccount
@@ -78,7 +78,7 @@ afterEach(() => {
 it('Username change updates userStore + IndexedDB and moves registry entry', async () => {
   const initial = {
     username: 'alice',
-    age: 22,
+    dateOfBirth: '2004-01-01',
     color: 'hsl(1, 65%, 65%)',
     avatarBase64: null,
     bio: '',
@@ -109,10 +109,10 @@ it('Username change updates userStore + IndexedDB and moves registry entry', asy
   expect(spy).toHaveBeenCalledTimes(1);
 });
 
-it('Age change sets ageChangedOnce and then locks', async () => {
+it('Date of birth change sets ageChangedOnce and then locks', async () => {
   const initial = {
     username: 'alice',
-    age: 22,
+    dateOfBirth: '2004-01-01',
     color: 'hsl(1, 65%, 65%)',
     avatarBase64: null,
     bio: '',
@@ -123,22 +123,22 @@ it('Age change sets ageChangedOnce and then locks', async () => {
   await saveUser(initial);
   userStore.set({ ...initial, id: 1 });
 
-  const res = await changeAge(30);
+  const res = await changeDateOfBirth('2000-01-01');
   expect(res.ok).toBe(true);
 
   const u = get(userStore);
-  expect(u?.age).toBe(30);
+  expect(u?.dateOfBirth).toBe('2000-01-01');
   expect(u?.ageChangedOnce).toBe(true);
 
   const row = await db.users.get(1);
-  expect(row?.age).toBe(30);
+  expect(row?.dateOfBirth).toBe('2000-01-01');
   expect(row?.ageChangedOnce).toBe(true);
 });
 
 it('Bio clamps to 120 characters and broadcasts PROFILE_UPDATED', async () => {
   const initial = {
     username: 'alice',
-    age: 22,
+    dateOfBirth: '2004-01-01',
     color: 'hsl(1, 65%, 65%)',
     avatarBase64: null,
     bio: '',
@@ -166,7 +166,7 @@ it('ProfileFields disables username input when cooldown is active (<24h)', async
   const u = {
     id: 1,
     username: 'alice',
-    age: 22,
+    dateOfBirth: '2004-01-01',
     color: 'hsl(1, 65%, 65%)',
     avatarBase64: null,
     bio: '',
@@ -182,12 +182,12 @@ it('ProfileFields disables username input when cooldown is active (<24h)', async
   expect(screen.getByText(/You can change your username again in/i)).toBeInTheDocument();
 });
 
-it('ProfileFields disables age input when ageChangedOnce is true', async () => {
+it('ProfileFields disables date of birth input when ageChangedOnce is true', async () => {
   const ProfileFields = (await import('$lib/components/profile/ProfileFields.svelte')).default;
   const u = {
     id: 1,
     username: 'alice',
-    age: 22,
+    dateOfBirth: '2004-01-01',
     color: 'hsl(1, 65%, 65%)',
     avatarBase64: null,
     bio: '',
@@ -197,9 +197,10 @@ it('ProfileFields disables age input when ageChangedOnce is true', async () => {
   };
 
   render(ProfileFields, { user: u });
-  const ageInput = screen.getByRole('spinbutton');
-  expect(ageInput).toBeDisabled();
-  expect(screen.getByText(/This field is locked/i)).toBeInTheDocument();
+  const dobInput = document.querySelector('input[type="date"]');
+  expect(dobInput).toBeTruthy();
+  expect(dobInput).toBeDisabled();
+  expect(screen.getByText(/Date of birth:/i)).toBeInTheDocument();
 });
 
 it('Delete confirmation button is disabled until typed username matches exactly (case-sensitive)', async () => {
@@ -224,7 +225,7 @@ it('deleteAccount clears user data and sets cooldown.until ~= now + 48h', async 
   const now = Date.now();
   const initial = {
     username: 'alice',
-    age: 22,
+    dateOfBirth: '2004-01-01',
     color: 'hsl(1, 65%, 65%)',
     avatarBase64: null,
     bio: '',
@@ -238,7 +239,15 @@ it('deleteAccount clears user data and sets cooldown.until ~= now + 48h', async 
   await registerUsernameLocally({ username: 'alice', peerId: 'local', registeredAt: 10, lastSeenAt: 10 });
   await db.peerIds.put({ username: 'alice', peerId: 'local' });
   await db.knownPeers.add({ username: 'bob', peerId: 'p2', lastSeen: Date.now() });
-  await db.globalMessages.put({ id: 'm1', peerId: 'local', username: 'alice', age: 22, color: 'x', text: 'hi', timestamp: Date.now() });
+  await db.globalMessages.put({
+    id: 'm1',
+    peerId: 'local',
+    username: 'alice',
+    dateOfBirth: '2004-01-01',
+    color: 'x',
+    text: 'hi',
+    timestamp: Date.now()
+  });
   await db.privateChats.put({
     id: 'alice:bob',
     myPeerId: 'local',
@@ -254,16 +263,19 @@ it('deleteAccount clears user data and sets cooldown.until ~= now + 48h', async 
   await db.queuedMessages.put({ id: 'q1', chatId: 'alice:bob', theirPeerId: 'p2', plaintext: 'x', timestamp: Date.now() });
   await db.queuedActions.put({ id: 'qa1', chatId: 'alice:bob', theirPeerId: 'p2', kind: 'edit', messageId: 'pm1', plaintext: 'y', timestamp: Date.now() });
 
-  let broadcasted = false;
-  vi.spyOn(peerSvc, 'broadcastUserDeleted').mockImplementation(() => { broadcasted = true; });
+  const sequence = [];
+  vi.spyOn(peerSvc, 'broadcastUsernameReleased').mockImplementation(() => { sequence.push('USERNAME_RELEASED'); });
+  vi.spyOn(peerSvc, 'broadcastUserDeleted').mockImplementation(() => { sequence.push('USER_DELETED'); });
   const whereOriginal = db.globalMessages.where.bind(db.globalMessages);
   vi.spyOn(db.globalMessages, 'where').mockImplementation((...args) => {
-    expect(broadcasted).toBe(true);
+    expect(sequence.length).toBeGreaterThan(0);
     return whereOriginal(...args);
   });
 
   const res = await deleteAccount();
   expect(res.ok).toBe(true);
+  expect(sequence[0]).toBe('USERNAME_RELEASED');
+  expect(sequence).toContain('USER_DELETED');
 
   expect(get(userStore)).toBeNull();
   expect(await db.users.get(1)).toBeUndefined();
@@ -293,15 +305,35 @@ it('USER_DELETED is ignored when from.peerId does not match registry peerId', as
   await peerSvc.handleMessage(
     {
       type: 'USER_DELETED',
-      from: { peerId: 'p_evil', username: 'bob', color: 'hsl(2, 65%, 65%)', age: 1 },
+      from: { peerId: 'p_evil', username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01' },
       payload: { username: 'bob', peerId: 'p_evil' },
       timestamp: Date.now()
     },
     null,
-    { username: 'local', color: 'hsl(1, 65%, 65%)', age: 1 }
+    { username: 'local', color: 'hsl(1, 65%, 65%)', dateOfBirth: '2004-01-01' }
   );
 
   expect(await isUsernameTaken('bob')).toBe(true);
+});
+
+it('Receiving USERNAME_RELEASED removes the username from the local registry', async () => {
+  await registerUsernameLocally({ username: 'bob', peerId: 'p1', registeredAt: 1, lastSeenAt: 2 });
+  await db.knownPeers.add({ username: 'bob', peerId: 'p1', lastSeen: Date.now() });
+  expect(await isUsernameTaken('bob')).toBe(true);
+
+  await peerSvc.handleMessage(
+    {
+      type: 'USERNAME_RELEASED',
+      from: { peerId: 'p1', username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01' },
+      payload: { username: 'bob', peerId: 'p1' },
+      timestamp: Date.now()
+    },
+    null,
+    { username: 'local', color: 'hsl(1, 65%, 65%)', dateOfBirth: '2004-01-01' }
+  );
+
+  expect(await isUsernameTaken('bob')).toBe(false);
+  expect(await db.knownPeers.where('peerId').equals('p1').count()).toBe(0);
 });
 
 it('Receiving USERNAME_CHANGED updates the local registry', async () => {
@@ -312,12 +344,12 @@ it('Receiving USERNAME_CHANGED updates the local registry', async () => {
   await peerSvc.handleMessage(
     {
       type: 'USERNAME_CHANGED',
-      from: { peerId: 'p1', username: 'new', color: 'hsl(2, 65%, 65%)', age: 1 },
+      from: { peerId: 'p1', username: 'new', color: 'hsl(2, 65%, 65%)', dateOfBirth: '2004-01-01' },
       payload: { oldUsername: 'old', newUsername: 'new', peerId: 'p1', changedAt: 10 },
       timestamp: 11
     },
     null,
-    { username: 'local', color: 'hsl(1, 65%, 65%)', age: 1 }
+    { username: 'local', color: 'hsl(1, 65%, 65%)', dateOfBirth: '2004-01-01' }
   );
 
   expect(await isUsernameTaken('old')).toBe(false);

@@ -1,6 +1,7 @@
 import { get } from 'svelte/store';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
 import {
+  db,
   deleteQueuedAction,
   deleteQueuedMessage,
   getQueuedActionsForChat,
@@ -9,8 +10,9 @@ import {
   saveSentMessagePlaintext,
   updatePrivateMessage
 } from '$lib/services/db.js';
-import { createSession, encryptForSession, isSessionActive } from '$lib/services/crypto.js';
+import { createSession, decryptForSession, encryptForSession, isSessionActive, resumeSession } from '$lib/services/crypto.js';
 import { encodePrivateBody } from '$lib/utils/privateMessageCodec.js';
+import { snapshotText } from '$lib/utils/replies.js';
 import { privateChatStore, setKeyExchangeState, updateMessageQueued } from '$lib/stores/privateChatStore.js';
 import {
   buildDirectMessage,
@@ -21,6 +23,127 @@ import {
   startKeyExchangeTimeout,
   userProfileRef
 } from './shared.js';
+
+const PRIVATE_CITED_DELETED_PLACEHOLDER = '[ Original message deleted ]';
+
+/**
+ * Persist cascade updates for private chat reply cards in IndexedDB.
+ * Replies are stored encrypted per-message; this decrypts + re-encrypts the bundle.
+ *
+ * Also updates queuedMessages + queuedActions reply previews (plaintext, local-only),
+ * so edits/deletes cascade even when messages are still queued offline.
+ *
+ * @param {string} chatId
+ * @param {string} originalMessageId
+ * @param {{ newSnapshot?: string, deleted?: boolean }} change
+ */
+export async function persistPrivateCitationCascade(chatId, originalMessageId, change) {
+  const cid = String(chatId ?? '').trim();
+  const target = String(originalMessageId ?? '').trim();
+  if (!cid || !target) return;
+  const markDeleted = Boolean(change?.deleted);
+  const newSnap = typeof change?.newSnapshot === 'string' ? change.newSnapshot : null;
+  if (!markDeleted && newSnap === null) return;
+
+  try {
+    if (!isSessionActive(cid)) await resumeSession(cid);
+  } catch {
+    // ignore
+  }
+  if (!isSessionActive(cid)) return;
+
+  try {
+    const rows = await db.privateMessages.where('chatId').equals(cid).toArray();
+    for (const row of rows) {
+      const enc = row?.replies;
+      const repliesCiphertext = typeof enc?.ciphertext === 'string' ? enc.ciphertext : null;
+      const repliesIv = typeof enc?.iv === 'string' ? enc.iv : null;
+      if (!repliesCiphertext || !repliesIv) continue;
+      let parsed;
+      try {
+        const raw = await decryptForSession(cid, repliesCiphertext, repliesIv);
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(parsed)) continue;
+
+      let changed = false;
+      const updated = parsed.map((r) => {
+        if (!r || typeof r !== 'object') return r;
+        if (String(r.messageId ?? '') !== target) return r;
+        changed = true;
+        if (markDeleted) return { ...r, deleted: true, textSnapshot: PRIVATE_CITED_DELETED_PLACEHOLDER };
+        return { ...r, deleted: false, textSnapshot: snapshotText(newSnap, 120) };
+      });
+      if (!changed) continue;
+
+      try {
+        const enc2 = await encryptForSession(cid, JSON.stringify(updated));
+        await updatePrivateMessage(row.id, { replies: { ciphertext: enc2.ciphertext, iv: enc2.iv } });
+      } catch {
+        // ignore
+      }
+    }
+  } catch (err) {
+    console.error('persistPrivateCitationCascade privateMessages scan failed', err);
+  }
+
+  // queuedMessages + queuedActions store replies as JSON strings (plaintext local-only).
+  try {
+    const rows = await db.queuedMessages.where('chatId').equals(cid).toArray();
+    for (const row of rows) {
+      const raw = typeof row?.repliesJson === 'string' ? row.repliesJson : '';
+      if (!raw) continue;
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(parsed)) continue;
+      let changed = false;
+      const updated = parsed.map((r) => {
+        if (!r || typeof r !== 'object') return r;
+        if (String(r.messageId ?? '') !== target) return r;
+        changed = true;
+        if (markDeleted) return { ...r, deleted: true, textSnapshot: PRIVATE_CITED_DELETED_PLACEHOLDER };
+        return { ...r, deleted: false, textSnapshot: snapshotText(newSnap, 120) };
+      });
+      if (!changed) continue;
+      await db.queuedMessages.update(row.id, { repliesJson: JSON.stringify(updated) });
+    }
+  } catch (err) {
+    console.error('persistPrivateCitationCascade queuedMessages failed', err);
+  }
+
+  try {
+    const rows = await db.queuedActions.where('chatId').equals(cid).toArray();
+    for (const row of rows) {
+      const raw = typeof row?.repliesJson === 'string' ? row.repliesJson : '';
+      if (!raw) continue;
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(parsed)) continue;
+      let changed = false;
+      const updated = parsed.map((r) => {
+        if (!r || typeof r !== 'object') return r;
+        if (String(r.messageId ?? '') !== target) return r;
+        changed = true;
+        if (markDeleted) return { ...r, deleted: true, textSnapshot: PRIVATE_CITED_DELETED_PLACEHOLDER };
+        return { ...r, deleted: false, textSnapshot: snapshotText(newSnap, 120) };
+      });
+      if (!changed) continue;
+      await db.queuedActions.update(row.id, { repliesJson: JSON.stringify(updated) });
+    }
+  } catch (err) {
+    console.error('persistPrivateCitationCascade queuedActions failed', err);
+  }
+}
 
 export async function flushQueueForPeer(theirPeerId) {
   const state = get(peerStore);

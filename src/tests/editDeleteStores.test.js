@@ -33,8 +33,8 @@ afterEach(() => {
 it('global updateMessage updates text + editedAt without changing message position', () => {
   const now = Date.now();
   globalMessages.set([
-    { id: 'm1', peerId: 'p', username: 'alice', age: 1, color: 'hsl(0,0%,60%)', text: 'a', timestamp: now - 1000, replies: null },
-    { id: 'm2', peerId: 'p', username: 'bob', age: 1, color: 'hsl(0,0%,60%)', text: 'b', timestamp: now - 900, replies: null }
+    { id: 'm1', peerId: 'p', username: 'alice', dateOfBirth: '2004-01-01', color: 'hsl(0,0%,60%)', text: 'a', timestamp: now - 1000, replies: null },
+    { id: 'm2', peerId: 'p', username: 'bob', dateOfBirth: '2004-01-01', color: 'hsl(0,0%,60%)', text: 'b', timestamp: now - 900, replies: null }
   ]);
 
   const ok = updateGlobal('m1', { text: 'edited', editedAt: now }, 'alice');
@@ -48,8 +48,8 @@ it('global updateMessage updates text + editedAt without changing message positi
 it('global deleteMessage soft-deletes and does not remove from array', () => {
   const now = Date.now();
   globalMessages.set([
-    { id: 'm1', peerId: 'p', username: 'alice', age: 1, color: 'hsl(0,0%,60%)', text: 'a', timestamp: now - 1000, replies: null },
-    { id: 'm2', peerId: 'p', username: 'bob', age: 1, color: 'hsl(0,0%,60%)', text: 'b', timestamp: now - 900, replies: null }
+    { id: 'm1', peerId: 'p', username: 'alice', dateOfBirth: '2004-01-01', color: 'hsl(0,0%,60%)', text: 'a', timestamp: now - 1000, replies: null },
+    { id: 'm2', peerId: 'p', username: 'bob', dateOfBirth: '2004-01-01', color: 'hsl(0,0%,60%)', text: 'b', timestamp: now - 900, replies: null }
   ]);
 
   const ok = deleteGlobal('m1', 'alice');
@@ -63,12 +63,12 @@ it('global deleteMessage soft-deletes and does not remove from array', () => {
 it('global cascadeUpdateCitations updates textSnapshot on edit and marks deleted on delete', () => {
   const now = Date.now();
   globalMessages.set([
-    { id: 'orig', peerId: 'p', username: 'bob', age: 1, color: 'hsl(0,0%,60%)', text: 'orig', timestamp: now - 2000, replies: null },
+    { id: 'orig', peerId: 'p', username: 'bob', dateOfBirth: '2004-01-01', color: 'hsl(0,0%,60%)', text: 'orig', timestamp: now - 2000, replies: null },
     {
       id: 'citer',
       peerId: 'p',
       username: 'alice',
-      age: 1,
+      dateOfBirth: '2004-01-01',
       color: 'hsl(0,0%,60%)',
       text: 'cites',
       timestamp: now - 1000,
@@ -93,7 +93,7 @@ it('global cascadeUpdateCitations updates textSnapshot on edit and marks deleted
 
 it('global store guard rejects edit/delete from non-author', () => {
   const now = Date.now();
-  globalMessages.set([{ id: 'm1', peerId: 'p', username: 'alice', age: 1, color: 'x', text: 'a', timestamp: now - 1000, replies: null }]);
+  globalMessages.set([{ id: 'm1', peerId: 'p', username: 'alice', dateOfBirth: '2004-01-01', color: 'x', text: 'a', timestamp: now - 1000, replies: null }]);
 
   expect(updateGlobal('m1', { text: 'nope', editedAt: now }, 'bob')).toBe(false);
   expect(deleteGlobal('m1', 'bob')).toBe(false);
@@ -194,4 +194,3 @@ it('private cascadeUpdateCitations updates textSnapshot on edit and marks delete
   expect(citer.replies[0].deleted).toBe(true);
   expect(citer.replies[0].textSnapshot).toBe(PRIVATE_CITED_DELETED);
 });
-

@@ -64,7 +64,7 @@ beforeEach(async () => {
 it('Can save and retrieve a user', async () => {
   await saveUser({
     username: 'alice',
-    age: 22,
+    dateOfBirth: '2004-01-01',
     color: 'hsl(1, 65%, 65%)',
     avatarBase64: 'data:image/png;base64,abc',
     createdAt: Date.now()
@@ -73,7 +73,7 @@ it('Can save and retrieve a user', async () => {
   const user = await getUser();
   expect(user).not.toBeNull();
   expect(user?.username).toBe('alice');
-  expect(user?.age).toBe(22);
+  expect(user?.dateOfBirth).toBe('2004-01-01');
 });
 
 it('Can save and retrieve global messages', async () => {
@@ -81,7 +81,7 @@ it('Can save and retrieve global messages', async () => {
   await saveGlobalMessage({
     peerId: 'peer-1',
     username: 'alice',
-    age: 22,
+    dateOfBirth: '2004-01-01',
     color: 'hsl(1, 65%, 65%)',
     text: 'hello',
     timestamp: now
@@ -100,7 +100,7 @@ it('cleanOldGlobalMessages deletes messages older than 24h', async () => {
   await saveGlobalMessage({
     peerId: 'peer-1',
     username: 'alice',
-    age: 22,
+    dateOfBirth: '2004-01-01',
     color: 'hsl(1, 65%, 65%)',
     text: 'old',
     timestamp: oldTs
@@ -108,7 +108,7 @@ it('cleanOldGlobalMessages deletes messages older than 24h', async () => {
   await saveGlobalMessage({
     peerId: 'peer-1',
     username: 'alice',
-    age: 22,
+    dateOfBirth: '2004-01-01',
     color: 'hsl(1, 65%, 65%)',
     text: 'new',
     timestamp: now

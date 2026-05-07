@@ -100,9 +100,9 @@
       <h2 class="h2">3. ELIGIBILITY</h2>
       <p><strong>3.1</strong> You must be at least 16 years of age to use this Service.</p>
       <p>
-        <strong>3.2</strong> By registering, you confirm that you meet the minimum age requirement. The Platform implements a technical age gate; however,
-        we cannot independently verify user ages. Parents and guardians are responsible for monitoring the online activities of minors under their
-        supervision.
+        <strong>3.2</strong> By registering, you confirm that you meet the minimum age requirement. The Platform uses your date of birth to implement a
+        technical age gate; however, we cannot independently verify user ages. Your date of birth is stored locally in your browser. Other users may
+        see your calculated age (and birthday banner status) via peer-to-peer profile sharing.
       </p>
       <p>
         <strong>3.3</strong> If you are between 16 and 18 years of age, you represent that your parent or legal guardian has reviewed and agreed to these
@@ -133,8 +133,8 @@
         is released and may be claimed by another user immediately. This change cannot be undone.
       </p>
       <p>
-        <strong>4.6 AGE UPDATES:</strong> You may update your age only once after initial registration. After saving, your age becomes permanently locked
-        for that profile.
+        <strong>4.6 DATE OF BIRTH UPDATES:</strong> You may update your date of birth only once after initial registration. After saving, this field
+        becomes permanently locked for that profile.
       </p>
       <p>
         <strong>4.7 BIOGRAPHY:</strong> You may provide an optional public biography of up to 120 characters. If provided, it may be visible to other
@@ -366,214 +366,5 @@
 </div>
 
 <style>
-  .terms {
-    background: var(--bg-base);
-    color: var(--text-primary);
-    height: 100%;
-    overflow: hidden;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .terms-scroll {
-    flex: 1;
-    min-height: 0;
-    padding-top: 0; /* header already occupies space in the flex column */
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
-  }
-
-  .progress-track {
-    height: 3px;
-    background: var(--bg-surface);
-    z-index: 5;
-  }
-
-  .progress-bar {
-    height: 100%;
-    width: 100%;
-    transform-origin: left center;
-    background: var(--accent);
-  }
-
-  .terms-header {
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-surface);
-  }
-
-  .header-inner {
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 12px 16px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
-  .header-subtitle {
-    display: none;
-  }
-
-  .title {
-    font-weight: 800;
-    color: var(--text-primary);
-    letter-spacing: -0.01em;
-    font-size: 1rem;
-    line-height: 1.2;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .title-full {
-    display: inline;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-
-  .title-short {
-    display: none;
-  }
-
-  .updated {
-    font-size: var(--font-size-xs);
-    color: var(--text-secondary);
-    font-family: var(--font-mono);
-    white-space: nowrap;
-  }
-
-  .doc {
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 26px 18px 72px;
-    color: var(--text-secondary);
-    line-height: 1.75;
-    letter-spacing: 0.001em;
-  }
-
-  .h1,
-  .h2 {
-    color: var(--text-primary);
-    margin: 0;
-  }
-
-	  .h1 {
-	    font-size: 1.35rem;
-	    font-weight: 900;
-	    letter-spacing: -0.02em;
-	    margin-top: 0;
-	  }
-
-  .doc-title {
-    display: none;
-  }
-
-	  .h2 {
-	    margin-top: 22px;
-	    font-size: 1.05rem;
-	    font-weight: 800;
-	    letter-spacing: -0.01em;
-	  }
-
-  p {
-    margin: 0.9em 0;
-  }
-
-  .meta {
-    margin-top: 10px;
-  }
-
-  .meta-sep {
-    margin: 0 8px;
-    opacity: 0.7;
-  }
-
-  .rule {
-    border: 0;
-    height: 1px;
-    background: var(--border);
-    margin: 18px 0;
-    opacity: 0.9;
-  }
-
-  .list {
-    margin: 0.85em 0;
-    padding-left: 20px;
-  }
-
-  .list li {
-    margin: 0.45em 0 0;
-  }
-
-  .callout {
-    margin-top: 10px;
-    padding: 12px 14px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-    background: color-mix(in srgb, var(--accent-subtle) 60%, var(--bg-surface));
-    color: var(--text-primary);
-  }
-
-  .link {
-    color: var(--accent);
-    text-decoration: none;
-  }
-
-	  @media (hover: hover) {
-	    .link:hover {
-	      color: var(--accent-hover);
-	      text-decoration: underline;
-	    }
-	  }
-
-  @media (max-width: 639px) {
-    .header-inner {
-      height: 48px;
-      padding: 0 12px;
-    }
-
-    .title {
-      font-size: 0.95rem;
-      letter-spacing: -0.015em;
-    }
-
-    .title-full {
-      display: none;
-    }
-
-    .title-short {
-      display: inline;
-    }
-
-    .updated {
-      font-size: 0.7rem;
-    }
-
-    .doc-title {
-      display: none;
-    }
-
-    .header-subtitle {
-      display: block;
-      max-width: 720px;
-      margin: -4px auto 0;
-      padding: 0 12px 10px;
-      font-size: 0.8rem;
-      font-weight: 900;
-      letter-spacing: -0.02em;
-      color: var(--text-primary);
-    }
-  }
+  @import './TermsAndConditions.css';
 </style>

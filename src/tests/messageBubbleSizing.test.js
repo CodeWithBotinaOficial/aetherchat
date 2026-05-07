@@ -25,7 +25,7 @@ it('MessageBubble renders username fully without truncation (normal-length usern
   });
   try {
     render(MessageBubble, {
-      message: { id: 'm1', username: 'alice_normal', age: 22, color: 'hsl(1, 65%, 65%)', text: 'hello', timestamp: 1 },
+      message: { id: 'm1', username: 'alice_normal', dateOfBirth: '2004-01-01', color: 'hsl(1, 65%, 65%)', text: 'hello', timestamp: 1 },
       isOwn: false
     });
     await new Promise((r) => setTimeout(r, 0));
@@ -48,7 +48,7 @@ it('MessageBubble avatar is visible at expected size on mobile and desktop', asy
   });
   try {
     const { unmount } = render(MessageBubble, {
-      message: { id: 'm2', username: 'alice', age: 1, color: 'hsl(1, 65%, 65%)', text: 'hello', timestamp: 1 },
+      message: { id: 'm2', username: 'alice', dateOfBirth: '2004-01-01', color: 'hsl(1, 65%, 65%)', text: 'hello', timestamp: 1 },
       isOwn: true
     });
     await new Promise((r) => setTimeout(r, 0));
@@ -70,7 +70,7 @@ it('MessageBubble avatar is visible at expected size on mobile and desktop', asy
   });
   try {
     const { unmount } = render(MessageBubble, {
-      message: { id: 'm3', username: 'alice', age: 1, color: 'hsl(1, 65%, 65%)', text: 'hello', timestamp: 1 },
+      message: { id: 'm3', username: 'alice', dateOfBirth: '2004-01-01', color: 'hsl(1, 65%, 65%)', text: 'hello', timestamp: 1 },
       isOwn: true
     });
     await new Promise((r) => setTimeout(r, 0));

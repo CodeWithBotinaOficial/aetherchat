@@ -47,7 +47,7 @@ beforeEach(async () => {
   await clearAllTables();
   document.body.innerHTML = '';
   globalMessages.set([]);
-  user.set({ id: 1, username: 'alice', age: 22, color: 'hsl(1, 65%, 65%)', avatarBase64: null, createdAt: Date.now() });
+  user.set({ id: 1, username: 'alice', dateOfBirth: '2004-01-01', color: 'hsl(1, 65%, 65%)', avatarBase64: null, createdAt: Date.now() });
   peer.set({
     peerId: null,
     isConnected: false,
@@ -70,7 +70,7 @@ async function mountWithOneOwnMessage() {
   const component = new GlobalChat({ target: document.body });
   await new Promise((r) => setTimeout(r, 30));
   globalMessages.set([
-    { id: 'm1', peerId: 'local', username: 'alice', age: 22, color: 'hsl(1, 65%, 65%)', text: 'hello', timestamp: Date.now() }
+    { id: 'm1', peerId: 'local', username: 'alice', dateOfBirth: '2004-01-01', color: 'hsl(1, 65%, 65%)', text: 'hello', timestamp: Date.now() }
   ]);
 
   const tooltipZone = await waitFor(() => {

@@ -3,12 +3,13 @@
   import { showToast } from '$lib/stores/toastStore.js';
   import {
     USERNAME_RE,
-    changeAge,
+    changeDateOfBirth,
     changeBio,
     changeUsername,
     formatCooldownHoursMinutes,
     getUsernameCooldown
   } from '$lib/services/profile/actions.js';
+  import { calculateAge } from '$lib/utils/time.js';
 
   export let user = null;
 
@@ -17,15 +18,16 @@
   let usernameSuggestion = '';
   let savingUsername = false;
 
-  let ageDraft = 18;
-  let ageError = '';
-  let savingAge = false;
+  let dobDraft = '';
+  let dobError = '';
+  let savingDob = false;
 
   let bioDraft = '';
   let savingBio = false;
 
   let now = Date.now();
   let timer = 0;
+  const todayIso = new Date().toISOString().slice(0, 10);
 
   $: usernameCurrent = String(user?.username ?? '');
   $: usernameDraft = usernameDraft === '' ? usernameCurrent : usernameDraft;
@@ -33,16 +35,17 @@
   $: usernameCooldown = getUsernameCooldown(user, now);
   $: usernameLockedText = usernameCooldown.locked ? `You can change your username again in ${formatCooldownHoursMinutes(usernameCooldown.remainingMs)}.` : '';
 
-  $: ageCurrent = typeof user?.age === 'number' ? user.age : 18;
-  $: ageDraft = ageDraft === 18 && ageCurrent !== 18 ? ageCurrent : ageDraft;
-  $: ageDirty = Number(ageDraft) !== Number(ageCurrent);
-  $: ageLocked = Boolean(user?.ageChangedOnce);
+  $: dobCurrent = typeof user?.dateOfBirth === 'string' ? user.dateOfBirth : '';
+  $: dobDraft = dobDraft === '' && dobCurrent ? dobCurrent : dobDraft;
+  $: dobDirty = String(dobDraft) !== String(dobCurrent);
+  $: dobLocked = Boolean(user?.ageChangedOnce);
+  $: computedAge = dobCurrent ? calculateAge(dobCurrent) : 0;
 
   $: bioCurrent = typeof user?.bio === 'string' ? user.bio : '';
   $: bioDraft = bioDraft === '' && bioCurrent ? bioCurrent : bioDraft;
   $: bioDirty = bioDraft !== bioCurrent;
 
-  $: anyDirty = usernameDirty || ageDirty || bioDirty;
+  $: anyDirty = usernameDirty || dobDirty || bioDirty;
 
   function validateUsernameLocal(value) {
     const v = String(value ?? '').trim();
@@ -88,29 +91,38 @@
     onUsernameInput();
   }
 
-  async function saveAge() {
-    if (savingAge) return;
-    ageError = '';
-    if (ageLocked) return;
-    if (!ageDirty) return;
-    if (Number(ageDraft) < 16) {
-      ageError = 'Age must be at least 16.';
+  async function saveDob() {
+    if (savingDob) return;
+    dobError = '';
+    if (dobLocked) return;
+    if (!dobDirty) return;
+    const dob = String(dobDraft ?? '').trim();
+    if (!dob) {
+      dobError = 'Date of birth is required.';
+      return;
+    }
+    if (dob > todayIso) {
+      dobError = 'Date of birth cannot be in the future.';
+      return;
+    }
+    if (calculateAge(dob) < 16) {
+      dobError = 'You must be at least 16 years old to use AetherChat.';
       return;
     }
 
-    savingAge = true;
+    savingDob = true;
     try {
-      const res = await changeAge(Number(ageDraft));
+      const res = await changeDateOfBirth(dob);
       if (!res.ok) {
-        ageError = res.error;
+        dobError = res.error;
         return;
       }
-      showToast('Age updated.');
+      showToast('Date of birth updated.');
     } catch (err) {
-      console.error('changeAge failed', err);
-      ageError = 'Could not update age.';
+      console.error('changeDateOfBirth failed', err);
+      dobError = 'Could not update date of birth.';
     } finally {
-      savingAge = false;
+      savingDob = false;
     }
   }
 
@@ -197,34 +209,32 @@
   <div class="field">
     <div class="label-row">
       <div class="label">
-        Age
-        {#if ageLocked}
+        Date of birth
+        {#if dobLocked}
           <span class="lock" title="Locked">🔒</span>
         {/if}
       </div>
-      <button type="button" class="btn btn-primary" on:click={saveAge} disabled={savingAge || ageLocked || !ageDirty}>
-        {savingAge ? 'Saving...' : 'Save'}
+      <button type="button" class="btn btn-primary" on:click={saveDob} disabled={savingDob || dobLocked || !dobDirty}>
+        {savingDob ? 'Saving...' : 'Save'}
       </button>
     </div>
 
     <div class="warning">
-      You can only change your age once. After saving, this field will be permanently locked.
+      You can only change your date of birth once. After saving, this field will be permanently locked.
     </div>
 
     <input
       class="input"
-      type="number"
-      min="16"
-      step="1"
-      bind:value={ageDraft}
-      disabled={savingAge || ageLocked}
-      inputmode="numeric"
+      type="date"
+      bind:value={dobDraft}
+      disabled={savingDob || dobLocked}
+      max={todayIso}
     />
-    {#if ageLocked}
-      <div class="hint">This field is locked.</div>
+    {#if dobLocked}
+      <div class="hint">Date of birth: {dobCurrent} · Age: {computedAge}</div>
     {/if}
-    {#if ageError}
-      <div class="error">{ageError}</div>
+    {#if dobError}
+      <div class="error">{dobError}</div>
     {/if}
   </div>
 
@@ -385,4 +395,3 @@
     }
   }
 </style>
-

@@ -2,28 +2,11 @@
 		  import { createEventDispatcher, onDestroy, onMount } from 'svelte';
       import { user as userStore } from '$lib/stores/userStore.js';
 	  import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
-	  import { formatMessageTime } from '$lib/utils/time.js';
+	  import { calculateAge, formatMessageTime } from '$lib/utils/time.js';
 	  import { previewText } from '$lib/utils/replies.js';
+    import { createSwipeToReply, SWIPE_THRESHOLD_PX } from '$lib/components/messageBubble/swipe.js';
 
-		  /**
-		   * @typedef {Object} Message
-		   * @property {string} [id]
-		   * @property {string} [peerId]
-		   * @property {string} username
-		   * @property {number} age
-		   * @property {string} color
-		   * @property {string} text
-		   * @property {{ messageId: string, authorUsername: string, authorColor: string, textSnapshot: string, timestamp: number, deleted?: boolean }[] | null} [replies]
-		   * @property {number} timestamp
-		   * @property {number|null} [editedAt]
-		   * @property {boolean} [deleted]
-		   * @property {string|null} [avatarBase64]
-		   * @property {'sent'|'received'} [direction]
-		   * @property {boolean} [delivered]
-		   * @property {boolean} [queued]
-	   */
-
-  /** @type {{ message: Message, isOwn: boolean }} */
+  /** @type {{ message: any, isOwn: boolean }} */
 	  export let message;
 	  export let messageKey = '';
 	  export let isOwn = false;
@@ -43,10 +26,8 @@
 	  }, 30000);
 	  onDestroy(() => clearInterval(timer));
 
-  /** @type {MediaQueryList|null} */
-  let mqMobile = null;
-  /** @type {MediaQueryList|null} */
-  let mqDesktop = null;
+  /** @type {MediaQueryList|null} */ let mqMobile = null;
+  /** @type {MediaQueryList|null} */ let mqDesktop = null;
   let isMobile = false;
 	  let isDesktop = false;
 
@@ -55,15 +36,14 @@
 
   // Swipe-to-reply (touch devices only)
   let isTouch = false;
-  let dragging = false;
+  const swipe = createSwipeToReply({
+    isEnabled: () => Boolean(isTouch && isMobile),
+    isOwn: () => Boolean(isOwn),
+    onReply: () => triggerReply()
+  });
   let dragX = 0;
-  let startX = 0;
-  let startY = 0;
-  let suppressTap = false;
   let animatingBack = false;
-  let animTimer = 0;
-  const SWIPE_MAX = 96;
-  const SWIPE_THRESHOLD = 64; // ~60-80px
+  let suppressTap = false;
 
   function updateMqFlags() {
     isMobile = Boolean(mqMobile?.matches);
@@ -83,7 +63,7 @@
 	    mqDesktop?.addEventListener?.('change', onDesktopChange);
 
 	    return () => {
-	      clearTimeout(animTimer);
+        swipe.destroy();
 	      mqMobile?.removeEventListener?.('change', onMobileChange);
 	      mqDesktop?.removeEventListener?.('change', onDesktopChange);
 	    };
@@ -101,11 +81,7 @@
   function handleBubbleMouseEnter(e) {
     hovered = true;
     cancelHide();
-    dispatch('hoverEnter', {
-      message,
-      messageKey,
-      position: getPositionFromEvent(e)
-    });
+    dispatch('hoverEnter', { message, messageKey, position: getPositionFromEvent(e) });
   }
 
   function handleBubbleMouseLeave() {
@@ -117,11 +93,7 @@
 
   function onMove(e) {
     if (!hovered) return;
-    dispatch('hoverMove', {
-      message,
-      messageKey,
-      position: { x: e.clientX, y: e.clientY }
-    });
+    dispatch('hoverMove', { message, messageKey, position: { x: e.clientX, y: e.clientY } });
   }
 
   export function cancelHide() {
@@ -134,11 +106,7 @@
     if (suppressTap) return;
     const pointerType = e?.pointerType;
     if (pointerType && pointerType === 'mouse') return;
-    dispatch('hoverEnter', {
-      message,
-      messageKey,
-      position: getPositionFromEvent(e)
-    });
+    dispatch('hoverEnter', { message, messageKey, position: getPositionFromEvent(e) });
   }
 
   function openWallFromZone(e) {
@@ -147,37 +115,20 @@
     dispatch('openWall', { message, isOwn });
   }
 
-	  function triggerReply() {
-	    if (message?.deleted) return;
-	    if (!message?.id) return;
-	    dispatch('reply', { message });
-	  }
+	  function triggerReply() { if (!message?.deleted && message?.id) dispatch('reply', { message }); }
 
 		  function openMenu() {
-		    if (!isOwn) return;
-		    if (!canEdit && !canDelete) return;
-		    if (message?.deleted) return;
-		    menuOpen = true;
-		    dispatch('menuOpen', { message, messageKey });
-		  }
+        if (!isOwn || message?.deleted || (!canEdit && !canDelete)) return;
+        menuOpen = true;
+        dispatch('menuOpen', { message, messageKey });
+      }
 
-		  function closeMenu() {
-		    menuOpen = false;
-		    dispatch('menuClose', { message, messageKey });
-		  }
+		  function closeMenu() { menuOpen = false; dispatch('menuClose', { message, messageKey }); }
 
 		  // Parent can close the menu to resolve overlay conflicts (e.g. tooltip vs menu).
-		  export function closeMenuFromParent() {
-		    if (!menuOpen) return;
-		    closeMenu();
-		  }
+		  export function closeMenuFromParent() { if (menuOpen) closeMenu(); }
 
-		  function onMenuTrigger(e) {
-		    e.preventDefault();
-		    e.stopPropagation();
-		    if (menuOpen) closeMenu();
-		    else openMenu();
-		  }
+		  function onMenuTrigger(e) { e.preventDefault(); e.stopPropagation(); menuOpen ? closeMenu() : openMenu(); }
 
 	  function onDocPointerDown(e) {
 	    if (!menuOpen) return;
@@ -197,61 +148,20 @@
 	  });
 
   function onTouchStart(e) {
-    if (!isTouch || !isMobile) return;
-    if (!e?.touches?.length) return;
-    suppressTap = false;
-    dragging = true;
-    animatingBack = false;
-    dragX = 0;
-    startX = e.touches[0].clientX;
-    startY = e.touches[0].clientY;
+    swipe.onTouchStart(e);
   }
 
   function onTouchMove(e) {
-    if (!dragging || !isTouch || !isMobile) return;
-    if (!e?.touches?.length) return;
-    const x = e.touches[0].clientX;
-    const y = e.touches[0].clientY;
-    const dx = x - startX;
-    const dy = y - startY;
-
-    // Cancel if the user is scrolling vertically.
-    if (Math.abs(dy) > Math.abs(dx)) {
-      dragging = false;
-      dragX = 0;
-      return;
-    }
-
-    // Only accept the "reply" swipe direction.
-    // Own (right-aligned): swipe LEFT. Other (left-aligned): swipe RIGHT.
-    const dir = isOwn ? -1 : 1;
-    if (dx * dir < 0) {
-      dragX = 0;
-      return;
-    }
-
-    const dist = Math.min(SWIPE_MAX, Math.abs(dx));
-    dragX = dir * dist;
-    if (dist > 10) suppressTap = true;
-    if (e.cancelable) e.preventDefault();
-  }
-
-  function snapBack() {
-    animatingBack = true;
-    dragX = 0;
-    clearTimeout(animTimer);
-    animTimer = setTimeout(() => {
-      animatingBack = false;
-    }, 180);
+    swipe.onTouchMove(e);
+    dragX = swipe.state.dragX;
+    suppressTap = swipe.state.suppressTap;
   }
 
   function onTouchEnd() {
-    if (!isTouch || !isMobile) return;
-    if (!dragging && dragX === 0) return;
-    dragging = false;
-    const dist = Math.abs(dragX);
-    if (dist >= SWIPE_THRESHOLD) triggerReply();
-    snapBack();
+    swipe.onTouchEnd();
+    dragX = swipe.state.dragX;
+    animatingBack = swipe.state.animatingBack;
+    suppressTap = swipe.state.suppressTap;
   }
 
 	  $: bubbleShadow = hovered
@@ -261,7 +171,9 @@
 	  $: avatarSize = isDesktop ? 48 : isMobile ? 36 : 42;
 
     $: displayUsername = isOwn ? ($userStore?.username ?? message.username) : message.username;
-    $: displayAge = isOwn ? ($userStore?.age ?? message.age) : message.age;
+    $: displayAge = calculateAge(
+      isOwn ? ($userStore?.dateOfBirth ?? message.dateOfBirth ?? '') : (message.dateOfBirth ?? '')
+    );
     $: displayAvatar = isOwn ? ($userStore?.avatarBase64 ?? (message.avatarBase64 ?? null)) : (message.avatarBase64 ?? null);
 		</script>
 
@@ -284,7 +196,7 @@
     <div class="swipe-wrap relative">
       <div
         class={`swipe-underlay ${isOwn ? 'underlay-own' : 'underlay-their'}`}
-        style={`opacity:${Math.min(1, Math.abs(dragX) / SWIPE_THRESHOLD)};`}
+        style={`opacity:${Math.min(1, Math.abs(dragX) / SWIPE_THRESHOLD_PX)};`}
         aria-hidden="true"
       >
         <div class="underlay-icon">
@@ -471,281 +383,4 @@
   </div>
 </div>
 
-<style>
-		  .bubble {
-		    /* Comfortable sizing across devices without becoming comically wide on large screens. */
-		    max-width: min(94%, 52rem);
-		    padding: clamp(10px, 1.2vw, 16px) clamp(14px, 1.6vw, 22px);
-		    will-change: transform;
-		    position: relative;
-		  }
-
-      .identity-row {
-        display: flex;
-        align-items: center;
-        gap: 10px; /* >= 8px separation between interactive avatar and username */
-      }
-
-      .avatar-zone,
-      .name-zone {
-        border: 0;
-        background: transparent;
-        padding: 0;
-        color: inherit;
-      }
-
-      .name-zone {
-        text-align: left;
-        cursor: pointer;
-        max-width: 100%;
-      }
-
-      .tooltip-zone {
-        margin-top: 6px;
-        outline: none;
-      }
-
-      .tooltip-zone:focus-visible {
-        box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
-        border-radius: var(--radius-sm);
-      }
-
-	  @media (min-width: 1024px) {
-	    .bubble {
-	      /* Give short desktop messages more presence; still capped for readability. */
-	      min-width: clamp(16rem, 24vw, 24rem);
-	      max-width: min(82%, 70rem);
-	    }
-	  }
-
-		  .meta-top {
-		    display: flex;
-		    align-items: center;
-	    gap: 8px;
-	    flex-wrap: wrap;
-	    min-width: 0;
-	  }
-
-		  .meta-name {
-		    min-width: 0;
-		    overflow-wrap: anywhere;
-		    font-size: clamp(0.95rem, 0.92rem + 0.18vw, 1.1rem);
-		  }
-
-	  .age-badge {
-	    flex: none;
-	    border-radius: var(--radius-full);
-	    border: 1px solid var(--border);
-    background: var(--bg-elevated);
-    padding: 2px 8px;
-    font-size: var(--font-size-xs);
-    color: var(--text-secondary);
-    font-family: var(--font-mono);
-    line-height: 1.2;
-  }
-
-	  .time-row {
-	    margin-top: 6px;
-	    display: flex;
-	    justify-content: flex-end;
-	    gap: 8px;
-	    align-items: center;
-	    font-size: clamp(0.72rem, 0.7rem + 0.1vw, 0.8rem);
-	    color: var(--text-muted);
-	    font-family: var(--font-mono);
-	  }
-
-  .status {
-    color: var(--text-secondary);
-  }
-
-	  .swipe-wrap {
-	    display: inline-block;
-	  }
-
-		  .msg-text {
-		    font-size: clamp(1rem, 0.96rem + 0.25vw, 1.125rem);
-		    color: var(--text-primary);
-		  }
-
-		  .msg-deleted {
-		    color: var(--text-muted);
-		    font-style: italic;
-		  }
-
-		  .quote-author {
-		    overflow-wrap: anywhere;
-		    white-space: normal;
-		  }
-
-		  .quote-deleted {
-		    cursor: default;
-		  }
-
-		  .msg-menu-trigger {
-		    position: absolute;
-		    top: 8px;
-		    right: 8px;
-		    height: 28px;
-		    width: 28px;
-		    display: grid;
-		    place-items: center;
-		    border-radius: var(--radius-full);
-		    border: 1px solid var(--border);
-		    background: var(--bg-surface);
-		    color: var(--text-secondary);
-		    padding: 0;
-		    opacity: 0;
-		    pointer-events: none;
-		  }
-
-		  .msg-menu {
-		    position: absolute;
-		    top: 40px;
-		    right: 8px;
-		    z-index: 20;
-		    min-width: 160px;
-		    border-radius: var(--radius-md);
-		    border: 1px solid var(--border);
-		    background: var(--bg-overlay);
-		    box-shadow: var(--shadow-md);
-		    overflow: hidden;
-		  }
-
-		  .msg-menu-item {
-		    width: 100%;
-		    text-align: left;
-		    padding: 10px 12px;
-		    border: 0;
-		    background: transparent;
-		    color: var(--text-primary);
-		    font-size: var(--font-size-sm);
-		    font-family: var(--font-sans);
-		  }
-
-		  .msg-menu-item.danger {
-		    color: color-mix(in srgb, var(--danger) 90%, var(--text-primary));
-		  }
-
-		  .edited {
-		    display: inline-flex;
-		    align-items: center;
-		    gap: 4px;
-		    color: var(--text-muted);
-		    font-size: clamp(0.72rem, 0.7rem + 0.1vw, 0.8rem);
-		    font-family: var(--font-mono);
-		  }
-
-		  .edited-ico {
-		    height: 14px;
-		    width: 14px;
-		    flex: none;
-		  }
-
-	  .swipe-underlay {
-	    position: absolute;
-	    top: 0;
-    bottom: 0;
-    width: 56px;
-    display: grid;
-    place-items: center;
-    color: var(--text-secondary);
-    pointer-events: none;
-  }
-
-  .underlay-own {
-    right: 0;
-  }
-
-  .underlay-their {
-    left: 0;
-  }
-
-  .underlay-icon {
-    height: 36px;
-    width: 36px;
-    border-radius: var(--radius-full);
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    display: grid;
-    place-items: center;
-  }
-
-  .snap-back {
-    transition: transform 160ms ease-out;
-  }
-
-  .flip-x {
-    transform: scaleX(-1);
-  }
-
-  .reply-btn {
-    opacity: 0;
-    pointer-events: none;
-  }
-
-	  @media (hover: none) {
-	    .reply-btn {
-	      display: none;
-	    }
-
-		    .msg-menu-trigger {
-		      opacity: 0.7;
-		      pointer-events: auto;
-		    }
-	  }
-
-	  @media (hover: hover) {
-	    .row:hover .reply-btn {
-	      opacity: 1;
-	      pointer-events: auto;
-	    }
-
-		    .row:hover .msg-menu-trigger {
-		      opacity: 1;
-		      pointer-events: auto;
-		    }
-
-		    .msg-menu-trigger:hover {
-		      background: var(--bg-elevated);
-		      color: var(--text-primary);
-		    }
-
-		    .msg-menu-item:hover {
-		      background: var(--bg-elevated);
-		    }
-
-	    .reply-btn:hover {
-	      background: var(--bg-elevated);
-	      color: var(--text-primary);
-    }
-
-    .quote-card:hover {
-      background: var(--bg-overlay);
-    }
-  }
-
-  .bubble.aether-highlight {
-    animation: replyPulse 1.5s ease-out;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .bubble.aether-highlight {
-      animation: none;
-    }
-  }
-
-  @keyframes replyPulse {
-    0% {
-      box-shadow: 0 0 0 0 color-mix(in srgb, var(--reply-color, #ffffff) 18%, transparent);
-    }
-    55% {
-      box-shadow: 0 0 0 6px color-mix(in srgb, var(--reply-color, #ffffff) 22%, transparent);
-    }
-    100% {
-      box-shadow: 0 0 0 0 transparent;
-    }
-  }
-
-		  /* (min-width: 1024px) bubble sizing handled above */
-		</style>
+<style src="./MessageBubble.css"></style>

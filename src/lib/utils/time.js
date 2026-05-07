@@ -27,3 +27,45 @@ export function formatMessageTime(timestamp) {
   return formatAbsoluteTime(timestamp);
 }
 
+/**
+ * Calculate age (completed years) from an ISO date string `YYYY-MM-DD`.
+ * @param {string} dateOfBirth
+ * @param {Date} [today=new Date()]
+ * @returns {number}
+ */
+export function calculateAge(dateOfBirth, today = new Date()) {
+  const raw = String(dateOfBirth ?? '').trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!m) return 0;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return 0;
+  if (mo < 1 || mo > 12) return 0;
+  if (d < 1 || d > 31) return 0;
+
+  const ty = today.getFullYear();
+  const tm = today.getMonth() + 1;
+  const td = today.getDate();
+
+  let age = ty - y;
+  // If birthday hasn't happened yet this year, subtract one.
+  if (tm < mo || (tm === mo && td < d)) age -= 1;
+  return Math.max(0, age);
+}
+
+/**
+ * Returns true if today is the user's birthday (same month + day).
+ * @param {string} dateOfBirth
+ * @param {Date} [today=new Date()]
+ * @returns {boolean}
+ */
+export function isBirthday(dateOfBirth, today = new Date()) {
+  const raw = String(dateOfBirth ?? '').trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!m) return false;
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (!Number.isFinite(mo) || !Number.isFinite(d)) return false;
+  return today.getMonth() + 1 === mo && today.getDate() === d;
+}

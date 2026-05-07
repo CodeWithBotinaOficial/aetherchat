@@ -6,7 +6,7 @@
  * @typedef {Object} UserProfile
  * @property {string} username
  * @property {string} color
- * @property {number} age
+ * @property {string|null} dateOfBirth ISO date string (YYYY-MM-DD) or null
  * @property {string} [avatarBase64]
  * @property {number} [createdAt]
  */
@@ -14,7 +14,7 @@
 /**
  * @typedef {Object} ProtocolEnvelope
  * @property {MessageType} type
- * @property {{peerId: string, username: string, color: string, age: number}} from
+ * @property {{peerId: string, username: string, color: string, dateOfBirth: string|null}} from
  * @property {any} payload
  * @property {number} timestamp
  * @property {string} [to]

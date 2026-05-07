@@ -52,7 +52,7 @@ beforeEach(async () => {
   document.body.innerHTML = '';
   globalMessages.set([]);
   privateChatStore.set({ chats: new Map(), activeChatId: null, pendingKeyExchanges: new Map() });
-  user.set({ id: 1, username: 'alice', age: 22, color: 'hsl(1, 65%, 65%)', avatarBase64: null, createdAt: Date.now() });
+  user.set({ id: 1, username: 'alice', dateOfBirth: '2004-01-01', color: 'hsl(1, 65%, 65%)', avatarBase64: null, createdAt: Date.now() });
   peer.set({
     peerId: null,
     isConnected: false,
@@ -81,7 +81,7 @@ it('GlobalChat: cancelling an edit discards changes (no DB update)', async () =>
     id: 'm1',
     peerId: 'local',
     username: 'alice',
-    age: 22,
+    dateOfBirth: '2004-01-01',
     color: 'hsl(1, 65%, 65%)',
     text: 'hello',
     replies: null,
@@ -120,7 +120,7 @@ it('GlobalChat: saving an edit updates the message in-place and persists to DB',
     id: 'm2',
     peerId: 'local',
     username: 'alice',
-    age: 22,
+    dateOfBirth: '2004-01-01',
     color: 'hsl(1, 65%, 65%)',
     text: 'hello',
     replies: null,
@@ -163,7 +163,7 @@ it('GlobalChat: while editing, adding/removing quoted replies is saved on confir
     id: 'orig',
     peerId: 'p2',
     username: 'bob',
-    age: 30,
+    dateOfBirth: '1990-01-01',
     color: 'hsl(2, 65%, 65%)',
     text: 'original',
     replies: null,
@@ -173,7 +173,7 @@ it('GlobalChat: while editing, adding/removing quoted replies is saved on confir
     id: 'mine',
     peerId: 'local',
     username: 'alice',
-    age: 22,
+    dateOfBirth: '2004-01-01',
     color: 'hsl(1, 65%, 65%)',
     text: 'my msg',
     replies: [
@@ -217,7 +217,7 @@ it('GlobalChat: edit/delete actions are not available after 30 minutes', async (
     id: 'm-old',
     peerId: 'local',
     username: 'alice',
-    age: 22,
+    dateOfBirth: '2004-01-01',
     color: 'hsl(1, 65%, 65%)',
     text: 'too old',
     replies: null,
@@ -233,7 +233,7 @@ it('GlobalChat: edit/delete actions are not available after 30 minutes', async (
 });
 
 it('PrivateChatWindow: edit action is available for own messages regardless of age', async () => {
-  user.set({ id: 1, username: 'alice', age: 22, color: 'hsl(1, 65%, 65%)', avatarBase64: null, createdAt: Date.now() });
+  user.set({ id: 1, username: 'alice', dateOfBirth: '2004-01-01', color: 'hsl(1, 65%, 65%)', avatarBase64: null, createdAt: Date.now() });
   privateChatStore.set({
     chats: new Map([
       [

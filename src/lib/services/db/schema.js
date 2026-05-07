@@ -1,4 +1,5 @@
 import Dexie from 'dexie';
+import { upgradeBirthdateV17 } from './migrations/v17.birthdate.js';
 
 /**
  * @typedef {import('./types.js').User} User
@@ -361,6 +362,28 @@ export class AetherChatDB extends Dexie {
       wallComments:
         'id, wallOwnerPeerId, authorPeerId, createdAt, [wallOwnerPeerId+authorPeerId], [wallOwnerPeerId+createdAt]'
     });
+
+    // Phase 17: replace persisted `age` with `dateOfBirth` (YYYY-MM-DD).
+    // Note: IndexedDB has no strict column schema; we explicitly backfill + delete fields.
+    this.version(17)
+      .stores({
+        users: 'id, username, createdAt',
+        globalMessages: 'id, timestamp, peerId, username',
+        privateChats: 'id, myPeerId, myUsername, theirPeerId, theirUsername, createdAt, lastActivity',
+        privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+        knownPeers: '++id, peerId, lastSeen, username',
+        usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+        peerIds: 'username, peerId',
+        queuedMessages: 'id, chatId, theirPeerId, timestamp',
+        queuedActions: 'id, chatId, theirPeerId, timestamp, kind',
+        sentMessagesPlaintext: 'id, chatId, timestamp',
+        sessionKeys: 'id, updatedAt',
+        cooldown: 'id',
+        follows: '++id, followerPeerId, targetPeerId, [followerPeerId+targetPeerId]',
+        wallComments:
+          'id, wallOwnerPeerId, authorPeerId, createdAt, [wallOwnerPeerId+authorPeerId], [wallOwnerPeerId+createdAt]'
+      })
+      .upgrade(upgradeBirthdateV17);
   }
 }
 

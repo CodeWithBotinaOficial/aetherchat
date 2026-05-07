@@ -1,6 +1,5 @@
 import { get } from 'svelte/store';
-import { user } from '$lib/stores/userStore.js';
-import { peer as peerStore } from '$lib/stores/peerStore.js';
+import { stablePeerId, user } from '$lib/stores/userStore.js';
 import {
   addLocalWallComment,
   editWallCommentText,
@@ -12,7 +11,7 @@ import { currentWall } from './state.js';
 import { ensureFollowingWallOwner } from './actions.js';
 
 function myPeerId() {
-  return String(get(peerStore)?.peerId ?? '').trim();
+  return String(get(stablePeerId) ?? '').trim();
 }
 
 function buildFromLocalUser(u) {
@@ -20,7 +19,7 @@ function buildFromLocalUser(u) {
     peerId: myPeerId(),
     username: String(u?.username ?? ''),
     color: String(u?.color ?? ''),
-    age: Number(u?.age ?? 0)
+    dateOfBirth: typeof u?.dateOfBirth === 'string' ? u.dateOfBirth : null
   };
 }
 
@@ -138,4 +137,3 @@ export async function deleteWallComment(commentId) {
     timestamp: Date.now()
   });
 }
-
