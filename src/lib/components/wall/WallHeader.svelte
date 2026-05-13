@@ -4,7 +4,7 @@
   import WallOwnerActions from './WallOwnerActions.svelte';
   import { stablePeerId } from '$lib/stores/userStore.js';
   import { initiatePrivateChat } from '$lib/services/peer.js';
-  import { toggleFollowWallOwner } from '$lib/stores/wall/actions.js';
+  import { closeWall, toggleFollowWallOwner } from '$lib/stores/wall/actions.js';
   import { followingPeerIds } from '$lib/stores/wall/followState.js';
   import { calculateAge, isBirthday } from '$lib/utils/time.js';
 
@@ -72,6 +72,7 @@
             class="btn btn-secondary"
             on:click|stopPropagation={async () => {
               try {
+                closeWall();
                 await initiatePrivateChat(wall.ownerPeerId, wall.ownerUsername, wall.ownerColor, wall.ownerAvatarBase64 ?? null);
               } catch (err) {
                 console.error('initiatePrivateChat failed', err);
