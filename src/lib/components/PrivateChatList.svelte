@@ -4,6 +4,7 @@
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import { avatarCache, closePrivateChat } from '$lib/services/peer.js';
   import { activeChat, chatList, totalUnread, openChat } from '$lib/stores/privateChatStore.js';
+  import { followingPeerIds } from '$lib/stores/wall/followState.js';
 
   function formatRelative(ts) {
     const diff = Date.now() - ts;
@@ -18,7 +19,14 @@
     return `${d}d`;
   }
 
+  function isGated(chat) {
+    const pid = String(chat?.theirPeerId ?? '').trim();
+    if (!pid) return false;
+    return !$followingPeerIds?.has?.(pid);
+  }
+
   function preview(chat) {
+    if (isGated(chat)) return 'Follow to read';
     const txt = String(chat.lastMessage ?? '').trim();
     if (!txt) return chat.keyExchangeState === 'active' ? ' ' : '🔒 Encrypted message';
     return txt.length > 40 ? `${txt.slice(0, 40)}…` : txt;
@@ -112,7 +120,25 @@
               </div>
 
               <div class="mt-[2px] flex items-center justify-between gap-[var(--space-sm)]">
-                <div class="chat-preview min-w-0">{preview(c)}</div>
+                <div class="chat-preview min-w-0 flex items-center gap-[6px]">
+                  {#if isGated(c)}
+                    <svg
+                      viewBox="0 0 24 24"
+                      class="h-[14px] w-[14px] text-[var(--text-muted)] flex-shrink-0"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-label="Locked"
+                      title="Locked"
+                    >
+                      <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                    </svg>
+                  {/if}
+                  <span class="min-w-0 truncate">{preview(c)}</span>
+                </div>
                 <div class="flex items-center gap-[6px] text-[var(--font-size-xs)] text-[var(--text-muted)] font-mono">
                   <span class={c.isOnline ? 'online-dot' : 'offline-dot'} aria-hidden="true"></span>
                   <span>{c.isOnline ? 'online' : 'offline'}</span>

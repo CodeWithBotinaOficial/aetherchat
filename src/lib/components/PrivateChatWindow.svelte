@@ -3,6 +3,7 @@
   import { get } from 'svelte/store';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import PrivateChatView from '$lib/components/privateChat/PrivateChatView.svelte';
+  import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
   import {
     avatarCache,
     closePrivateChat,
@@ -25,7 +26,8 @@
     setPendingReplies
   } from '$lib/stores/privateChatStore.js';
   import { loadOlderPrivateMessages, scrollToAndHighlightPrivateMessage } from '$lib/components/privateChat/history.js';
-  import { openMyWall, openWall } from '$lib/stores/wall/actions.js';
+  import { followPeer, openMyWall, openWall } from '$lib/stores/wall/actions.js';
+  import { followingPeerIds } from '$lib/stores/wall/followState.js';
 
   /** @type {HTMLDivElement|null} */
   let listEl = null;
@@ -50,6 +52,14 @@
   $: theirAvatar = $activeChat
     ? ($activeChat.theirAvatarBase64 ?? $avatarCache.get($activeChat.theirPeerId) ?? null)
     : null;
+  $: isChatGated = Boolean($activeChat?.theirPeerId && !$followingPeerIds?.has?.($activeChat.theirPeerId));
+  $: gateScenario = (() => {
+    const chat = $activeChat;
+    if (!chat) return 'never';
+    const msgs = Array.isArray(chat.messages) ? chat.messages : [];
+    const hasSent = msgs.some((m) => m?.direction === 'sent');
+    return hasSent ? 'unfollowed' : 'never';
+  })();
 
   $: keyState = $activeChat?.keyExchangeState ?? 'idle';
   $: inputDisabled = keyState === 'initiated' || keyState === 'completing';
@@ -297,35 +307,97 @@
 </script>
 
 {#if $activeChat}
-  <PrivateChatView
-    chat={$activeChat}
-    bind:listEl
-    theirAvatar={theirAvatar}
-    theirOnline={theirOnline}
-    hasMore={hasMore}
-    loadingOlder={loadingOlder}
-    loadOlder={loadOlder}
-    bannerInfo={bannerInfo}
-    bannerClass={bannerClass}
-    retryKeyExchange={retryKeyExchange}
-    inputDisabled={inputDisabled}
-    inputPlaceholder={inputPlaceholder}
-    bind:composerValue
-    isEditingThisChat={isEditingThisChat}
-    editLabel={editLabel}
-    msgToBubble={msgToBubble}
-    onOpenWallFromBubble={openWallFromBubble}
-    onReply={(msg) => addPendingReply($activeChat.id, msg)}
-    onJumpToOriginal={(messageId) => scrollToAndHighlight(messageId)}
-    onEditRequest={requestEditMessage}
-    onDeleteRequest={requestDeleteMessage}
-    pendingReplies={$activeChat.pendingReplies ?? []}
-    onRemovePendingReply={(messageId) => removePendingReply($activeChat.id, messageId)}
-    onCancelEdit={cancelEdit}
-    onSend={onSend}
-    onRequestDeleteConversation={requestDeleteConversation}
-    onBack={closeChat}
-  />
+  {#if isChatGated}
+    <div class="pc h-full flex flex-col bg-[var(--bg-base)]">
+      <div class="flex items-center justify-between gap-[var(--space-sm)] px-[var(--space-md)] py-[var(--space-md)] border-b border-[var(--border)] bg-[var(--bg-surface)]">
+        <div class="flex items-center gap-[var(--space-sm)] min-w-0">
+          <button
+            class="btn-back sm:hidden rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-sm)] py-[6px] text-[var(--text-secondary)]"
+            on:click={closeChat}
+            aria-label="Back"
+            title="Back"
+          >
+            ← Back
+          </button>
+          <div class="truncate font-800 text-[var(--text-primary)]">Private Chat</div>
+        </div>
+
+        <button
+          class="btn-icon rounded-[var(--radius-md)] border border-[var(--border)] bg-transparent px-[var(--space-sm)] py-[6px] text-[var(--text-secondary)]"
+          on:click={requestDeleteConversation}
+          aria-label="Delete conversation"
+          title="Delete conversation"
+        >
+          🗑️
+        </button>
+      </div>
+
+      <div class="flex-1 min-h-0 overflow-y-auto px-[var(--space-lg)] py-[var(--space-xl)] grid place-items-center">
+        <div class="w-full max-w-[420px] text-center">
+          <div class="mx-auto mb-[var(--space-md)]">
+            <AvatarDisplay username={$activeChat.theirUsername} avatarBase64={theirAvatar} size={80} showRing={true} />
+          </div>
+          <div class="text-[var(--text-primary)] font-900 text-[1.25rem] truncate">{$activeChat.theirUsername}</div>
+
+          <div class="mt-[var(--space-sm)] text-[var(--text-secondary)] text-[var(--font-size-sm)] leading-[1.45]">
+            {gateScenario === 'unfollowed'
+              ? 'To recover this chat, you must follow this person.'
+              : 'To see this message, you must follow this person back.'}
+          </div>
+
+          <div class="mt-[var(--space-lg)] grid gap-[10px]">
+            <button
+              class="btn-follow rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--accent)] px-[var(--space-md)] py-[10px] font-900 text-[var(--text-primary)]"
+              on:click={() => followPeer({ peerId: $activeChat.theirPeerId, username: $activeChat.theirUsername })}
+              aria-label="Follow"
+              title="Follow"
+            >
+              Follow
+            </button>
+
+            <button
+              class="btn-delete rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-md)] py-[10px] font-900 text-[var(--text-primary)]"
+              on:click={requestDeleteConversation}
+              aria-label="Delete conversation"
+              title="Delete conversation"
+            >
+              Delete conversation
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  {:else}
+    <PrivateChatView
+      chat={$activeChat}
+      bind:listEl
+      theirAvatar={theirAvatar}
+      theirOnline={theirOnline}
+      hasMore={hasMore}
+      loadingOlder={loadingOlder}
+      loadOlder={loadOlder}
+      bannerInfo={bannerInfo}
+      bannerClass={bannerClass}
+      retryKeyExchange={retryKeyExchange}
+      inputDisabled={inputDisabled}
+      inputPlaceholder={inputPlaceholder}
+      bind:composerValue
+      isEditingThisChat={isEditingThisChat}
+      editLabel={editLabel}
+      msgToBubble={msgToBubble}
+      onOpenWallFromBubble={openWallFromBubble}
+      onReply={(msg) => addPendingReply($activeChat.id, msg)}
+      onJumpToOriginal={(messageId) => scrollToAndHighlight(messageId)}
+      onEditRequest={requestEditMessage}
+      onDeleteRequest={requestDeleteMessage}
+      pendingReplies={$activeChat.pendingReplies ?? []}
+      onRemovePendingReply={(messageId) => removePendingReply($activeChat.id, messageId)}
+      onCancelEdit={cancelEdit}
+      onSend={onSend}
+      onRequestDeleteConversation={requestDeleteConversation}
+      onBack={closeChat}
+    />
+  {/if}
 {/if}
 
 {#if showDelete && deleteTarget}

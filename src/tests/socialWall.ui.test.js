@@ -22,8 +22,10 @@ beforeEach(async () => {
 
 it('WallHeader buttons: Follow/Message absent on own wall; Edit Profile absent on other walls', async () => {
   const WallHeader = (await import('$lib/components/wall/WallHeader.svelte')).default;
+  const { __setFollowingForTests } = await import('$lib/stores/wall/followState.js');
 
   setPeerState({ myPeerId: 'me', connected: [] });
+  __setFollowingForTests([]);
   render(WallHeader, {
     wall: {
       ownerPeerId: 'me',
@@ -47,6 +49,7 @@ it('WallHeader buttons: Follow/Message absent on own wall; Edit Profile absent o
   expect(screen.queryByRole('button', { name: /message/i })).toBeNull();
 
   document.body.innerHTML = '';
+  __setFollowingForTests([]);
   render(WallHeader, {
     wall: {
       ownerPeerId: 'bobPid',
@@ -66,7 +69,7 @@ it('WallHeader buttons: Follow/Message absent on own wall; Edit Profile absent o
   });
   expect(screen.queryByRole('button', { name: /edit profile/i })).toBeNull();
   expect(screen.getByRole('button', { name: /follow/i })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /message/i })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /message/i })).toBeNull();
 });
 
 it('Opening second wall replaces the first; wall closes on backdrop click and Escape', async () => {

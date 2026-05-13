@@ -184,6 +184,25 @@
         <li>Upon account deletion, all your comments, follows, and wall data are permanently removed from the network.</li>
       </ul>
 
+      <h2 class="h2">5.5 PRIVATE MESSAGING &amp; FOLLOW REQUIREMENTS</h2>
+      <ul class="list">
+        <li>
+          Private messaging on AetherChat is subject to a follow-based access requirement: you may only initiate or view a private conversation with a
+          user you follow. This measure exists to reduce unwanted contact and to provide users with clear control over who can reach them privately.
+        </li>
+        <li>
+          Following a user grants them the ability to communicate with you privately. You may remove this access at any time by unfollowing them.
+        </li>
+        <li>
+          AetherChat does not intercept, moderate, or store private messages on any server. The follow requirement is a client-side access control
+          measure only.
+        </li>
+        <li>
+          Users are encouraged to use the follow system to build genuine connections. The follow requirement for private messaging is intended to deter
+          anonymous harassment and unsolicited contact, and is not designed to restrict legitimate communication between consenting users.
+        </li>
+      </ul>
+
       <hr class="rule" />
 
       <h2 class="h2">6. DISCLAIMER OF LIABILITY FOR USER CONTENT</h2>
