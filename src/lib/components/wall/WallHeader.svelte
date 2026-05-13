@@ -72,8 +72,13 @@
             class="btn btn-secondary"
             on:click|stopPropagation={async () => {
               try {
+                const ownerPeerId = wall?.ownerPeerId ?? null;
+                const ownerUsername = wall?.ownerUsername ?? null;
+                const ownerColor = wall?.ownerColor ?? null;
+                const ownerAvatarBase64 = wall?.ownerAvatarBase64 ?? null;
                 closeWall();
-                await initiatePrivateChat(wall.ownerPeerId, wall.ownerUsername, wall.ownerColor, wall.ownerAvatarBase64 ?? null);
+                if (!ownerPeerId || !ownerUsername || !ownerColor) return;
+                await initiatePrivateChat(ownerPeerId, ownerUsername, ownerColor, ownerAvatarBase64 ?? null);
               } catch (err) {
                 console.error('initiatePrivateChat failed', err);
               }
