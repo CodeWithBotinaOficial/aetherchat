@@ -8,6 +8,7 @@ import { globalMessages } from '$lib/stores/chatStore.js';
 import { peer } from '$lib/stores/peerStore.js';
 import { privateChatStore } from '$lib/stores/privateChatStore.js';
 import { user } from '$lib/stores/userStore.js';
+import { __setFollowingForTests } from '$lib/stores/wall/followState.js';
 
 async function clearAllTables() {
   await db.transaction(
@@ -52,6 +53,7 @@ beforeEach(async () => {
   document.body.innerHTML = '';
   globalMessages.set([]);
   privateChatStore.set({ chats: new Map(), activeChatId: null, pendingKeyExchanges: new Map() });
+  __setFollowingForTests([]);
   user.set({ id: 1, username: 'alice', dateOfBirth: '2004-01-01', color: 'hsl(1, 65%, 65%)', avatarBase64: null, createdAt: Date.now() });
   peer.set({
     peerId: null,
@@ -234,6 +236,7 @@ it('GlobalChat: edit/delete actions are not available after 30 minutes', async (
 
 it('PrivateChatWindow: edit action is available for own messages regardless of age', async () => {
   user.set({ id: 1, username: 'alice', dateOfBirth: '2004-01-01', color: 'hsl(1, 65%, 65%)', avatarBase64: null, createdAt: Date.now() });
+  __setFollowingForTests(['p2']);
   privateChatStore.set({
     chats: new Map([
       [

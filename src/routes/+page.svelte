@@ -5,11 +5,12 @@
   import BootScreen from '$lib/components/BootScreen.svelte';
   import RegisterModal from '$lib/components/RegisterModal.svelte';
   import ProfileCooldownScreen from '$lib/components/profile/ProfileCooldownScreen.svelte';
-  import { clearDeletionCooldown, cleanOldGlobalMessages, cleanOldPrivateChats, getDeletionCooldown, getUser } from '$lib/services/db.js';
+  import { clearDeletionCooldown, cleanOldGlobalMessages, cleanOldPrivateChats, getDeletionCooldown, getStoredPeerId, getUser } from '$lib/services/db.js';
   import { disconnectPeer, initPeer, registrySyncReady } from '$lib/services/peer.js';
   import { loadPrivateChats } from '$lib/stores/privateChatStore.js';
   import { deletionCooldownUntil, setDeletionCooldownUntil } from '$lib/stores/cooldownStore.js';
   import { isRegistered, user } from '$lib/stores/userStore.js';
+  import { loadFollowState } from '$lib/stores/wall/followState.js';
 
   let cleanupTimer = null;
   let appReady = false;
@@ -71,9 +72,22 @@
     // STEP 1: Load user from DB (local, fast).
     try {
       const u = await getUser();
-      if (u) user.set(u);
+      if (u) {
+        user.set(u);
+        // Follow state must be loaded after the local user is known.
+        try {
+          const pid = await getStoredPeerId(u.username);
+          await loadFollowState(pid);
+        } catch (err) {
+          console.error('followState load failed', err);
+          await loadFollowState('');
+        }
+      } else {
+        await loadFollowState('');
+      }
     } catch (err) {
       console.error('getUser failed', err);
+      await loadFollowState('');
     }
 
     // STEP 2: If registered, hydrate local state BEFORE any P2P activity.
@@ -143,6 +157,13 @@
           await hydrateLocalData(u);
         } catch (err) {
           console.error('Local hydration after registration failed', err);
+        }
+        try {
+          const pid = await getStoredPeerId(u.username);
+          await loadFollowState(pid);
+        } catch (err) {
+          console.error('followState load after registration failed', err);
+          await loadFollowState('');
         }
         appReady = true;
         initPeer({

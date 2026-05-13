@@ -160,6 +160,13 @@ AetherChat includes a lightweight social layer built on top of the P2P network.
 - **Privacy note**
   - Wall data is synced peer-to-peer. There is no central server, and different peers may show different follower/following counts.
 
+### Private Messaging Policy
+
+- **Follow required**: you can only initiate or view a private chat with a user you currently follow.
+- **Unfollow does not delete**: if you unfollow someone you previously messaged, the conversation remains in your local history, but it becomes gated (locked) and message content is hidden.
+- **Instant restore**: following that user again immediately restores access to the existing chat history on your device (no reload required).
+- **Safety framing**: the follow requirement is designed to support consent-based communication, reduce unsolicited contact, and discourage harassment while keeping the underlying P2P + E2EE delivery model unchanged.
+
 ## 🚀 Getting Started
 
 ### Prerequisites

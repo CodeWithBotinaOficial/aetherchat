@@ -8,6 +8,7 @@ import {
   isFollowing as isFollowingDb,
   unfollowUser
 } from '$lib/services/db/follows.db.js';
+import { markFollowed, markUnfollowed } from './followState.js';
 import { getWallComments, hardDeleteCommentsByAuthorOnWall } from '$lib/services/db/wallComments.db.js';
 import {
   isPeerOnline,
@@ -145,6 +146,8 @@ export async function followWallOwner() {
 
   const followedAt = Date.now();
   const inserted = await followUser(me, u.username, w.ownerPeerId, w.ownerUsername, followedAt);
+  // Reactive follow state for all UI surfaces.
+  markFollowed(w.ownerPeerId);
   // Even if it already exists, align UI state.
   currentWall.update((prev) => {
     if (!prev) return prev;
@@ -180,6 +183,8 @@ export async function unfollowWallOwner() {
   if (w.isOwner) return;
 
   const removed = await unfollowUser(me, w.ownerPeerId);
+  // Reactive follow state for all UI surfaces.
+  markUnfollowed(w.ownerPeerId);
 
   // Non-negotiable: cascade comment deletion BEFORE UNFOLLOW broadcast.
   const deletedIds = await hardDeleteCommentsByAuthorOnWall(w.ownerPeerId, me);
@@ -213,6 +218,50 @@ export async function unfollowWallOwner() {
       comments: nextComments
     };
   });
+}
+
+/**
+ * Follow a peer (outgoing follow) without wall-specific side effects.
+ * Used by tooltip and private chat gating UI.
+ *
+ * This intentionally mirrors the FOLLOW payload shape used by followWallOwner.
+ * @param {{ peerId: string, username: string }} target
+ */
+export async function followPeer(target) {
+  const pid = String(target?.peerId ?? '').trim();
+  const uname = String(target?.username ?? '').trim();
+  if (!pid || !uname) return;
+
+  const u = get(user);
+  const me = myPeerId();
+  if (!u || !me) return;
+  if (pid === me) return;
+
+  const followedAt = Date.now();
+  const inserted = await followUser(me, u.username, pid, uname, followedAt);
+  markFollowed(pid);
+
+  // If their wall is currently open, align the wall UI state too.
+  currentWall.update((prev) => {
+    if (!prev) return prev;
+    if (prev.ownerPeerId !== pid) return prev;
+    return { ...prev, isFollowing: true, followerCount: inserted ? prev.followerCount + 1 : prev.followerCount };
+  });
+
+  if (isPeerOnline(pid)) {
+    sendProtocolEnvelopeToPeer(pid, {
+      type: 'FOLLOW',
+      from: buildFromLocalUser(u),
+      payload: {
+        targetPeerId: pid,
+        targetUsername: uname,
+        followerPeerId: me,
+        followerUsername: u.username,
+        followedAt
+      },
+      timestamp: Date.now()
+    });
+  }
 }
 
 export async function toggleFollowWallOwner() {

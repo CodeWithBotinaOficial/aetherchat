@@ -6,6 +6,8 @@
   import { initiatePrivateChat } from '$lib/services/peer.js';
   import { peer } from '$lib/stores/peerStore.js';
   import { calculateAge } from '$lib/utils/time.js';
+  import { followPeer } from '$lib/stores/wall/actions.js';
+  import { followingPeerIds } from '$lib/stores/wall/followState.js';
 
   /** @type {{ peerId?: string, username: string, dateOfBirth: string|null, color: string, avatarBase64: string | null, bio?: string } | null} */
   export let user = null;
@@ -75,7 +77,9 @@
   $: myPeerId = $peer?.peerId ?? null;
   $: isSelf = Boolean(user?.peerId && myPeerId && user.peerId === myPeerId);
   $: canViewProfile = Boolean(user?.peerId && myPeerId && !isSelf);
-  $: canStartPrivateChat = Boolean(user?.peerId && myPeerId && !isSelf);
+  $: isFollowingTarget = Boolean(user?.peerId && $followingPeerIds?.has?.(user.peerId));
+  $: canStartPrivateChat = Boolean(user?.peerId && myPeerId && !isSelf && isFollowingTarget);
+  $: canFollow = Boolean(user?.peerId && myPeerId && !isSelf && !isFollowingTarget);
 
   $: bioRaw = typeof user?.bio === 'string' ? user.bio.trim() : '';
   $: bioText = bioRaw ? truncateWithEllipsis(bioRaw, 120) : '';
@@ -87,6 +91,16 @@
 
   function handleTooltipMouseLeave() {
     dispatch('close');
+  }
+
+  async function handleFollow(ev) {
+    ev?.stopPropagation?.();
+    if (!user?.peerId) return;
+    try {
+      await followPeer({ peerId: user.peerId, username: user.username });
+    } catch (err) {
+      console.error('followPeer failed', err);
+    }
   }
 </script>
 
@@ -141,7 +155,16 @@
               View Profile
             </button>
           {/if}
-          {#if canStartPrivateChat}
+          {#if canFollow}
+            <button
+              class="btn btn-primary"
+              on:click={handleFollow}
+              aria-label="Follow"
+              title="Follow"
+            >
+              Follow
+            </button>
+          {:else if canStartPrivateChat}
             <button
               class="btn btn-primary"
               on:click={handleStartPrivateChat}

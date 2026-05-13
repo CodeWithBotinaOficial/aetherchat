@@ -5,12 +5,14 @@
   import { stablePeerId } from '$lib/stores/userStore.js';
   import { initiatePrivateChat } from '$lib/services/peer.js';
   import { toggleFollowWallOwner } from '$lib/stores/wall/actions.js';
+  import { followingPeerIds } from '$lib/stores/wall/followState.js';
   import { calculateAge, isBirthday } from '$lib/utils/time.js';
 
   export let wall = null;
 
   $: myPeerId = $stablePeerId ?? null;
   $: isOwner = Boolean(wall && myPeerId && wall.ownerPeerId === myPeerId);
+  $: isFollowingOwner = Boolean(wall?.ownerPeerId && $followingPeerIds?.has?.(wall.ownerPeerId));
   $: displayAge = wall?.ownerDateOfBirth ? calculateAge(wall.ownerDateOfBirth) : 0;
   $: showBirthday = wall?.ownerDateOfBirth ? isBirthday(wall.ownerDateOfBirth) : false;
 </script>
@@ -56,30 +58,32 @@
       {:else}
         <button
           type="button"
-          class={`btn ${wall.isFollowing ? 'btn-secondary' : 'btn-primary'}`}
+          class={`btn ${isFollowingOwner ? 'btn-secondary' : 'btn-primary'}`}
           on:click|stopPropagation={toggleFollowWallOwner}
-          aria-label={wall.isFollowing ? 'Unfollow' : 'Follow'}
-          title={wall.isFollowing ? 'Unfollow' : 'Follow'}
+          aria-label={isFollowingOwner ? 'Unfollow' : 'Follow'}
+          title={isFollowingOwner ? 'Unfollow' : 'Follow'}
         >
-          {wall.isFollowing ? 'Following' : 'Follow'}
+          {isFollowingOwner ? 'Following' : 'Follow'}
         </button>
 
-        <button
-          type="button"
-          class="btn btn-secondary"
-          on:click|stopPropagation={async () => {
-            try {
-              await initiatePrivateChat(wall.ownerPeerId, wall.ownerUsername, wall.ownerColor, wall.ownerAvatarBase64 ?? null);
-            } catch (err) {
-              console.error('initiatePrivateChat failed', err);
-            }
-          }}
-          disabled={wall.isOffline}
-          aria-label="Message"
-          title={wall.isOffline ? 'Peer is offline' : 'Start private chat'}
-        >
-          Message
-        </button>
+        {#if isFollowingOwner}
+          <button
+            type="button"
+            class="btn btn-secondary"
+            on:click|stopPropagation={async () => {
+              try {
+                await initiatePrivateChat(wall.ownerPeerId, wall.ownerUsername, wall.ownerColor, wall.ownerAvatarBase64 ?? null);
+              } catch (err) {
+                console.error('initiatePrivateChat failed', err);
+              }
+            }}
+            disabled={wall.isOffline}
+            aria-label="Message"
+            title={wall.isOffline ? 'Peer is offline' : 'Start private chat'}
+          >
+            Message
+          </button>
+        {/if}
       {/if}
     </div>
   </div>
