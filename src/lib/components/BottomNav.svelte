@@ -1,7 +1,7 @@
 <script>
   import { createEventDispatcher } from 'svelte';
 
-  /** @type {'global'|'private'|'terms'} */
+  /** @type {'global'|'private'|'users'|'terms'} */
   export let active = 'global';
   export let privateUnread = 0;
 
@@ -43,6 +43,16 @@
   </button>
 
   <button
+    class={`nav-btn ${isActive('users') ? 'active' : ''}`}
+    on:click={() => select('users')}
+    aria-label="Users"
+    aria-current={isActive('users') ? 'page' : undefined}
+  >
+    <div class="icon">👥</div>
+    <div class="dot" aria-hidden="true"></div>
+  </button>
+
+  <button
     class={`nav-btn ${isActive('terms') ? 'active' : ''}`}
     on:click={() => select('terms')}
     aria-label="Terms & Conditions"
@@ -67,7 +77,7 @@
     background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
     backdrop-filter: blur(10px);
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     align-items: stretch;
   }
 
