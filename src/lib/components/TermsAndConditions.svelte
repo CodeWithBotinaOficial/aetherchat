@@ -203,6 +203,29 @@
         </li>
       </ul>
 
+      <h2 class="h2">5.6 USER DIRECTORY</h2>
+      <ul class="list">
+        <li>
+          AetherChat includes a User Directory that displays all users discovered by your local node on the network. This list is derived from
+          peer-to-peer interactions and may not reflect all users globally, only those your browser has connected with or learned about.
+        </li>
+        <li>
+          The directory displays publicly available information: username, age, and biography. This information is shared voluntarily by users during
+          registration and profile setup.
+        </li>
+        <li>
+          AetherChat does not operate a central user database. The directory is built locally on each user's device from network interactions.
+        </li>
+        <li>
+          Users seeking privacy are advised to use a pseudonymous username and to leave the biography field empty. Age (calculated from date of birth)
+          is always displayed in the directory and cannot be hidden.
+        </li>
+        <li>
+          The User Directory is provided to help users discover and connect with others on the network. It is not intended for scraping, harvesting, or
+          any automated use of user data.
+        </li>
+      </ul>
+
       <hr class="rule" />
 
       <h2 class="h2">6. DISCLAIMER OF LIABILITY FOR USER CONTENT</h2>

@@ -8,6 +8,7 @@
   import PrivateChatPanel from '$lib/components/PrivateChatPanel.svelte';
   import P2PDebugPanel from '$lib/components/P2PDebugPanel.svelte';
   import TermsAndConditions from '$lib/components/TermsAndConditions.svelte';
+  import UserDirectory from '$lib/components/userDirectory/UserDirectory.svelte';
   import TopBar from '$lib/components/TopBar.svelte';
   import BottomNav from '$lib/components/BottomNav.svelte';
   import ToastHost from '$lib/components/ToastHost.svelte';
@@ -20,12 +21,15 @@
   const tabs = [
     { key: 'global', label: 'Global Chat', icon: 'globe' },
     { key: 'private', label: 'Private Chats', icon: 'lock' },
+    { key: 'users', label: 'Users', icon: 'users' },
     { key: 'terms', label: 'Terms & Conditions', icon: 'doc' }
   ];
 
   function iconPath(name) {
     if (name === 'globe') return 'M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20Zm7.9 9H16.8a15 15 0 0 0-1.3-5.2A8 8 0 0 1 19.9 11ZM12 4c.9 1.2 1.9 3.6 2.3 7H9.7C10.1 7.6 11.1 5.2 12 4Zm-3.5 1.8A15 15 0 0 0 7.2 11H4.1a8 8 0 0 1 4.4-5.2ZM4.1 13h3.1c.2 2 .7 3.8 1.3 5.2A8 8 0 0 1 4.1 13Zm5.6 0h4.6c-.4 3.4-1.4 5.8-2.3 7c-.9-1.2-1.9-3.6-2.3-7Zm6.8 5.2c.6-1.4 1.1-3.2 1.3-5.2h3.1a8 8 0 0 1-4.4 5.2Z';
     if (name === 'lock') return 'M17 8h-1V6a4 4 0 0 0-8 0v2H7a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2Zm-7-2a2 2 0 0 1 4 0v2h-4V6Z';
+    if (name === 'users')
+      return 'M16 11c1.66 0 3-1.34 3-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3Zm-8 0c1.66 0 3-1.34 3-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3Zm0 2c-2.33 0-7 1.17-7 3.5V21h14v-4.5C15 14.17 10.33 13 8 13Zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V21h6v-4.5c0-2.33-4.67-3.5-7-3.5Z';
     return 'M7 2h7l5 5v15a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm7 1.5V8h4.5';
   }
 
@@ -142,6 +146,8 @@
           <GlobalChat />
         {:else if $activeTab === 'private'}
           <PrivateChatPanel />
+        {:else if $activeTab === 'users'}
+          <UserDirectory />
         {:else}
           <TermsAndConditions />
         {/if}

@@ -1,4 +1,7 @@
 import { db } from './schema.js';
+import { getStoredPeerId } from './peerIds.db.js';
+import { getUser } from './users.db.js';
+import { calculateAge, isBirthday } from '../../utils/time.js';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const ONE_YEAR_MS = 365 * ONE_DAY_MS;
@@ -168,6 +171,107 @@ export async function pruneStaleRegistryEntries() {
     return await db.usernameRegistry.where('lastSeenAt').below(cutoff).delete();
   } catch (err) {
     console.error('pruneStaleRegistryEntries failed', err);
+    throw err;
+  }
+}
+
+/**
+ * Enriched user record used by the User Directory feature.
+ *
+ * Data is sourced strictly from local storage:
+ * 1) local user's `users` table (full profile)
+ * 2) remote peers' `knownPeers` table (best-effort, if profile fields were persisted during P2P flows)
+ * 3) fallback to registry-only fields
+ *
+ * IMPORTANT: this does not make any new P2P requests to fill missing data.
+ *
+ * @typedef {Object} EnrichedUser
+ * @property {string} username
+ * @property {string} peerId
+ * @property {number} registeredAt
+ * @property {string|null} dateOfBirth ISO date string (YYYY-MM-DD) or null
+ * @property {number|null} age
+ * @property {string} bio
+ * @property {string|null} avatarBase64
+ * @property {boolean} isBirthday
+ */
+
+/**
+ * Build an enriched user list from the local username registry plus optional local metadata.
+ * @returns {Promise<EnrichedUser[]>}
+ */
+export async function getAllRegisteredUsers() {
+  try {
+    const [registry, localUser, knownPeers] = await Promise.all([
+      db.usernameRegistry.orderBy('registeredAt').toArray(),
+      getUser(),
+      db.knownPeers.toArray()
+    ]);
+
+    const myUsername = localUser?.username ?? '';
+    const myPeerId = myUsername ? await getStoredPeerId(myUsername) : null;
+
+    const knownByPeerId = new Map();
+    const knownByNormUsername = new Map();
+    for (const kp of knownPeers) {
+      const pid = String(kp?.peerId ?? '').trim();
+      const uname = String(kp?.username ?? '').trim();
+      if (pid) knownByPeerId.set(pid, kp);
+      const norm = normalizeUsername(uname);
+      if (norm) knownByNormUsername.set(norm, kp);
+    }
+
+    return registry
+      .map((entry) => {
+        const pid = String(entry?.peerId ?? '').trim();
+        const normUsername = String(entry?.username ?? '').trim();
+        const registeredAt = typeof entry?.registeredAt === 'number' ? entry.registeredAt : 0;
+
+        /** @type {string} */
+        let username = normUsername;
+        /** @type {string|null} */
+        let dateOfBirth = null;
+        /** @type {string} */
+        let bio = '';
+        /** @type {string|null} */
+        let avatarBase64 = null;
+
+        const isLocal = Boolean(myPeerId && pid && pid === myPeerId);
+        if (isLocal && localUser) {
+          username = String(localUser.username ?? '') || username;
+          dateOfBirth = typeof localUser.dateOfBirth === 'string' ? localUser.dateOfBirth : null;
+          bio = typeof localUser.bio === 'string' ? localUser.bio : '';
+          avatarBase64 = typeof localUser.avatarBase64 === 'string' && localUser.avatarBase64.length > 0 ? localUser.avatarBase64 : null;
+        } else {
+          const kp = (pid && knownByPeerId.get(pid)) || (normUsername && knownByNormUsername.get(normUsername)) || null;
+          if (kp) {
+            const kpUsername = String(kp?.username ?? '').trim();
+            if (kpUsername) username = kpUsername;
+
+            // These fields are optional: they may not exist unless persisted by prior builds/flows.
+            dateOfBirth = typeof kp?.dateOfBirth === 'string' ? kp.dateOfBirth : null;
+            bio = typeof kp?.bio === 'string' ? kp.bio : '';
+            avatarBase64 = typeof kp?.avatarBase64 === 'string' && kp.avatarBase64.length > 0 ? kp.avatarBase64 : null;
+          }
+        }
+
+        const age = dateOfBirth ? calculateAge(dateOfBirth) : null;
+        const birthday = dateOfBirth ? isBirthday(dateOfBirth) : false;
+
+        return {
+          username,
+          peerId: pid,
+          registeredAt,
+          dateOfBirth,
+          age: typeof age === 'number' ? age : null,
+          bio: typeof bio === 'string' ? bio : '',
+          avatarBase64,
+          isBirthday: Boolean(birthday)
+        };
+      })
+      .filter((u) => u.peerId && u.username);
+  } catch (err) {
+    console.error('getAllRegisteredUsers failed', err);
     throw err;
   }
 }

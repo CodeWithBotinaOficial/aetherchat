@@ -129,7 +129,22 @@ You can manage your profile after registration:
 - **Account deletion**:
   - Available in the Profile screen’s Danger Zone.
   - Requires typing your exact username to confirm (case-sensitive).
-  - After deletion, this browser enforces a **48-hour cooldown** before a new account can be created.
+- After deletion, this browser enforces a **48-hour cooldown** before a new account can be created.
+
+---
+
+## 👥 User Directory
+
+The User Directory is available from the in-app navigation under **Users**.
+
+- **What it shows**: all users your local node has discovered on the network, rendered as user cards (username, age, optional bio, avatar when available).
+- **Data source**: the directory is built from your browser’s local IndexedDB registry (`usernameRegistry`) populated via P2P discovery and sync. There is no central user database.
+- **Search**: real-time search by username (case-insensitive partial match). While searching, filters and pagination are paused and all matches are shown.
+- **Sort & filters**: alphabetical, newest/oldest registration, age ascending/descending, optional birth-month filter, and optional age-range filter.
+- **Pagination**: controls how many users are shown at once (15 / 30 / 50 / 100, plus a View All option for large directories).
+- **Birthdays**: users with a birthday today receive a subtle birthday card treatment.
+- **Open a wall**: click/tap any user card to open that user’s Wall.
+- **Privacy note**: only users your node has connected with or learned about will appear, and profiles may be incomplete if your device has not received all optional fields.
 
 ---
 
