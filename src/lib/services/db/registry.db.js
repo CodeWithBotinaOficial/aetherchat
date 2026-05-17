@@ -2,6 +2,9 @@ import { db } from './schema.js';
 import { getStoredPeerId } from './peerIds.db.js';
 import { getUser } from './users.db.js';
 import { calculateAge, isBirthday } from '../../utils/time.js';
+import { get } from 'svelte/store';
+import { peer as peerStore } from '$lib/stores/peerStore.js';
+import { avatarCache } from '$lib/services/peer/shared.js';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const ONE_YEAR_MS = 365 * ONE_DAY_MS;
@@ -211,6 +214,9 @@ export async function getAllRegisteredUsers() {
     const myUsername = localUser?.username ?? '';
     const myPeerId = myUsername ? await getStoredPeerId(myUsername) : null;
 
+    const connectedPeers = get(peerStore)?.connectedPeers ?? new Map();
+    const avatars = get(avatarCache) ?? new Map();
+
     const knownByPeerId = new Map();
     const knownByNormUsername = new Map();
     for (const kp of knownPeers) {
@@ -243,15 +249,28 @@ export async function getAllRegisteredUsers() {
           bio = typeof localUser.bio === 'string' ? localUser.bio : '';
           avatarBase64 = typeof localUser.avatarBase64 === 'string' && localUser.avatarBase64.length > 0 ? localUser.avatarBase64 : null;
         } else {
+          // Remote enrichment: use only local data already present in this session.
+          // IMPORTANT: we do not make any P2P requests here to fill missing fields.
+          const live = pid ? connectedPeers.get(pid) : null;
+          if (live) {
+            const liveUsername = String(live?.username ?? '').trim();
+            if (liveUsername) username = liveUsername;
+            dateOfBirth = typeof live?.dateOfBirth === 'string' ? live.dateOfBirth : null;
+            bio = typeof live?.bio === 'string' ? live.bio : '';
+            avatarBase64 =
+              (typeof live?.avatarBase64 === 'string' && live.avatarBase64.length > 0 ? live.avatarBase64 : null) ??
+              (typeof avatars?.get?.(pid) === 'string' ? avatars.get(pid) : null);
+          }
+
           const kp = (pid && knownByPeerId.get(pid)) || (normUsername && knownByNormUsername.get(normUsername)) || null;
           if (kp) {
             const kpUsername = String(kp?.username ?? '').trim();
             if (kpUsername) username = kpUsername;
 
             // These fields are optional: they may not exist unless persisted by prior builds/flows.
-            dateOfBirth = typeof kp?.dateOfBirth === 'string' ? kp.dateOfBirth : null;
-            bio = typeof kp?.bio === 'string' ? kp.bio : '';
-            avatarBase64 = typeof kp?.avatarBase64 === 'string' && kp.avatarBase64.length > 0 ? kp.avatarBase64 : null;
+            if (dateOfBirth === null) dateOfBirth = typeof kp?.dateOfBirth === 'string' ? kp.dateOfBirth : null;
+            if (!bio) bio = typeof kp?.bio === 'string' ? kp.bio : '';
+            if (avatarBase64 === null) avatarBase64 = typeof kp?.avatarBase64 === 'string' && kp.avatarBase64.length > 0 ? kp.avatarBase64 : null;
           }
         }
 

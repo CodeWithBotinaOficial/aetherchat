@@ -1,7 +1,9 @@
 <script>
   import { peer as peerStore } from '$lib/stores/peerStore.js';
+  import { avatarCache } from '$lib/services/peer.js';
   import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
   import { openWall } from '$lib/stores/wall/actions.js';
+  import { calculateAge } from '$lib/utils/time.js';
 
   export let user;
 
@@ -9,6 +11,14 @@
   $: uname = String(user?.username ?? '').trim();
   $: online = pid ? $peerStore.connectedPeers.has(pid) : false;
   $: isBirthday = Boolean(user?.isBirthday);
+  $: live = pid ? $peerStore.connectedPeers.get(pid) : null;
+  $: displayAvatar =
+    user?.avatarBase64 ??
+    (typeof live?.avatarBase64 === 'string' && live.avatarBase64.length > 0 ? live.avatarBase64 : null) ??
+    ($avatarCache?.get?.(pid) ?? null);
+  $: displayBio = String(user?.bio ?? '').trim() || String(live?.bio ?? '').trim() || '';
+  $: displayDob = typeof live?.dateOfBirth === 'string' ? live.dateOfBirth : (user?.dateOfBirth ?? null);
+  $: displayAge = displayDob ? calculateAge(displayDob) : null;
 </script>
 
 <button
@@ -32,7 +42,7 @@
   </div>
 
   <div class="avatar">
-    <AvatarDisplay username={uname} avatarBase64={user?.avatarBase64 ?? null} size={64} showRing={true} />
+    <AvatarDisplay username={uname} avatarBase64={displayAvatar} size={64} showRing={true} />
   </div>
 
   <div class="name" title={uname}>
@@ -47,11 +57,11 @@
   {/if}
 
   <div class="age">
-    Age: {user?.dateOfBirth ? user?.age : '—'}
+    Age: {displayDob ? (displayAge ?? '—') : '—'}
   </div>
 
-  {#if String(user?.bio ?? '').trim().length > 0}
-    <div class="bio">{user.bio}</div>
+  {#if displayBio.length > 0}
+    <div class="bio">{displayBio}</div>
   {/if}
 </button>
 
@@ -163,4 +173,3 @@
     }
   }
 </style>
-

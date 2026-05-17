@@ -19,45 +19,53 @@
     <UserDirectoryPagination />
   {/if}
 
-  {#if isLoading}
-    <div class="grid" aria-label="Loading users">
-      {#each Array.from({ length: SKELETON_COUNT }) as _, idx (idx)}
-        <div class="skeleton" aria-hidden="true">
-          <div class="sk-dot"></div>
-          <div class="sk-avatar"></div>
-          <div class="sk-line sk-name"></div>
-          <div class="sk-line sk-age"></div>
-          <div class="sk-line sk-bio"></div>
-        </div>
-      {/each}
-    </div>
-  {:else if isEmptyDirectory}
-    <div class="empty" aria-label="Directory empty">
-      <div class="empty-ico" aria-hidden="true">👥</div>
-      <div class="empty-title">No other users discovered yet.</div>
-      <div class="empty-sub">Users appear here as they join the network.</div>
-    </div>
-  {:else if isEmptyResults}
-    <div class="empty" aria-label="No users found">
-      <div class="empty-ico" aria-hidden="true">🔎</div>
-      <div class="empty-title">No users found.</div>
-      <div class="empty-sub">Try a different search or filter.</div>
-    </div>
-  {:else}
-    <div class="grid" aria-label="User cards grid">
-      {#each $userDirectoryStore.displayedUsers as u (u.peerId)}
-        <UserCard user={u} />
-      {/each}
-    </div>
-  {/if}
+  <div class="scroller scroll-container" aria-label="User directory results scroller">
+    {#if isLoading}
+      <div class="grid" aria-label="Loading users">
+        {#each Array.from({ length: SKELETON_COUNT }) as _, idx (idx)}
+          <div class="skeleton" aria-hidden="true">
+            <div class="sk-dot"></div>
+            <div class="sk-avatar"></div>
+            <div class="sk-line sk-name"></div>
+            <div class="sk-line sk-age"></div>
+            <div class="sk-line sk-bio"></div>
+          </div>
+        {/each}
+      </div>
+    {:else if isEmptyDirectory}
+      <div class="empty" aria-label="Directory empty">
+        <div class="empty-ico" aria-hidden="true">👥</div>
+        <div class="empty-title">No other users discovered yet.</div>
+        <div class="empty-sub">Users appear here as they join the network.</div>
+      </div>
+    {:else if isEmptyResults}
+      <div class="empty" aria-label="No users found">
+        <div class="empty-ico" aria-hidden="true">🔎</div>
+        <div class="empty-title">No users found.</div>
+        <div class="empty-sub">Try a different search or filter.</div>
+      </div>
+    {:else}
+      <div class="grid" aria-label="User cards grid">
+        {#each $userDirectoryStore.displayedUsers as u (u.peerId)}
+          <UserCard user={u} />
+        {/each}
+      </div>
+    {/if}
+  </div>
 </div>
 
 <style>
   .grid-wrap {
     min-height: 0;
-    display: grid;
+    display: flex;
+    flex-direction: column;
     gap: var(--space-md);
-    align-content: start;
+  }
+
+  .scroller {
+    flex: 1;
+    min-height: 0;
+    padding-bottom: var(--space-md);
   }
 
   .grid {
