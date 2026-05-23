@@ -197,13 +197,15 @@
   </div>
 
   <div class="composer-wrap" title={inputDisabled ? 'Setting up encryption...' : ''}>
-    <MediaPicker
-      bind:open={pickerOpen}
-      maxItems={2}
-      selectedItems={composerMedia}
-      on:select={(ev) => onMediaPick?.(ev?.detail?.item)}
-      on:close={() => (pickerOpen = false)}
-    />
+    {#if pickerOpen}
+      <MediaPicker
+        open={pickerOpen}
+        maxItems={2}
+        selectedItems={composerMedia}
+        on:select={(ev) => onMediaPick?.(ev?.detail?.item)}
+        on:close={() => (pickerOpen = false)}
+      />
+    {/if}
     <ChatInput
       disabled={inputDisabled}
       bind:value={composerValue}

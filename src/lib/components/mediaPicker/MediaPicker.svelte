@@ -97,9 +97,23 @@
 </script>
 
 {#if open}
-  <div class="backdrop" role="presentation" on:pointerdown={onBackdropDown} aria-label="Media picker backdrop">
-    <div class="panel" role="dialog" aria-label="Media picker">
-      <MediaPickerTabs bind:active={tab} />
+  <div class="host" role="presentation" on:pointerdown={onBackdropDown} aria-label="Media picker host">
+    <div class="panel" role="dialog" tabindex="-1" aria-label="Media picker" on:pointerdown|stopPropagation>
+      <div class="head">
+        <div class="tabs">
+          <MediaPickerTabs bind:active={tab} />
+        </div>
+        <button
+          type="button"
+          class="close"
+          aria-label="Close media picker"
+          title="Close"
+          on:click={close}
+          on:pointerdown|stopPropagation
+        >
+          ×
+        </button>
+      </div>
       <MediaPickerSearch
         show={tab !== 'recents'}
         bind:value={query}
@@ -108,77 +122,98 @@
         on:debounced={onDebounced}
       />
 
-      {#if tab === 'recents'}
-        <MediaPickerGrid
-          items={$recentItems ?? []}
-          loading={false}
-          error=""
-          query=""
-          maxedOut={maxedOut}
-          selectedIds={selectedIds}
-          on:pick={onPick}
-        />
-      {:else}
-        <MediaPickerGrid
-          items={items}
-          loading={loading}
-          error={error}
-          query={query}
-          maxedOut={maxedOut}
-          selectedIds={selectedIds}
-          on:pick={onPick}
-          on:retry={() => loadCurrent(query)}
-        />
-      {/if}
+      <div class="body" role="presentation">
+        {#if tab === 'recents'}
+          <MediaPickerGrid
+            items={$recentItems ?? []}
+            loading={false}
+            error=""
+            query=""
+            maxedOut={maxedOut}
+            selectedIds={selectedIds}
+            on:pick={onPick}
+          />
+        {:else}
+          <MediaPickerGrid
+            items={items}
+            loading={loading}
+            error={error}
+            query={query}
+            maxedOut={maxedOut}
+            selectedIds={selectedIds}
+            on:pick={onPick}
+            on:retry={() => loadCurrent(query)}
+          />
+        {/if}
+      </div>
     </div>
   </div>
 {/if}
 
 <style>
-  .backdrop {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 100%;
-    /* Allow clicking outside without covering the input area. */
+  .host {
+    width: 100%;
     height: 320px;
-    display: grid;
-    align-items: end;
-    padding: 8px 0;
+    padding: 8px;
+    background: transparent;
   }
 
   .panel {
-    height: 300px;
+    height: 100%;
     border-radius: var(--radius-md);
     border: 1px solid var(--border);
     background: var(--bg-surface);
     box-shadow: var(--shadow-md);
     padding: 10px;
-    display: grid;
-    grid-template-rows: auto auto 1fr;
+    display: flex;
+    flex-direction: column;
     gap: 10px;
   }
 
-  @media (max-width: 639px) {
-    .backdrop {
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: calc(56px + env(safe-area-inset-bottom, 0px));
-      top: 0;
-      height: auto;
-      padding: 0;
-      align-items: end;
-      z-index: 60;
-    }
+  .head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
 
-    .panel {
-      height: calc(100vh - (56px + env(safe-area-inset-bottom, 0px)));
-      border-radius: 12px 12px 0 0;
-      border-left: 0;
-      border-right: 0;
-      border-bottom: 0;
-      padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  .tabs {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .close {
+    height: 44px;
+    width: 44px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    padding: 0;
+    flex: none;
+  }
+
+  .body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  @media (max-width: 639px) {
+    .host {
+      height: 320px;
+      padding: 8px;
+    }
+  }
+
+  @media (hover: hover) {
+    .close:hover {
+      background: var(--bg-overlay);
+      color: var(--text-primary);
     }
   }
 </style>

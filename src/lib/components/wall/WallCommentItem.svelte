@@ -23,10 +23,12 @@
   $: composer.setMedia(draftMedia);
 
   $: tsText = formatRelativeTime(comment?.createdAt ?? Date.now());
-  $: showEdited = typeof comment?.editedAt === 'number' && comment.editedAt !== null;
+  $: isDeleted = comment?.deleted === true;
+  $: showEdited = !isDeleted && typeof comment?.editedAt === 'number' && comment.editedAt !== null;
 
   function startEdit() {
     if (!canEdit) return;
+    if (isDeleted) return;
     editing = true;
     draft = String(comment?.text ?? '');
     draftMedia = Array.isArray(comment?.media) ? comment.media.slice(0, 2) : [];
@@ -59,6 +61,7 @@
 
   async function del() {
     if (!canDelete) return;
+    if (isDeleted) return;
     try {
       await deleteWallComment(comment.id);
     } catch (err) {
@@ -90,30 +93,36 @@
     />
 
     <div class="main">
-      <div class="head">
-        <div class="who">
-          <span class="name" style={`color:${comment.authorColor};`}>{comment.authorUsername}</span>
-          <span class="time" title={new Date(comment.createdAt).toLocaleString()}>{tsText}</span>
-          {#if showEdited}
-            <span class="edited" title={new Date(comment.editedAt).toLocaleString()}>edited</span>
-          {/if}
-        </div>
+      {#if !isDeleted}
+        <div class="head">
+          <div class="who">
+            <span class="name" style={`color:${comment.authorColor};`}>{comment.authorUsername}</span>
+            <span class="time" title={new Date(comment.createdAt).toLocaleString()}>{tsText}</span>
+            {#if showEdited}
+              <span class="edited" title={new Date(comment.editedAt).toLocaleString()}>edited</span>
+            {/if}
+          </div>
 
-        <div class="actions">
-          {#if canEdit && !editing}
-            <button type="button" class="icon" on:click={startEdit} aria-label="Edit comment" title="Edit">
-              Edit
-            </button>
-          {/if}
-          {#if canDelete && !editing}
-            <button type="button" class="icon danger" on:click={del} aria-label="Delete comment" title="Delete">
-              Delete
-            </button>
-          {/if}
+          <div class="actions">
+            {#if canEdit && !editing}
+              <button type="button" class="icon" on:click={startEdit} aria-label="Edit comment" title="Edit">
+                Edit
+              </button>
+            {/if}
+            {#if canDelete && !editing}
+              <button type="button" class="icon danger" on:click={del} aria-label="Delete comment" title="Delete">
+                Delete
+              </button>
+            {/if}
+          </div>
         </div>
-      </div>
+      {/if}
 
-      {#if editing}
+      {#if isDeleted}
+        <div class="text" style="color: var(--text-muted); font-style: italic;">
+          [ This comment was deleted ]
+        </div>
+      {:else if editing}
         <div class="edit">
           <MediaPreviewStrip
             items={draftMedia}

@@ -22,12 +22,13 @@
     if (!canPost) return;
     const { text: rawText, media } = composer.toPayload();
     const body = String(rawText ?? '');
+    const solo = body.trim().length === 0 && Array.isArray(media) && media.length > 0;
     // Optimistic UI: clear immediately, but restore on failure.
     const prevText = text;
     const prevMedia = mediaItems;
     text = '';
     mediaItems = [];
-    pickerOpen = false;
+    if (solo) pickerOpen = false;
     composer.reset();
     try {
       await postWallComment(body, media);
@@ -35,6 +36,8 @@
       console.error('postWallComment failed', err);
       text = prevText;
       mediaItems = prevMedia;
+      // Restore picker for retry.
+      if (solo) pickerOpen = true;
     }
   }
 </script>
@@ -200,4 +203,3 @@
     }
   }
 </style>
-

@@ -304,68 +304,72 @@
             }}
           >
 
-		        {#if Array.isArray(message.replies) && message.replies.length > 0}
-		          <div class="mt-[var(--space-xs)] grid gap-[6px]">
-		            {#each message.replies as r (r.messageId)}
-		              {#if r?.deleted}
-		                <div
-		                  class="quote-card quote-deleted w-full text-left rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-sm)] py-[6px]"
-		                  style={`border-left: 3px solid ${r.authorColor};`}
-		                  role="note"
-		                  aria-label="Original message deleted"
-		                >
-		                  <div class="quote-author text-[var(--font-size-xs)] font-800 text-[var(--text-primary)]">{r.authorUsername}</div>
-		                  <div class="mt-[2px] text-[var(--font-size-xs)] text-[var(--text-muted)]">
-		                    {previewText(r.textSnapshot, 80)}
-		                  </div>
-		                </div>
-		              {:else}
-		                <button
-		                  type="button"
-		                  class="quote-card w-full text-left rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-sm)] py-[6px]"
-		                  style={`border-left: 3px solid ${r.authorColor};`}
-		                  on:click|stopPropagation={() => dispatch('jumpToOriginal', { messageId: r.messageId })}
-		                >
-		                  <div class="quote-author text-[var(--font-size-xs)] font-800 text-[var(--text-primary)]">{r.authorUsername}</div>
-		                  <div class="mt-[2px] text-[var(--font-size-xs)] text-[var(--text-secondary)]">{previewText(r.textSnapshot, 80)}</div>
-		                </button>
-		              {/if}
-		            {/each}
-		          </div>
-		        {/if}
+              {#if message?.deleted === true}
+                <div class="msg-text mt-[var(--space-xs)] whitespace-pre-wrap break-words leading-[1.45] msg-deleted">
+                  {message.text}
+                </div>
+              {:else}
+                {#if Array.isArray(message.replies) && message.replies.length > 0}
+                  <div class="mt-[var(--space-xs)] grid gap-[6px]">
+                    {#each message.replies as r (r.messageId)}
+                      {#if r?.deleted}
+                        <div
+                          class="quote-card quote-deleted w-full text-left rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-sm)] py-[6px]"
+                          style={`border-left: 3px solid ${r.authorColor};`}
+                          role="note"
+                          aria-label="Original message deleted"
+                        >
+                          <div class="quote-author text-[var(--font-size-xs)] font-800 text-[var(--text-primary)]">{r.authorUsername}</div>
+                          <div class="mt-[2px] text-[var(--font-size-xs)] text-[var(--text-muted)]">
+                            {previewText(r.textSnapshot, 80)}
+                          </div>
+                        </div>
+                      {:else}
+                        <button
+                          type="button"
+                          class="quote-card w-full text-left rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-sm)] py-[6px]"
+                          style={`border-left: 3px solid ${r.authorColor};`}
+                          on:click|stopPropagation={() => dispatch('jumpToOriginal', { messageId: r.messageId })}
+                        >
+                          <div class="quote-author text-[var(--font-size-xs)] font-800 text-[var(--text-primary)]">{r.authorUsername}</div>
+                          <div class="mt-[2px] text-[var(--font-size-xs)] text-[var(--text-secondary)]">{previewText(r.textSnapshot, 80)}</div>
+                        </button>
+                      {/if}
+                    {/each}
+                  </div>
+                {/if}
 
-		        <div
-		          class={`msg-text mt-[var(--space-xs)] whitespace-pre-wrap break-words leading-[1.45] ${message.deleted ? 'msg-deleted' : ''}`}
-		        >
-		          {message.text}
-		        </div>
+                <div class="msg-text mt-[var(--space-xs)] whitespace-pre-wrap break-words leading-[1.45]">
+                  {message.text}
+                </div>
 
-            <MessageMedia media={message?.media ?? null} username={displayUsername} />
+                <MessageMedia media={message?.media ?? null} username={displayUsername} />
 
-	        <div class="time-row" title={new Date(message.timestamp).toLocaleString()}>
-	          <span class="time">{displayTime}</span>
-	          {#if typeof message.editedAt === 'number' && !message.deleted}
-	            <span
-	              class="edited"
-	              title={`Edited at ${new Date(message.editedAt).toLocaleTimeString()}`}
-	              aria-label={`Edited at ${new Date(message.editedAt).toLocaleTimeString()}`}
-	            >
-	              <svg viewBox="0 0 24 24" class="edited-ico" fill="currentColor" aria-hidden="true">
-	                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25Zm2.92 2.83H5v-.92l8.06-8.06.92.92L5.92 20.08ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z" />
-	              </svg>
-	              edited
-	            </span>
-	          {/if}
-	          {#if isOwn}
-	            {#if message.queued}
-	              <span class="status" title="Will be sent when peer reconnects">⏳</span>
-            {:else if message.delivered === true}
-              <span class="status" title="Delivered">✓</span>
-            {:else if message.delivered === false}
-              <span class="status" title="Sent">○</span>
-            {/if}
-          {/if}
-        </div>
+                <div class="time-row" title={new Date(message.timestamp).toLocaleString()}>
+                  <span class="time">{displayTime}</span>
+                  {#if typeof message.editedAt === 'number'}
+                    <span
+                      class="edited"
+                      title={`Edited at ${new Date(message.editedAt).toLocaleTimeString()}`}
+                      aria-label={`Edited at ${new Date(message.editedAt).toLocaleTimeString()}`}
+                    >
+                      <svg viewBox="0 0 24 24" class="edited-ico" fill="currentColor" aria-hidden="true">
+                        <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25Zm2.92 2.83H5v-.92l8.06-8.06.92.92L5.92 20.08ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z" />
+                      </svg>
+                      edited
+                    </span>
+                  {/if}
+                  {#if isOwn}
+                    {#if message.queued}
+                      <span class="status" title="Will be sent when peer reconnects">⏳</span>
+                    {:else if message.delivered === true}
+                      <span class="status" title="Delivered">✓</span>
+                    {:else if message.delivered === false}
+                      <span class="status" title="Sent">○</span>
+                    {/if}
+                  {/if}
+                </div>
+              {/if}
         </div>
       </div>
     </div>

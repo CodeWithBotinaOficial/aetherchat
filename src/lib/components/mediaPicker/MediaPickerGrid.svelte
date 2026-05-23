@@ -36,7 +36,7 @@
 {:else}
   <div class="grid" aria-label="Media results">
     {#each items as it (it.id)}
-      <div class="cell" style="aspect-ratio: 1 / 1;">
+      <div class="cell">
         <MediaPickerItem
           item={it}
           disabled={maxedOut && !selectedIds?.has?.(it.id)}
@@ -51,18 +51,20 @@
 <style>
   .grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
     gap: 10px;
+    justify-items: stretch;
   }
 
   @media (max-width: 639px) {
     .grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
     }
   }
 
   .cell {
     width: 100%;
+    aspect-ratio: 1 / 1;
   }
 
   .sk {
@@ -127,4 +129,3 @@
     }
   }
 </style>
-
