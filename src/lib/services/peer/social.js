@@ -105,9 +105,13 @@ export async function handleWallCommentAddedMessage(msg) {
   if (!isString(p.id)) return;
   if (!isString(p.wallOwnerPeerId) || !isString(p.authorPeerId)) return;
   if (!isString(p.authorUsername) || !isString(p.authorColor)) return;
-  if (!isString(p.text)) return;
   if (p.media !== null && typeof p.media !== 'undefined' && !Array.isArray(p.media)) return;
+  if (typeof p.text !== 'string') return;
   if (!isFiniteNumber(p.createdAt)) return;
+
+  const safeMedia = Array.isArray(p.media) && p.media.length > 0 ? p.media.slice(0, 2) : null;
+  const hasText = p.text.trim().length > 0;
+  if (!hasText && !safeMedia) return;
 
   const record = {
     id: p.id,
@@ -117,7 +121,7 @@ export async function handleWallCommentAddedMessage(msg) {
     authorColor: p.authorColor,
     authorAvatarBase64: typeof p.authorAvatarBase64 === 'string' ? p.authorAvatarBase64 : null,
     text: p.text,
-    media: Array.isArray(p.media) && p.media.length > 0 ? p.media.slice(0, 2) : null,
+    media: safeMedia,
     createdAt: p.createdAt,
     editedAt: null,
     deleted: false
@@ -132,7 +136,7 @@ export async function handleWallCommentEditedMessage(msg) {
   const p = msg?.payload;
   if (!p || typeof p !== 'object') return;
   if (!isString(p.id) || !isString(p.wallOwnerPeerId)) return;
-  if (!isString(p.text) || !isFiniteNumber(p.editedAt)) return;
+  if (typeof p.text !== 'string' || !isFiniteNumber(p.editedAt)) return;
   if (p.media !== null && typeof p.media !== 'undefined' && !Array.isArray(p.media)) return;
 
   const fromPeerId = String(msg?.from?.peerId ?? '').trim();
@@ -146,6 +150,8 @@ export async function handleWallCommentEditedMessage(msg) {
   if (existing.wallOwnerPeerId !== p.wallOwnerPeerId) return;
 
   const safeMedia = Array.isArray(p.media) && p.media.length > 0 ? p.media.slice(0, 2) : null;
+  const hasText = p.text.trim().length > 0;
+  if (!hasText && !safeMedia) return;
   const ok = await editWallCommentText(p.id, p.text, safeMedia, p.editedAt);
   if (!ok) return;
   applyIncomingWallCommentEdited(p.wallOwnerPeerId, p.id, p.text, safeMedia, p.editedAt);

@@ -368,32 +368,34 @@
   </div>
 
   <div class="gc-input">
-    <div bind:this={composerEl} class="composer-wrap">
-      <MediaPicker
-        bind:open={pickerOpen}
-        maxItems={2}
-        selectedItems={composerMedia}
-        on:select={(ev) => {
-          const item = ev?.detail?.item;
-          if (!item) return;
-          addRecentItem(item);
-          composer.addItem(item);
-          composerMedia = composer.toPayload().media ?? [];
-          // If it's solo-media, send immediately.
-          if (!$editingMessageId && composerValue.trim().length === 0) {
-            const { text, media } = composer.toPayload();
-            if (media) {
-              pickerOpen = false;
-              // Reuse ChatInput send path by dispatching the same shape.
-              void onSend({ detail: { text: text.trim(), media, replies: $pendingReplies } });
-              composerValue = '';
-              composerMedia = [];
-              composer.reset();
+    <div bind:this={composerEl}>
+      {#if pickerOpen}
+        <MediaPicker
+          open={pickerOpen}
+          maxItems={2}
+          selectedItems={composerMedia}
+          on:select={async (ev) => {
+            const item = ev?.detail?.item;
+            if (!item) return;
+            addRecentItem(item);
+            composer.addItem(item);
+            composerMedia = composer.toPayload().media ?? [];
+
+            // Solo-media: send immediately, then close picker.
+            if (!$editingMessageId && composerValue.trim().length === 0) {
+              const { text, media } = composer.toPayload();
+              if (media) {
+                await onSend({ detail: { text: text.trim(), media, replies: $pendingReplies } });
+                composerValue = '';
+                composerMedia = [];
+                composer.reset();
+                pickerOpen = false;
+              }
             }
-          }
-        }}
-        on:close={() => (pickerOpen = false)}
-      />
+          }}
+          on:close={() => (pickerOpen = false)}
+        />
+      {/if}
       <ChatInput
         bind:value={composerValue}
         mediaItems={composerMedia}
@@ -403,15 +405,16 @@
         pendingReplies={$pendingReplies}
         on:removePendingReply={(ev) => removePendingReply(ev.detail.messageId)}
         on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
-        on:send={(ev) => {
+        on:send={async (ev) => {
           const { text, media } = ev.detail ?? {};
           // Delegate validation to the existing handler; it will no-op if invalid.
-          void onSend({ detail: { text, media, replies: ev?.detail?.replies } });
+          await onSend({ detail: { text, media, replies: ev?.detail?.replies } });
           // Reset after send attempt (the handler only succeeds for valid payloads).
           composerValue = '';
           composerMedia = [];
           composer.reset();
-          pickerOpen = false;
+          // Keep picker open when sending text+media; close only for solo media.
+          if (String(text ?? '').trim().length === 0) pickerOpen = false;
         }}
         on:toggleMediaPicker={() => {
           if (composerMedia.length >= 2) return;
@@ -487,8 +490,5 @@
 
   .gc-inner {
     width: 100%;
-  }
-  .composer-wrap {
-    position: relative;
   }
 </style>

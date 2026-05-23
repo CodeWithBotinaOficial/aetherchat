@@ -177,7 +177,8 @@
 	    await sendPrivateMessage(chat.id, chat.theirPeerId, e.detail.text, media, safeReplies);
       composerValue = '';
       composerMedia = [];
-      pickerOpen = false;
+      // Keep picker open when sending text+media; close only for solo media.
+      if (String(e?.detail?.text ?? '').trim().length === 0) pickerOpen = false;
       clearPendingReplies(chat.id);
 	  }
 
@@ -418,8 +419,11 @@
         composer.addItem(item);
         composerMedia = composer.toPayload().media ?? [];
         if (!isEditingThisChat && composerValue.trim().length === 0 && composerMedia.length > 0) {
-          pickerOpen = false;
-          void onSend({ detail: { text: '', media: composerMedia, replies: $activeChat?.pendingReplies ?? [] } });
+          // Solo-media: send immediately, then close picker.
+          void (async () => {
+            await onSend({ detail: { text: '', media: composerMedia, replies: $activeChat?.pendingReplies ?? [] } });
+            pickerOpen = false;
+          })();
           composerValue = '';
           composerMedia = [];
           composer.reset();
