@@ -32,6 +32,8 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          PUBLIC_KLIPY_API_KEY: ${{ secrets.PUBLIC_KLIPY_API_KEY }}
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -39,4 +41,3 @@ jobs:
           name: build
           path: build/
           retention-days: 7
-

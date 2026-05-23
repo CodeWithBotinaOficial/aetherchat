@@ -38,6 +38,22 @@ Run the app locally and open the GIF picker in any chat.
 
 If trending GIFs load, the integration is working.
 
+## CI/CD Configuration — GitHub Actions
+The CI build imports the Klipy env var at runtime (via `$env/dynamic/public`), but the build step should still have the variable present.
+
+1. In GitHub, go to repository **Settings → Secrets and variables → Actions**
+2. Add a new repository secret:
+   Name: `PUBLIC_KLIPY_API_KEY`
+   Value: any placeholder value (CI does not need a real production key)
+3. Ensure `.github/workflows/ci.yml` passes it to the build step:
+
+```yaml
+- name: Build
+  run: npm run build
+  env:
+    PUBLIC_KLIPY_API_KEY: ${{ secrets.PUBLIC_KLIPY_API_KEY }}
+```
+
 ## Free tier limits
 Klipy’s migration page describes a **Test Key** rate limit (e.g. 100 API calls per hour) and Production access as unlimited.
 

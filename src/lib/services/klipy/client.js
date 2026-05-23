@@ -1,5 +1,3 @@
-import { PUBLIC_KLIPY_API_KEY } from '$env/static/public';
-
 export class KlipyError extends Error {
   /**
    * @param {{ status?: number|null, message: string }} opts
@@ -13,6 +11,28 @@ export class KlipyError extends Error {
 }
 
 const BASE_URL = 'https://api.klipy.com/v2';
+
+/**
+ * Read the public API key at runtime without requiring it to exist at build time.
+ * In unit tests, `$env/dynamic/public` may not be available; fall back safely.
+ *
+ * @returns {Promise<string>}
+ */
+async function readPublicKey() {
+  try {
+    const mod = await import('$env/dynamic/public');
+    const key = String(mod?.env?.PUBLIC_KLIPY_API_KEY ?? '').trim();
+    if (key) return key;
+  } catch {
+    // ignore
+  }
+  // Vite/Vitest fallbacks (never log this).
+  const viteKey = String(import.meta?.env?.PUBLIC_KLIPY_API_KEY ?? '').trim();
+  if (viteKey) return viteKey;
+  const nodeKey = String(globalThis?.process?.env?.PUBLIC_KLIPY_API_KEY ?? '').trim();
+  if (nodeKey) return nodeKey;
+  return '';
+}
 
 /**
  * @param {Record<string, string | number | boolean | null | undefined>} params
@@ -38,7 +58,7 @@ function toQuery(params) {
  * @returns {Promise<T>}
  */
 export async function klipyFetch(path, opts = {}) {
-  const key = String(PUBLIC_KLIPY_API_KEY ?? '').trim();
+  const key = await readPublicKey();
   if (!key) throw new KlipyError({ status: null, message: 'Klipy API key not found. Set PUBLIC_KLIPY_API_KEY.' });
 
   const p = String(path ?? '').startsWith('/') ? String(path ?? '') : `/${String(path ?? '')}`;
@@ -77,4 +97,3 @@ export async function klipyFetch(path, opts = {}) {
     throw new KlipyError({ status: res.status, message: 'Invalid response from Klipy.' });
   }
 }
-
