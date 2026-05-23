@@ -6,8 +6,8 @@
  *   peerId: string|null,
  *   editingMessageId: string|null,
  *   messages: any[],
- *   broadcastGlobalMessageEdit: (id: string, text: string, profile: any, replies: any[]|null) => Promise<void>,
- *   broadcastGlobalMessage: (text: string, profile: any, replies: any[]|null) => Promise<void>,
+ *   broadcastGlobalMessageEdit: (id: string, text: string, media: any[]|null, profile: any, replies: any[]|null) => Promise<void>,
+ *   broadcastGlobalMessage: (text: string, media: any[]|null, profile: any, replies: any[]|null) => Promise<void>,
  *   addGlobalMessage: (msg: any) => Promise<void>,
  *   clearPendingReplies: () => void,
  *   setEditingMessageId: (id: string|null) => void,
@@ -34,12 +34,14 @@ export async function handleGlobalChatSend(opts) {
     };
   });
   const safeReplies = replies.length > 0 ? replies : null;
+  const media = Array.isArray(opts.evt?.detail?.media) && opts.evt.detail.media.length > 0 ? opts.evt.detail.media.slice(0, 2) : null;
 
   // Save edit in-place (no reorder).
   if (opts.editingMessageId) {
     await opts.broadcastGlobalMessageEdit(
       opts.editingMessageId,
       opts.evt.detail.text,
+      media,
       {
         username: u.username,
         color: u.color,
@@ -59,6 +61,7 @@ export async function handleGlobalChatSend(opts) {
   if (opts.peerId) {
     await opts.broadcastGlobalMessage(
       opts.evt.detail.text,
+      media,
       { username: u.username, color: u.color, dateOfBirth: u.dateOfBirth ?? null, avatarBase64: u.avatarBase64 },
       safeReplies
     );
@@ -70,6 +73,7 @@ export async function handleGlobalChatSend(opts) {
       color: u.color,
       avatarBase64: u.avatarBase64 ?? null,
       text: opts.evt.detail.text,
+      media,
       replies: safeReplies,
       timestamp: Date.now()
     });
@@ -79,4 +83,3 @@ export async function handleGlobalChatSend(opts) {
   await opts.scrollToBottom();
   opts.computeRange(opts.messages ?? []);
 }
-

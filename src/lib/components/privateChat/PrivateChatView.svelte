@@ -2,6 +2,7 @@
   import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
   import ChatInput from '$lib/components/ChatInput.svelte';
   import MessageBubble from '$lib/components/MessageBubble.svelte';
+  import MediaPicker from '$lib/components/mediaPicker/MediaPicker.svelte';
 
   export let chat;
   export let listEl;
@@ -18,6 +19,9 @@
   export let inputDisabled;
   export let inputPlaceholder;
   export let composerValue;
+  /** @type {import('$lib/services/klipy/types.js').MessageMedia[]} */
+  export let composerMedia = [];
+  export let pickerOpen = false;
   export let isEditingThisChat;
   export let editLabel;
 
@@ -32,6 +36,9 @@
   export let onRemovePendingReply;
   export let onCancelEdit;
   export let onSend;
+  export let onMediaPick;
+  export let onMediaRemove;
+  export let onTogglePicker;
   export let onRequestDeleteConversation;
   export let onBack;
 </script>
@@ -189,10 +196,19 @@
     </div>
   </div>
 
-  <div title={inputDisabled ? 'Setting up encryption...' : ''}>
+  <div class="composer-wrap" title={inputDisabled ? 'Setting up encryption...' : ''}>
+    <MediaPicker
+      bind:open={pickerOpen}
+      maxItems={2}
+      selectedItems={composerMedia}
+      on:select={(ev) => onMediaPick?.(ev?.detail?.item)}
+      on:close={() => (pickerOpen = false)}
+    />
     <ChatInput
       disabled={inputDisabled}
       bind:value={composerValue}
+      mediaItems={composerMedia}
+      mediaDisabled={composerMedia.length >= 2}
       mode={isEditingThisChat ? 'edit' : 'compose'}
       editLabel={editLabel}
       pendingReplies={pendingReplies}
@@ -200,7 +216,15 @@
       on:removePendingReply={(ev) => onRemovePendingReply(ev.detail.messageId)}
       on:jumpToOriginal={(ev) => onJumpToOriginal(ev.detail.messageId)}
       on:send={onSend}
+      on:toggleMediaPicker={onTogglePicker}
+      on:removeMedia={(ev) => onMediaRemove?.(ev.detail.id)}
       on:cancelEdit={onCancelEdit}
     />
   </div>
 </div>
+
+<style>
+  .composer-wrap {
+    position: relative;
+  }
+</style>

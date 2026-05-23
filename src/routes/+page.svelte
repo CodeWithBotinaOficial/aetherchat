@@ -11,6 +11,7 @@
   import { deletionCooldownUntil, setDeletionCooldownUntil } from '$lib/stores/cooldownStore.js';
   import { isRegistered, user } from '$lib/stores/userStore.js';
   import { loadFollowState } from '$lib/stores/wall/followState.js';
+  import { clearExpired as clearKlipyExpired } from '$lib/services/klipy/index.js';
 
   let cleanupTimer = null;
   let appReady = false;
@@ -139,6 +140,12 @@
   }
 
   onMount(() => {
+    // Best-effort localStorage cleanup; never block boot.
+    try {
+      clearKlipyExpired();
+    } catch {
+      // ignore
+    }
     void startApp();
 
     // If the user registers during this session, hydrate local data exactly once.

@@ -94,7 +94,7 @@ it('broadcastGlobalMessage adds message before sending (optimistic)', async () =
     connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '1990-01-01', connection: { send } }]])
   });
 
-  await broadcastGlobalMessage(' hello ', me);
+  await broadcastGlobalMessage(' hello ', null, me);
   expect(hoisted.addGlobalMessageMock).toHaveBeenCalledTimes(1);
   expect(send).toHaveBeenCalledTimes(1);
 });
@@ -113,7 +113,7 @@ it('broadcastGlobalMessage generates a UUID id for each message', async () => {
     connectedPeers: new Map([['p2', { username: 'bob', color: 'hsl(2, 65%, 65%)', dateOfBirth: '1990-01-01', connection: { send } }]])
   });
 
-  await broadcastGlobalMessage('hi', me);
+  await broadcastGlobalMessage('hi', null, me);
   const added = hoisted.addGlobalMessageMock.mock.calls[0][0];
   expect(typeof added.id).toBe('string');
   expect(added.id.length).toBeGreaterThan(10);
@@ -140,8 +140,8 @@ it('Two messages created at the same millisecond have different IDs', async () =
     .mockImplementationOnce(() => 'uuid-1')
     .mockImplementationOnce(() => 'uuid-2');
 
-  await broadcastGlobalMessage('a', me);
-  await broadcastGlobalMessage('b', me);
+  await broadcastGlobalMessage('a', null, me);
+  await broadcastGlobalMessage('b', null, me);
 
   const first = hoisted.addGlobalMessageMock.mock.calls[0][0];
   const second = hoisted.addGlobalMessageMock.mock.calls[1][0];

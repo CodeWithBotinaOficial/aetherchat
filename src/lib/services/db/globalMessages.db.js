@@ -13,7 +13,8 @@ export async function saveGlobalMessage(msg) {
       deleted: Object.prototype.hasOwnProperty.call(msg, 'deleted') ? Boolean(msg.deleted) : false,
       ...msg,
       id,
-      replies: Array.isArray(msg?.replies) && msg.replies.length > 0 ? msg.replies : null
+      replies: Array.isArray(msg?.replies) && msg.replies.length > 0 ? msg.replies : null,
+      media: Array.isArray(msg?.media) && msg.media.length > 0 ? msg.media.slice(0, 2) : null
     });
   } catch (err) {
     console.error('saveGlobalMessage failed', err);

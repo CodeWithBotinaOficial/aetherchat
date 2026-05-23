@@ -1,6 +1,7 @@
 <script>
   import { createEventDispatcher, onMount } from 'svelte';
   import { previewText } from '$lib/utils/replies.js';
+  import MediaPreviewStrip from '$lib/components/mediaPicker/MediaPreviewStrip.svelte';
 
   export let placeholder = 'Write a message...';
   export let disabled = false;
@@ -9,6 +10,9 @@
   export let mode = 'compose'; // 'compose' | 'edit'
   export let editLabel = ''; // e.g. "Editing message from 12:34"
   export let value = '';
+  /** @type {import('$lib/services/klipy/types.js').MessageMedia[]} */
+  export let mediaItems = [];
+  export let mediaDisabled = false;
 
   const dispatch = createEventDispatcher();
 
@@ -27,8 +31,9 @@
 
   function send() {
     const text = value.trim();
-    if (!text) return;
-    dispatch('send', { text, replies: Array.isArray(pendingReplies) ? pendingReplies : [] });
+    const media = Array.isArray(mediaItems) && mediaItems.length > 0 ? mediaItems.slice(0, 2) : null;
+    if (!text && !media) return;
+    dispatch('send', { text, media, replies: Array.isArray(pendingReplies) ? pendingReplies : [] });
     value = '';
     updateHeight();
   }
@@ -47,6 +52,7 @@
   }
 
   $: showCounter = value.length >= Math.floor(maxLength * 0.8);
+  $: canSend = !disabled && (value.trim().length > 0 || (Array.isArray(mediaItems) && mediaItems.length > 0));
 
   onMount(() => {
     updateHeight();
@@ -141,6 +147,12 @@
     </div>
   {/if}
 
+  <MediaPreviewStrip
+    items={mediaItems}
+    disabled={disabled}
+    on:remove={(ev) => dispatch('removeMedia', { id: ev.detail.id })}
+  />
+
   <div class="flex items-end gap-[var(--space-sm)]">
     <div class="flex-1">
       <textarea
@@ -176,8 +188,23 @@
 
     <button
       type="button"
+      class="media-btn h-[44px] w-[44px] grid place-items-center rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed"
+      disabled={disabled || mediaDisabled}
+      on:click={() => dispatch('toggleMediaPicker')}
+      aria-label="Open media picker"
+      title="GIFs & Stickers"
+    >
+      <svg viewBox="0 0 24 24" class="h-[20px] w-[20px]" fill="currentColor" aria-hidden="true">
+        <path
+          d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5Zm2 0v14h12V5H6Zm2 3h8v2H8V8Zm0 4h5v2H8v-2Z"
+        />
+      </svg>
+    </button>
+
+    <button
+      type="button"
       class="send-btn rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--accent)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-primary)] font-600 disabled:opacity-50 disabled:cursor-not-allowed"
-      disabled={disabled || value.trim().length === 0}
+      disabled={!canSend}
       on:click={send}
       aria-label={mode === 'edit' ? 'Save edit' : 'Send'}
       title={mode === 'edit' ? 'Save' : 'Send'}

@@ -19,6 +19,7 @@
  * @property {string|null} dateOfBirth ISO date string (YYYY-MM-DD) or null
  * @property {string} color
  * @property {string} text
+ * @property {import('$lib/services/klipy/types.js').MessageMedia[] | null} [media]
  * @property {{ messageId: string, authorUsername: string, authorColor: string, textSnapshot: string, timestamp: number, deleted?: boolean }[] | null} [replies]
  * @property {number} timestamp
  * @property {number|null} [editedAt]
@@ -133,6 +134,7 @@
  * @property {string} authorColor
  * @property {string|null} authorAvatarBase64
  * @property {string} text
+ * @property {import('$lib/services/klipy/types.js').MessageMedia[] | null} [media]
  * @property {number} createdAt
  * @property {number|null} editedAt
  * @property {boolean} deleted

@@ -28,6 +28,8 @@
   import { loadOlderPrivateMessages, scrollToAndHighlightPrivateMessage } from '$lib/components/privateChat/history.js';
   import { followPeer, openMyWall, openWall } from '$lib/stores/wall/actions.js';
   import { followingPeerIds } from '$lib/stores/wall/followState.js';
+  import { createComposer } from '$lib/utils/mediaComposer.js';
+  import { addRecentItem } from '$lib/stores/klipyRecents.js';
 
   /** @type {HTMLDivElement|null} */
   let listEl = null;
@@ -43,7 +45,11 @@
   /** @type {{ chatId: string, theirPeerId: string, messageId: string } | null} */
   let msgDeleteTarget = null;
 
+  const composer = createComposer();
   let composerValue = '';
+  /** @type {import('$lib/services/klipy/types.js').MessageMedia[]} */
+  let composerMedia = [];
+  let pickerOpen = false;
   let showActiveBanner = false;
   let bannerTimer = 0;
   let prevKeyState = '';
@@ -145,7 +151,7 @@
       const byId = new Map((chat.messages ?? []).map((m) => [m?.id, m]));
       const replies = rawPending.map((r) => {
         const original = byId.get(r.messageId) ?? null;
-        return {
+      return {
           messageId: r.messageId,
           authorUsername: r.authorUsername,
           authorColor: r.authorColor,
@@ -155,18 +161,23 @@
         };
       });
       const safeReplies = replies.length > 0 ? replies : null;
+      const media = Array.isArray(e?.detail?.media) && e.detail.media.length > 0 ? e.detail.media.slice(0, 2) : null;
 
       if (isEditingThisChat) {
-        await editPrivateMessage(chat.id, chat.theirPeerId, $editingMessageId, e.detail.text, safeReplies);
+        await editPrivateMessage(chat.id, chat.theirPeerId, $editingMessageId, e.detail.text, media, safeReplies);
         editingMessageId.set(null);
         editingChatId.set(null);
         composerValue = '';
+        composerMedia = [];
+        pickerOpen = false;
         clearPendingReplies(chat.id);
         return;
       }
 
-	    await sendPrivateMessage(chat.id, chat.theirPeerId, e.detail.text, safeReplies);
+	    await sendPrivateMessage(chat.id, chat.theirPeerId, e.detail.text, media, safeReplies);
       composerValue = '';
+      composerMedia = [];
+      pickerOpen = false;
       clearPendingReplies(chat.id);
 	  }
 
@@ -205,6 +216,7 @@
       color: isOwn ? (u?.color ?? 'hsl(0,0%,65%)') : chat.theirColor,
       avatarBase64: isOwn ? (u?.avatarBase64 ?? null) : theirAvatar,
       text: safeText,
+      media: Array.isArray(m?.media) && m.media.length > 0 ? m.media.slice(0, 2) : null,
       replies: Array.isArray(m?.replies) && m.replies.length > 0 ? m.replies : null,
       timestamp: m.timestamp,
       editedAt: Object.prototype.hasOwnProperty.call(m, 'editedAt') ? (m.editedAt ?? null) : null,
@@ -288,6 +300,8 @@
     editingChatId.set($activeChat.id);
     editingMessageId.set(msg.id);
     composerValue = String(msg.text ?? '');
+    composerMedia = Array.isArray(msg?.media) ? msg.media.slice(0, 2) : [];
+    pickerOpen = false;
     setPendingReplies($activeChat.id, Array.isArray(msg.replies) ? msg.replies : null);
   }
 
@@ -302,6 +316,8 @@
     editingMessageId.set(null);
     editingChatId.set(null);
     composerValue = '';
+    composerMedia = [];
+    pickerOpen = false;
     clearPendingReplies($activeChat.id);
   }
 </script>
@@ -382,6 +398,8 @@
       inputDisabled={inputDisabled}
       inputPlaceholder={inputPlaceholder}
       bind:composerValue
+      bind:composerMedia
+      bind:pickerOpen
       isEditingThisChat={isEditingThisChat}
       editLabel={editLabel}
       msgToBubble={msgToBubble}
@@ -394,6 +412,21 @@
       onRemovePendingReply={(messageId) => removePendingReply($activeChat.id, messageId)}
       onCancelEdit={cancelEdit}
       onSend={onSend}
+      onMediaPick={(item) => {
+        if (!item) return;
+        addRecentItem(item);
+        composer.addItem(item);
+        composerMedia = composer.toPayload().media ?? [];
+        if (!isEditingThisChat && composerValue.trim().length === 0 && composerMedia.length > 0) {
+          pickerOpen = false;
+          void onSend({ detail: { text: '', media: composerMedia, replies: $activeChat?.pendingReplies ?? [] } });
+          composerValue = '';
+          composerMedia = [];
+          composer.reset();
+        }
+      }}
+      onMediaRemove={(id) => { composer.removeItem(id); composerMedia = composer.toPayload().media ?? []; }}
+      onTogglePicker={() => { if (composerMedia.length >= 2) return; pickerOpen = !pickerOpen; }}
       onRequestDeleteConversation={requestDeleteConversation}
       onBack={closeChat}
     />
@@ -427,3 +460,5 @@
     }}
   />
 {/if}
+  $: composer.setText(composerValue);
+  $: composer.setMedia(composerMedia);

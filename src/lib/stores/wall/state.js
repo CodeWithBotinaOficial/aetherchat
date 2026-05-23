@@ -9,6 +9,7 @@ import { writable } from 'svelte/store';
  * @property {string} authorColor
  * @property {string|null} authorAvatarBase64
  * @property {string} text
+ * @property {import('$lib/services/klipy/types.js').MessageMedia[] | null} [media]
  * @property {number} createdAt
  * @property {number|null} editedAt
  * @property {boolean} deleted
@@ -70,14 +71,16 @@ export function applyIncomingWallCommentAdded(comment) {
   });
 }
 
-export function applyIncomingWallCommentEdited(wallOwnerPeerId, id, text, editedAt) {
+export function applyIncomingWallCommentEdited(wallOwnerPeerId, id, text, media, editedAt) {
   const pid = String(wallOwnerPeerId ?? '').trim();
   const cid = String(id ?? '').trim();
   if (!pid || !cid) return;
   currentWall.update((prev) => {
     if (!prev || prev.ownerPeerId !== pid) return prev;
     const next = prev.comments.map((c) =>
-      c.id === cid ? { ...c, text: String(text ?? ''), editedAt: Number(editedAt ?? Date.now()) } : c
+      c.id === cid
+        ? { ...c, text: String(text ?? ''), media: Array.isArray(media) && media.length > 0 ? media.slice(0, 2) : null, editedAt: Number(editedAt ?? Date.now()) }
+        : c
     );
     return { ...prev, comments: next };
   });

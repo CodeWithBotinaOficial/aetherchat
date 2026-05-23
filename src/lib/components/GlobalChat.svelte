@@ -22,6 +22,9 @@
   import { createOutsideClose } from '$lib/components/globalChat/outsideClose.js';
   import { handleGlobalChatSend } from '$lib/components/globalChat/send.js';
   import { setupGlobalChatMount } from '$lib/components/globalChat/mount.js';
+  import { addRecentItem } from '$lib/stores/klipyRecents.js';
+  import { createComposer } from '$lib/utils/mediaComposer.js';
+  import MediaPicker from '$lib/components/mediaPicker/MediaPicker.svelte';
 
   import ChatInput from '$lib/components/ChatInput.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -64,7 +67,13 @@
   let composerPad = 160;
   let now = Date.now();
 
+  const composer = createComposer();
   let composerValue = '';
+  /** @type {import('$lib/services/klipy/types.js').MessageMedia[]} */
+  let composerMedia = [];
+  let pickerOpen = false;
+  $: composer.setText(composerValue);
+  $: composer.setMedia(composerMedia);
   let showMsgDelete = false;
   /** @type {{ messageId: string } | null} */ let msgDeleteTarget = null;
 
@@ -218,7 +227,7 @@
       addGlobalMessage,
       clearPendingReplies,
       setEditingMessageId: (id) => editingMessageId.set(id),
-      setComposerValue: (v) => { composerValue = v; },
+      setComposerValue: (v) => { composerValue = String(v ?? ''); composer.setText(composerValue); },
       computeRange,
       scrollToBottom
     });
@@ -284,6 +293,9 @@
     if ($editingMessageId === target.messageId) {
       editingMessageId.set(null);
       composerValue = '';
+      composerMedia = [];
+      composer.reset();
+      pickerOpen = false;
       clearPendingReplies();
     }
 
@@ -338,6 +350,7 @@
 	                      if (!msg?.id) return;
 	                      editingMessageId.set(msg.id);
                       composerValue = String(msg.text ?? '');
+                      composerMedia = Array.isArray(msg?.media) ? msg.media.slice(0, 2) : [];
                       setPendingReplies(Array.isArray(msg.replies) ? msg.replies : null);
                     }}
                     on:delete={(ev) => {
@@ -355,18 +368,62 @@
   </div>
 
   <div class="gc-input">
-    <div bind:this={composerEl}>
+    <div bind:this={composerEl} class="composer-wrap">
+      <MediaPicker
+        bind:open={pickerOpen}
+        maxItems={2}
+        selectedItems={composerMedia}
+        on:select={(ev) => {
+          const item = ev?.detail?.item;
+          if (!item) return;
+          addRecentItem(item);
+          composer.addItem(item);
+          composerMedia = composer.toPayload().media ?? [];
+          // If it's solo-media, send immediately.
+          if (!$editingMessageId && composerValue.trim().length === 0) {
+            const { text, media } = composer.toPayload();
+            if (media) {
+              pickerOpen = false;
+              // Reuse ChatInput send path by dispatching the same shape.
+              void onSend({ detail: { text: text.trim(), media, replies: $pendingReplies } });
+              composerValue = '';
+              composerMedia = [];
+              composer.reset();
+            }
+          }
+        }}
+        on:close={() => (pickerOpen = false)}
+      />
       <ChatInput
         bind:value={composerValue}
+        mediaItems={composerMedia}
+        mediaDisabled={composerMedia.length >= 2}
         mode={isEditing ? 'edit' : 'compose'}
         editLabel={editLabel}
         pendingReplies={$pendingReplies}
         on:removePendingReply={(ev) => removePendingReply(ev.detail.messageId)}
         on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
-        on:send={onSend}
+        on:send={(ev) => {
+          const { text, media } = ev.detail ?? {};
+          // Delegate validation to the existing handler; it will no-op if invalid.
+          void onSend({ detail: { text, media, replies: ev?.detail?.replies } });
+          // Reset after send attempt (the handler only succeeds for valid payloads).
+          composerValue = '';
+          composerMedia = [];
+          composer.reset();
+          pickerOpen = false;
+        }}
+        on:toggleMediaPicker={() => {
+          if (composerMedia.length >= 2) return;
+          pickerOpen = !pickerOpen;
+        }}
+        on:removeMedia={(ev) => { composer.removeItem(ev.detail.id); composerMedia = composer.toPayload().media ?? []; }}
         on:cancelEdit={() => {
           editingMessageId.set(null);
           composerValue = '';
+          composerMedia = [];
+          composer.reset();
+          pickerOpen = false;
           clearPendingReplies();
         }}
         placeholder="Message the global room..."
@@ -430,5 +487,8 @@
 
   .gc-inner {
     width: 100%;
+  }
+  .composer-wrap {
+    position: relative;
   }
 </style>

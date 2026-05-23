@@ -384,6 +384,42 @@ export class AetherChatDB extends Dexie {
           'id, wallOwnerPeerId, authorPeerId, createdAt, [wallOwnerPeerId+authorPeerId], [wallOwnerPeerId+createdAt]'
       })
       .upgrade(upgradeBirthdateV17);
+
+    // Phase 18: add `media` field to message-like records (global + private + wall comments).
+    // Note: private message media is part of the encrypted payload; we only backfill the column to `null`
+    // to keep schema expectations consistent and migrations non-destructive.
+    this.version(18)
+      .stores({
+        users: 'id, username, createdAt',
+        globalMessages: 'id, timestamp, peerId, username',
+        privateChats: 'id, myPeerId, myUsername, theirPeerId, theirUsername, createdAt, lastActivity',
+        privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+        knownPeers: '++id, peerId, lastSeen, username',
+        usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+        peerIds: 'username, peerId',
+        queuedMessages: 'id, chatId, theirPeerId, timestamp',
+        queuedActions: 'id, chatId, theirPeerId, timestamp, kind',
+        sentMessagesPlaintext: 'id, chatId, timestamp',
+        sessionKeys: 'id, updatedAt',
+        cooldown: 'id',
+        follows: '++id, followerPeerId, targetPeerId, [followerPeerId+targetPeerId]',
+        wallComments:
+          'id, wallOwnerPeerId, authorPeerId, createdAt, [wallOwnerPeerId+authorPeerId], [wallOwnerPeerId+createdAt]'
+      })
+      .upgrade(async (tx) => {
+        const globals = tx.table('globalMessages');
+        const privates = tx.table('privateMessages');
+        const walls = tx.table('wallComments');
+        await globals.toCollection().modify((m) => {
+          if (!Object.prototype.hasOwnProperty.call(m, 'media')) m.media = null;
+        });
+        await privates.toCollection().modify((m) => {
+          if (!Object.prototype.hasOwnProperty.call(m, 'media')) m.media = null;
+        });
+        await walls.toCollection().modify((c) => {
+          if (!Object.prototype.hasOwnProperty.call(c, 'media')) c.media = null;
+        });
+      });
   }
 }
 

@@ -182,7 +182,7 @@ function canActorMutateGlobal(m, actorUsername) {
  * Returns true if the update was applied.
  *
  * @param {string} messageId
- * @param {{ text?: string, editedAt?: number|null, replies?: any[]|null }} patch
+ * @param {{ text?: string, editedAt?: number|null, replies?: any[]|null, media?: any[]|null }} patch
  * @param {string} actorUsername
  */
 export function updateMessage(messageId, patch, actorUsername) {
@@ -205,7 +205,10 @@ export function updateMessage(messageId, patch, actorUsername) {
       editedAt: Object.prototype.hasOwnProperty.call(patch, 'editedAt') ? (patch.editedAt ?? null) : cur.editedAt ?? null,
       replies: Object.prototype.hasOwnProperty.call(patch, 'replies')
         ? (Array.isArray(patch.replies) && patch.replies.length > 0 ? patch.replies : null)
-        : cur.replies ?? null
+        : cur.replies ?? null,
+      media: Object.prototype.hasOwnProperty.call(patch, 'media')
+        ? (Array.isArray(patch.media) && patch.media.length > 0 ? patch.media.slice(0, 2) : null)
+        : (cur.media ?? null)
     };
     applied = true;
     return next;

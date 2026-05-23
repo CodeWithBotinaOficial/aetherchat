@@ -123,7 +123,7 @@ export async function initiatePrivateChat(theirPeerId, theirUsername, theirColor
   }
 }
 
-export async function sendPrivateMessage(chatId, theirPeerId, plaintext, replies = null) {
+export async function sendPrivateMessage(chatId, theirPeerId, plaintext, media = null, replies = null) {
   const state = get(peerStore);
   const myPeerId = state.peerId;
   const profile = userProfileRef ?? cachedProfile;
@@ -131,20 +131,22 @@ export async function sendPrivateMessage(chatId, theirPeerId, plaintext, replies
   if (!cid || !theirPeerId || !profile || !myPeerId) return;
   if (!profile.username || profile.username === 'pre-registration') return;
 
-  const trimmed = String(plaintext ?? '').trim();
-  if (!trimmed) return;
+  const text = String(plaintext ?? '');
+  const trimmed = text.trim();
+  const safeMedia = Array.isArray(media) && media.length > 0 ? media.slice(0, 2) : null;
+  if (!trimmed && !safeMedia) return;
 
   const safeReplies = Array.isArray(replies) && replies.length > 0 ? replies : null;
   const messageId = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `pm-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const timestamp = Date.now();
 
-  addOutgoingMessage(cid, { id: messageId, text: trimmed, timestamp, replies: safeReplies });
+  addOutgoingMessage(cid, { id: messageId, text: trimmed, media: safeMedia, timestamp, replies: safeReplies });
 
   const sessionActive = isSessionActive(cid);
   const peerOnline = state.connectedPeers.get(theirPeerId)?.connection?.open === true;
 
   if (sessionActive && peerOnline && isPrivateSessionConfirmed(cid)) {
-    const body = encodePrivateBody(trimmed, null);
+    const body = encodePrivateBody(trimmed, safeMedia, null);
     const { ciphertext, iv } = await encryptForSession(cid, body);
     let repliesEnc = null;
     if (safeReplies) {
@@ -168,9 +170,11 @@ export async function sendPrivateMessage(chatId, theirPeerId, plaintext, replies
       timestamp,
       delivered: false
     });
-    await saveSentMessagePlaintext({ id: messageId, chatId: cid, plaintext: trimmed, timestamp });
+    await saveSentMessagePlaintext({ id: messageId, chatId: cid, plaintext: body, timestamp });
 
-    updateChatMeta(cid, { lastMessagePreview: trimmed.slice(0, 40), lastActivity: timestamp }).catch((err) => console.error('updateChatMeta failed', err));
+    updateChatMeta(cid, { lastMessagePreview: trimmed.slice(0, 40), lastActivity: timestamp }).catch((err) =>
+      console.error('updateChatMeta failed', err)
+    );
 
     sendToPeer(theirPeerId, buildDirectMessage('PRIVATE_MSG', myPeerId, profile, theirPeerId, { ciphertext, iv, messageId, replies: repliesEnc }, timestamp));
     return;
@@ -181,7 +185,7 @@ export async function sendPrivateMessage(chatId, theirPeerId, plaintext, replies
       id: messageId,
       chatId: cid,
       theirPeerId,
-      plaintext: trimmed,
+      plaintext: encodePrivateBody(trimmed, safeMedia, null),
       repliesJson: safeReplies ? JSON.stringify(safeReplies) : null,
       timestamp
     });
@@ -190,11 +194,13 @@ export async function sendPrivateMessage(chatId, theirPeerId, plaintext, replies
     console.error('saveQueuedMessage failed', err);
   }
 
-  updateChatMeta(cid, { lastMessagePreview: trimmed.slice(0, 40), lastActivity: timestamp }).catch((err) => console.error('updateChatMeta failed', err));
+  updateChatMeta(cid, { lastMessagePreview: trimmed.slice(0, 40), lastActivity: timestamp }).catch((err) =>
+    console.error('updateChatMeta failed', err)
+  );
   if (peerOnline) void flushQueueForPeer(theirPeerId);
 }
 
-export async function editPrivateMessage(chatId, theirPeerId, messageId, text, replies = null) {
+export async function editPrivateMessage(chatId, theirPeerId, messageId, text, media = null, replies = null) {
   const cid = String(chatId ?? '').trim();
   const mid = String(messageId ?? '').trim();
   if (!cid || !mid) return;
@@ -204,8 +210,10 @@ export async function editPrivateMessage(chatId, theirPeerId, messageId, text, r
   const profile = userProfileRef ?? cachedProfile;
   if (!profile?.username || profile.username === 'pre-registration') return;
 
-  const trimmed = String(text ?? '').trim();
-  if (!trimmed) return;
+  const rawText = String(text ?? '');
+  const trimmed = rawText.trim();
+  const safeMedia = Array.isArray(media) && media.length > 0 ? media.slice(0, 2) : null;
+  if (!trimmed && !safeMedia) return;
 
   try {
     const row = await db.privateMessages.get(mid);
@@ -217,7 +225,7 @@ export async function editPrivateMessage(chatId, theirPeerId, messageId, text, r
   const safeReplies = Array.isArray(replies) && replies.length > 0 ? replies : null;
   const editedAt = Date.now();
 
-  updatePrivateMessageInStore(cid, mid, { text: trimmed, editedAt, replies: safeReplies, deleted: false }, 'me');
+  updatePrivateMessageInStore(cid, mid, { text: trimmed, media: safeMedia, editedAt, replies: safeReplies, deleted: false }, 'me');
   cascadePrivateCitations(cid, mid, { newSnapshot: trimmed });
   persistPrivateCitationCascade(cid, mid, { newSnapshot: trimmed }).catch((err) => console.error('persistPrivateCitationCascade (edit) failed', err));
 
@@ -225,7 +233,7 @@ export async function editPrivateMessage(chatId, theirPeerId, messageId, text, r
     await updatePrivateMessage(mid, { editedAt, deleted: false });
     const row = await db.privateMessages.get(mid);
     const ts = typeof row?.timestamp === 'number' ? row.timestamp : Date.now();
-    await saveSentMessagePlaintext({ id: mid, chatId: cid, plaintext: trimmed, timestamp: ts });
+    await saveSentMessagePlaintext({ id: mid, chatId: cid, plaintext: encodePrivateBody(trimmed, safeMedia, editedAt), timestamp: ts });
   } catch (err) {
     console.error('editPrivateMessage persist local failed', err);
   }
@@ -241,7 +249,7 @@ export async function editPrivateMessage(chatId, theirPeerId, messageId, text, r
         theirPeerId: String(theirPeerId ?? ''),
         kind: 'edit',
         messageId: mid,
-        plaintext: trimmed,
+        plaintext: encodePrivateBody(trimmed, safeMedia, editedAt),
         repliesJson: safeReplies ? JSON.stringify(safeReplies) : null,
         editedAt,
         timestamp: Date.now()
@@ -254,7 +262,7 @@ export async function editPrivateMessage(chatId, theirPeerId, messageId, text, r
   }
 
   try {
-    const body = encodePrivateBody(trimmed, editedAt);
+    const body = encodePrivateBody(trimmed, safeMedia, editedAt);
     const { ciphertext, iv } = await encryptForSession(cid, body);
     let repliesEnc = null;
     if (safeReplies) {
