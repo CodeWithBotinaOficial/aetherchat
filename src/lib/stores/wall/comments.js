@@ -29,13 +29,14 @@ function clampText(raw) {
   return t;
 }
 
-export async function postWallComment(text) {
+export async function postWallComment(text, media = null) {
   const w = get(currentWall);
   const u = get(user);
   const me = myPeerId();
   const body = clampText(text).trim();
+  const safeMedia = Array.isArray(media) && media.length > 0 ? media.slice(0, 2) : null;
   if (!w || !u || !me) return;
-  if (!body) return;
+  if (!body && !safeMedia) return;
 
   // Auto-follow on first comment.
   if (!w.isOwner) await ensureFollowingWallOwner();
@@ -48,6 +49,7 @@ export async function postWallComment(text) {
     authorColor: u.color,
     authorAvatarBase64: u.avatarBase64 ?? null,
     text: body,
+    media: safeMedia,
     createdAt
   });
 
@@ -67,13 +69,14 @@ export async function postWallComment(text) {
       authorColor: comment.authorColor,
       authorAvatarBase64: comment.authorAvatarBase64,
       text: comment.text,
+      media: comment.media ?? null,
       createdAt: comment.createdAt
     },
     timestamp: Date.now()
   });
 }
 
-export async function editWallComment(commentId, nextText) {
+export async function editWallComment(commentId, nextText, media = null) {
   const w = get(currentWall);
   const u = get(user);
   const me = myPeerId();
@@ -87,22 +90,23 @@ export async function editWallComment(commentId, nextText) {
   if (existing.authorPeerId !== me) return;
 
   const text = clampText(nextText).trim();
-  if (!text) return;
+  const safeMedia = Array.isArray(media) && media.length > 0 ? media.slice(0, 2) : null;
+  if (!text && !safeMedia) return;
 
   const editedAt = Date.now();
-  const ok = await editWallCommentText(id, text, editedAt);
+  const ok = await editWallCommentText(id, text, safeMedia, editedAt);
   if (!ok) return;
 
   currentWall.update((prev) => {
     if (!prev || prev.ownerPeerId !== existing.wallOwnerPeerId) return prev;
-    const next = prev.comments.map((c) => (c.id === id ? { ...c, text, editedAt } : c));
+    const next = prev.comments.map((c) => (c.id === id ? { ...c, text, media: safeMedia, editedAt } : c));
     return { ...prev, comments: next };
   });
 
   broadcastProtocolEnvelope({
     type: 'WALL_COMMENT_EDITED',
     from: buildFromLocalUser(u),
-    payload: { id, wallOwnerPeerId: existing.wallOwnerPeerId, text, editedAt },
+    payload: { id, wallOwnerPeerId: existing.wallOwnerPeerId, text, media: safeMedia, editedAt },
     timestamp: Date.now()
   });
 }

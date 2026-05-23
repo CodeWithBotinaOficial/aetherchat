@@ -5,6 +5,7 @@
 	  import { calculateAge, formatMessageTime } from '$lib/utils/time.js';
 	  import { previewText } from '$lib/utils/replies.js';
     import { createSwipeToReply, SWIPE_THRESHOLD_PX } from '$lib/components/messageBubble/swipe.js';
+    import MessageMedia from '$lib/components/mediaPicker/MessageMedia.svelte';
 
   /** @type {{ message: any, isOwn: boolean }} */
 	  export let message;
@@ -338,6 +339,8 @@
 		        >
 		          {message.text}
 		        </div>
+
+            <MessageMedia media={message?.media ?? null} username={displayUsername} />
 
 	        <div class="time-row" title={new Date(message.timestamp).toLocaleString()}>
 	          <span class="time">{displayTime}</span>

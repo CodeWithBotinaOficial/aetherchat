@@ -1,5 +1,10 @@
 <script>
   import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
+  import MessageMedia from '$lib/components/mediaPicker/MessageMedia.svelte';
+  import MediaPicker from '$lib/components/mediaPicker/MediaPicker.svelte';
+  import MediaPreviewStrip from '$lib/components/mediaPicker/MediaPreviewStrip.svelte';
+  import { addRecentItem } from '$lib/stores/klipyRecents.js';
+  import { createComposer } from '$lib/utils/mediaComposer.js';
   import { formatRelativeTime } from '$lib/utils/time.js';
   import { deleteWallComment, editWallComment } from '$lib/stores/wall/comments.js';
 
@@ -9,7 +14,13 @@
 
   let editing = false;
   let draft = '';
+  /** @type {import('$lib/services/klipy/types.js').MessageMedia[]} */
+  let draftMedia = [];
+  let pickerOpen = false;
   let saving = false;
+  const composer = createComposer();
+  $: composer.setText(draft);
+  $: composer.setMedia(draftMedia);
 
   $: tsText = formatRelativeTime(comment?.createdAt ?? Date.now());
   $: showEdited = typeof comment?.editedAt === 'number' && comment.editedAt !== null;
@@ -18,21 +29,26 @@
     if (!canEdit) return;
     editing = true;
     draft = String(comment?.text ?? '');
+    draftMedia = Array.isArray(comment?.media) ? comment.media.slice(0, 2) : [];
+    pickerOpen = false;
   }
 
   function cancel() {
     editing = false;
     draft = '';
+    draftMedia = [];
+    pickerOpen = false;
     saving = false;
   }
 
   async function save() {
     if (!canEdit) return;
-    const text = String(draft ?? '');
-    if (text.trim().length === 0) return;
+    const { text: t, media } = composer.toPayload();
+    const text = String(t ?? '');
+    if (text.trim().length === 0 && !(media && media.length > 0)) return;
     saving = true;
     try {
-      await editWallComment(comment.id, text);
+      await editWallComment(comment.id, text, media);
       editing = false;
     } catch (err) {
       console.error('editWallComment failed', err);
@@ -53,6 +69,19 @@
 
 {#if comment}
   <div class="item" aria-label={`Comment by ${comment.authorUsername}`}>
+    <MediaPicker
+      bind:open={pickerOpen}
+      maxItems={2}
+      selectedItems={draftMedia}
+      on:select={(ev) => {
+        const item = ev?.detail?.item;
+        if (!item) return;
+        addRecentItem(item);
+        composer.addItem(item);
+        draftMedia = composer.toPayload().media ?? [];
+      }}
+      on:close={() => (pickerOpen = false)}
+    />
     <AvatarDisplay
       username={comment.authorUsername}
       avatarBase64={comment.authorAvatarBase64 ?? null}
@@ -86,18 +115,44 @@
 
       {#if editing}
         <div class="edit">
+          <MediaPreviewStrip
+            items={draftMedia}
+            disabled={saving}
+            on:remove={(ev) => { composer.removeItem(ev.detail.id); draftMedia = composer.toPayload().media ?? []; }}
+          />
           <textarea class="ta" bind:value={draft} rows="3" maxlength="500" aria-label="Edit comment text"></textarea>
           <div class="edit-actions">
+            <button
+              type="button"
+              class="btn btn-ghost"
+              on:click={() => {
+                if (draftMedia.length >= 2) return;
+                pickerOpen = !pickerOpen;
+              }}
+              disabled={saving || draftMedia.length >= 2}
+              aria-label="Open media picker"
+              title="GIFs & Stickers"
+            >
+              Media
+            </button>
             <button type="button" class="btn btn-ghost" on:click={cancel} disabled={saving}>
               Cancel
             </button>
-            <button type="button" class="btn btn-primary" on:click={save} disabled={saving || draft.trim().length === 0}>
+            <button
+              type="button"
+              class="btn btn-primary"
+              on:click={save}
+              disabled={saving || (draft.trim().length === 0 && draftMedia.length === 0)}
+            >
               {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
         </div>
       {:else}
-        <div class="text">{comment.text}</div>
+        <div class="text">
+          {comment.text}
+          <MessageMedia media={comment?.media ?? null} username={comment?.authorUsername ?? ''} />
+        </div>
       {/if}
     </div>
   </div>
@@ -160,7 +215,7 @@
   }
 
   .icon {
-    height: 32px;
+    height: 44px;
     padding: 0 10px;
     border-radius: var(--radius-full);
     border: 1px solid var(--border);
@@ -211,7 +266,7 @@
   }
 
   .btn {
-    height: 36px;
+    height: 44px;
     padding: 0 12px;
     border-radius: var(--radius-md);
     border: 1px solid var(--border);

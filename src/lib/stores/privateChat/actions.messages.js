@@ -32,6 +32,8 @@ export async function loadChatMessages(chatId, sessionId) {
     rows.map(async (m) => {
       let text = '🔒 Encrypted message — start a new session to decrypt';
       let editedAt = Object.prototype.hasOwnProperty.call(m, 'editedAt') ? (m.editedAt ?? null) : null;
+      /** @type {import('$lib/services/klipy/types.js').MessageMedia[]|null} */
+      let media = null;
       /** @type {any[]|null} */
       let replies = null;
       if (canDecrypt) {
@@ -40,6 +42,7 @@ export async function loadChatMessages(chatId, sessionId) {
           const decoded = decodePrivateBody(raw);
           text = decoded.text;
           editedAt = decoded.editedAt ?? editedAt;
+          media = decoded.media ?? null;
         } catch {
           // keep placeholder
         }
@@ -57,6 +60,7 @@ export async function loadChatMessages(chatId, sessionId) {
         id: m.id,
         direction: m.direction,
         text,
+        media,
         replies,
         repliesCiphertext: typeof m?.replies?.ciphertext === 'string' ? m.replies.ciphertext : null,
         repliesIv: typeof m?.replies?.iv === 'string' ? m.replies.iv : null,
@@ -118,7 +122,14 @@ export async function decryptSealedMessages(chatId, sessionId) {
               // ignore
             }
           }
-          return { ...m, text: decoded.text, editedAt: decoded.editedAt ?? (m.editedAt ?? null), replies, sealed: false };
+          return {
+            ...m,
+            text: decoded.text,
+            media: decoded.media ?? null,
+            editedAt: decoded.editedAt ?? (m.editedAt ?? null),
+            replies,
+            sealed: false
+          };
         } catch (err) {
           if (!isSessionKeyMismatch(err)) {
             console.error(
@@ -160,13 +171,25 @@ export async function decryptSealedMessages(chatId, sessionId) {
   });
 }
 
-export function addOutgoingMessage(chatId, { id, text, timestamp, replies = null }) {
+export function addOutgoingMessage(chatId, { id, text, media = null, timestamp, replies = null }) {
   withChat((chats) => {
     const chat = chats.get(chatId);
     if (!chat) return;
     const messages = [
       ...chat.messages,
-      { id, direction: 'sent', text, replies, timestamp, delivered: false, queued: false, editedAt: null, deleted: false, sealed: false }
+      {
+        id,
+        direction: 'sent',
+        text,
+        media: Array.isArray(media) && media.length > 0 ? media.slice(0, 2) : null,
+        replies,
+        timestamp,
+        delivered: false,
+        queued: false,
+        editedAt: null,
+        deleted: false,
+        sealed: false
+      }
     ];
     chats.set(chatId, { ...chat, messages, lastMessage: text, lastActivity: timestamp });
   });
@@ -174,7 +197,20 @@ export function addOutgoingMessage(chatId, { id, text, timestamp, replies = null
 
 export function addIncomingMessage(
   chatId,
-  { id, text, timestamp, replies = null, ciphertext = null, iv = null, sealed = false, repliesCiphertext = null, repliesIv = null, editedAt = null, deleted = false }
+  {
+    id,
+    text,
+    media = null,
+    timestamp,
+    replies = null,
+    ciphertext = null,
+    iv = null,
+    sealed = false,
+    repliesCiphertext = null,
+    repliesIv = null,
+    editedAt = null,
+    deleted = false
+  }
 ) {
   update((s) => {
     const next = new Map(s.chats);
@@ -183,7 +219,22 @@ export function addIncomingMessage(
 
     const messages = [
       ...chat.messages,
-      { id, direction: 'received', text, replies, ciphertext, iv, repliesCiphertext, repliesIv, timestamp, delivered: true, editedAt, deleted: Boolean(deleted), sealed: Boolean(sealed) }
+      {
+        id,
+        direction: 'received',
+        text,
+        media,
+        replies,
+        ciphertext,
+        iv,
+        repliesCiphertext,
+        repliesIv,
+        timestamp,
+        delivered: true,
+        editedAt,
+        deleted: Boolean(deleted),
+        sealed: Boolean(sealed)
+      }
     ];
     const unreadInc = s.activeChatId === chatId ? 0 : 1;
     next.set(chatId, {

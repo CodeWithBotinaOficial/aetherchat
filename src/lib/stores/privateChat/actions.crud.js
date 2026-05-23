@@ -18,6 +18,7 @@ import {
 
 import { PRIVATE_DELETED_PLACEHOLDER, privateChatStore, withChat } from './state.js';
 import { decryptSealedMessages, loadChatMessages } from './actions.messages.js';
+import { decodePrivateBody } from '$lib/utils/privateMessageCodec.js';
 
 const { update } = privateChatStore;
 
@@ -61,10 +62,12 @@ export async function loadPrivateChats(myPeerId) {
       if (m.direction === 'sent') {
         const plaintext = sentPlainMap.get(m.id);
         const deleted = Boolean(m.deleted);
+        const decoded = decodePrivateBody(plaintext ?? '');
         return {
           id: m.id,
           direction: 'sent',
-          text: deleted ? PRIVATE_DELETED_PLACEHOLDER : plaintext ?? '🔒 Sent message (plaintext not available)',
+          text: deleted ? PRIVATE_DELETED_PLACEHOLDER : decoded.text ?? '🔒 Sent message (plaintext not available)',
+          media: deleted ? null : (decoded.media ?? null),
           ciphertext: m.ciphertext,
           iv: m.iv,
           repliesCiphertext,
@@ -82,6 +85,7 @@ export async function loadPrivateChats(myPeerId) {
         id: m.id,
         direction: 'received',
         text: deleted ? PRIVATE_DELETED_PLACEHOLDER : null,
+        media: null,
         ciphertext: m.ciphertext,
         iv: m.iv,
         repliesCiphertext,
@@ -96,10 +100,13 @@ export async function loadPrivateChats(myPeerId) {
     });
 
     const queuedMsgs = await getQueuedMessagesForChat(c.id);
-    const queuedInMemory = queuedMsgs.map((m) => ({
+    const queuedInMemory = queuedMsgs.map((m) => {
+      const decoded = decodePrivateBody(m.plaintext);
+      return {
       id: m.id,
       direction: 'sent',
-      text: m.plaintext,
+      text: decoded.text,
+      media: decoded.media ?? null,
       ciphertext: null,
       iv: null,
       repliesCiphertext: null,
@@ -120,7 +127,8 @@ export async function loadPrivateChats(myPeerId) {
       editedAt: null,
       deleted: false,
       sealed: false
-    }));
+    };
+    });
 
     // Load queued edit/delete actions (used to flush once session is confirmed).
     let queuedActions;

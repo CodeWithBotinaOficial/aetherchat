@@ -20,6 +20,7 @@ function isWallCommentRecord(c) {
   if (typeof c.authorUsername !== 'string') return false;
   if (typeof c.authorColor !== 'string') return false;
   if (typeof c.text !== 'string') return false;
+  if (c.media !== null && !Array.isArray(c.media)) return false;
   if (typeof c.createdAt !== 'number') return false;
   if (typeof c.editedAt !== 'number' && c.editedAt !== null) return false;
   if (typeof c.deleted !== 'boolean') return false;
@@ -42,6 +43,7 @@ export async function addLocalWallComment(input) {
     authorColor: String(input.authorColor ?? ''),
     authorAvatarBase64: input.authorAvatarBase64 ?? null,
     text: String(input.text ?? ''),
+    media: Array.isArray(input?.media) && input.media.length > 0 ? input.media.slice(0, 2) : null,
     createdAt: Number(input.createdAt ?? Date.now()),
     editedAt: null,
     deleted: false
@@ -95,7 +97,7 @@ export async function getWallComment(id) {
  * @param {number} [editedAt]
  * @returns {Promise<boolean>}
  */
-export async function editWallCommentText(id, text, editedAt) {
+export async function editWallCommentText(id, text, media, editedAt) {
   const key = String(id ?? '').trim();
   if (!key) return false;
   const existing = await db.wallComments.get(key);
@@ -103,7 +105,8 @@ export async function editWallCommentText(id, text, editedAt) {
 
   const nextText = String(text ?? '').trim();
   const ts = typeof editedAt === 'number' ? editedAt : Date.now();
-  await db.wallComments.update(key, { text: nextText, editedAt: ts });
+  const safeMedia = Array.isArray(media) && media.length > 0 ? media.slice(0, 2) : null;
+  await db.wallComments.update(key, { text: nextText, media: safeMedia, editedAt: ts });
   return true;
 }
 

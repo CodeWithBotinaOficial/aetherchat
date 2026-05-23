@@ -122,7 +122,7 @@ function normalizeActor(actor) {
  *
  * @param {string} chatId
  * @param {string} messageId
- * @param {{ text?: string, editedAt?: number|null, replies?: any[]|null, deleted?: boolean }} patch
+ * @param {{ text?: string, media?: any[]|null, editedAt?: number|null, replies?: any[]|null, deleted?: boolean }} patch
  * @param {'me'|'them'} actor
  */
 export function updateMessage(chatId, messageId, patch, actor = 'me') {
@@ -151,6 +151,9 @@ export function updateMessage(chatId, messageId, patch, actor = 'me') {
     nextMessages[idx] = {
       ...cur,
       text: Object.prototype.hasOwnProperty.call(patch, 'text') ? String(patch.text ?? '') : cur.text,
+      media: Object.prototype.hasOwnProperty.call(patch, 'media')
+        ? (Array.isArray(patch.media) && patch.media.length > 0 ? patch.media.slice(0, 2) : null)
+        : (cur.media ?? null),
       editedAt: Object.prototype.hasOwnProperty.call(patch, 'editedAt') ? (patch.editedAt ?? null) : cur.editedAt ?? null,
       replies: Object.prototype.hasOwnProperty.call(patch, 'replies')
         ? (Array.isArray(patch.replies) && patch.replies.length > 0 ? patch.replies : null)

@@ -16,7 +16,9 @@ export async function savePrivateMessage(msg) {
     await db.privateMessages.put({
       editedAt: Object.prototype.hasOwnProperty.call(msg, 'editedAt') ? (msg.editedAt ?? null) : null,
       deleted: Object.prototype.hasOwnProperty.call(msg, 'deleted') ? Boolean(msg.deleted) : false,
-      ...msg
+      ...msg,
+      // Private message media is part of the encrypted payload; never store it in plaintext here.
+      media: null
     });
   } catch (err) {
     console.error('savePrivateMessage failed', err);

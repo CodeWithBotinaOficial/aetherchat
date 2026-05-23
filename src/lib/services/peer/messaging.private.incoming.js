@@ -169,6 +169,8 @@ export async function handleIncomingPrivateMessage(msg, profile) {
   let sealed = true;
   let text = '🔒 Encrypted message';
   let editedAt = null;
+  /** @type {import('$lib/services/klipy/types.js').MessageMedia[]|null} */
+  let media;
   let replies = null;
   const repliesCiphertext = typeof repliesEnc?.ciphertext === 'string' ? repliesEnc.ciphertext : null;
   const repliesIv = typeof repliesEnc?.iv === 'string' ? repliesEnc.iv : null;
@@ -179,6 +181,7 @@ export async function handleIncomingPrivateMessage(msg, profile) {
       const decoded = decodePrivateBody(raw);
       text = decoded.text;
       editedAt = decoded.editedAt;
+      media = decoded.media ?? null;
       sealed = false;
     } catch (err) {
       text = decryptFailurePlaceholder(err);
@@ -206,6 +209,7 @@ export async function handleIncomingPrivateMessage(msg, profile) {
       timestamp: msg.timestamp ?? now,
       delivered: true,
       editedAt,
+      media,
       deleted: false
     });
   } catch (err) {
@@ -215,6 +219,7 @@ export async function handleIncomingPrivateMessage(msg, profile) {
   addIncomingMessage(chatId, {
     id: messageId,
     text,
+    media,
     replies,
     ciphertext,
     iv,
@@ -269,11 +274,14 @@ export async function handleIncomingPrivateMessageEdit(msg, profile) {
 
   let text;
   let editedAt;
+  /** @type {import('$lib/services/klipy/types.js').MessageMedia[]|null} */
+  let media;
   try {
     const raw = await decryptForSession(chatId, ciphertext, iv);
     const decoded = decodePrivateBody(raw);
     text = decoded.text;
     editedAt = decoded.editedAt ?? payloadEditedAt;
+    media = decoded.media ?? null;
   } catch (err) {
     if (!isSessionKeyMismatch(err)) console.error('PRIVATE_MSG_EDIT decrypt failed', err);
     return;
@@ -309,6 +317,7 @@ export async function handleIncomingPrivateMessageEdit(msg, profile) {
     messageId,
     {
       text: typeof text === 'string' ? text : '🔒 Encrypted message',
+      media,
       editedAt: typeof editedAt === 'number' ? editedAt : null,
       replies,
       ciphertext,

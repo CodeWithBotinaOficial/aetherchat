@@ -106,6 +106,7 @@ export async function handleWallCommentAddedMessage(msg) {
   if (!isString(p.wallOwnerPeerId) || !isString(p.authorPeerId)) return;
   if (!isString(p.authorUsername) || !isString(p.authorColor)) return;
   if (!isString(p.text)) return;
+  if (p.media !== null && typeof p.media !== 'undefined' && !Array.isArray(p.media)) return;
   if (!isFiniteNumber(p.createdAt)) return;
 
   const record = {
@@ -116,6 +117,7 @@ export async function handleWallCommentAddedMessage(msg) {
     authorColor: p.authorColor,
     authorAvatarBase64: typeof p.authorAvatarBase64 === 'string' ? p.authorAvatarBase64 : null,
     text: p.text,
+    media: Array.isArray(p.media) && p.media.length > 0 ? p.media.slice(0, 2) : null,
     createdAt: p.createdAt,
     editedAt: null,
     deleted: false
@@ -131,6 +133,7 @@ export async function handleWallCommentEditedMessage(msg) {
   if (!p || typeof p !== 'object') return;
   if (!isString(p.id) || !isString(p.wallOwnerPeerId)) return;
   if (!isString(p.text) || !isFiniteNumber(p.editedAt)) return;
+  if (p.media !== null && typeof p.media !== 'undefined' && !Array.isArray(p.media)) return;
 
   const fromPeerId = String(msg?.from?.peerId ?? '').trim();
   if (!fromPeerId) return;
@@ -142,9 +145,10 @@ export async function handleWallCommentEditedMessage(msg) {
   if (existing.authorPeerId !== fromPeerId) return;
   if (existing.wallOwnerPeerId !== p.wallOwnerPeerId) return;
 
-  const ok = await editWallCommentText(p.id, p.text, p.editedAt);
+  const safeMedia = Array.isArray(p.media) && p.media.length > 0 ? p.media.slice(0, 2) : null;
+  const ok = await editWallCommentText(p.id, p.text, safeMedia, p.editedAt);
   if (!ok) return;
-  applyIncomingWallCommentEdited(p.wallOwnerPeerId, p.id, p.text, p.editedAt);
+  applyIncomingWallCommentEdited(p.wallOwnerPeerId, p.id, p.text, safeMedia, p.editedAt);
 }
 
 export async function handleWallCommentDeletedMessage(msg) {

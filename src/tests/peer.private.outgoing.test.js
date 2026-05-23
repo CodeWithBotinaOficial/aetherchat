@@ -121,7 +121,7 @@ it('sendPrivateMessage queues message when session is not active', async () => {
   const cryptoMod = await import('$lib/services/crypto.js');
   cryptoMod.isSessionActive.mockReturnValue(false);
   const chatId = cryptoMod.buildSessionId('alice', 'bob');
-  await sendPrivateMessage(chatId, 'p2', 'hi');
+  await sendPrivateMessage(chatId, 'p2', 'hi', null);
   expect(hoisted.saveQueuedMessageMock).toHaveBeenCalledTimes(1);
   expect(hoisted.updateMessageQueuedMock).toHaveBeenCalledWith(chatId, expect.any(String), true);
 });
@@ -154,7 +154,7 @@ it('sendPrivateMessage encrypts before calling sendToPeer and stores ciphertext 
 
   const chatId = cryptoMod.buildSessionId('alice', 'bob');
   peerTest.confirmPrivateSessionForTest(chatId);
-  await sendPrivateMessage(chatId, 'p2', 'hello');
+  await sendPrivateMessage(chatId, 'p2', 'hello', null);
 
   expect(send.mock.calls.some((c) => c?.[0]?.type === 'PRIVATE_MSG')).toBe(true);
   expect(hoisted.savePrivateMessageMock).toHaveBeenCalledTimes(1);
@@ -181,7 +181,7 @@ it('sendPrivateMessage queues message if peer is offline and flushQueueForPeer s
   const cryptoMod = await import('$lib/services/crypto.js');
   cryptoMod.isSessionActive.mockReturnValue(false);
   const chatId = cryptoMod.buildSessionId('alice', 'bob');
-  await sendPrivateMessage(chatId, 'p2', 'hello');
+  await sendPrivateMessage(chatId, 'p2', 'hello', null);
   expect(send).not.toHaveBeenCalled();
   expect(hoisted.saveQueuedMessageMock).toHaveBeenCalledTimes(1);
 

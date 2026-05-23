@@ -11,7 +11,7 @@ import {
   updatePrivateMessage
 } from '$lib/services/db.js';
 import { createSession, decryptForSession, encryptForSession, isSessionActive, resumeSession } from '$lib/services/crypto.js';
-import { encodePrivateBody } from '$lib/utils/privateMessageCodec.js';
+import { decodePrivateBody, encodePrivateBody } from '$lib/utils/privateMessageCodec.js';
 import { snapshotText } from '$lib/utils/replies.js';
 import { privateChatStore, setKeyExchangeState, updateMessageQueued } from '$lib/stores/privateChatStore.js';
 import {
@@ -230,7 +230,8 @@ export async function flushQueueForPeer(theirPeerId) {
     // Session is active: encrypt and send each queued message, then remove it from the queue.
     for (const msg of queued ?? []) {
       try {
-        const body = encodePrivateBody(msg.plaintext, null);
+        const decoded = decodePrivateBody(msg.plaintext);
+        const body = encodePrivateBody(decoded.text, decoded.media, null);
         const { ciphertext, iv } = await encryptForSession(chatId, body);
         let repliesEnc = null;
         if (typeof msg?.repliesJson === 'string' && msg.repliesJson.trim().length > 0) {
@@ -254,7 +255,7 @@ export async function flushQueueForPeer(theirPeerId) {
           delivered: false
         });
         // Keep a local plaintext copy for sender readability across re-keys.
-        await saveSentMessagePlaintext({ id: msg.id, chatId, plaintext: msg.plaintext, timestamp: msg.timestamp });
+        await saveSentMessagePlaintext({ id: msg.id, chatId, plaintext: body, timestamp: msg.timestamp });
         updateMessageQueued(chatId, msg.id, false);
         sendToPeer(
           theirPeerId,
@@ -271,7 +272,8 @@ export async function flushQueueForPeer(theirPeerId) {
       if (action?.theirPeerId !== theirPeerId) continue;
       if (typeof action?.plaintext !== 'string') continue;
       try {
-        const body = encodePrivateBody(action.plaintext, typeof action.editedAt === 'number' ? action.editedAt : null);
+        const decoded = decodePrivateBody(action.plaintext);
+        const body = encodePrivateBody(decoded.text, decoded.media, typeof action.editedAt === 'number' ? action.editedAt : null);
         const { ciphertext, iv } = await encryptForSession(chatId, body);
         let repliesEnc = null;
         if (typeof action?.repliesJson === 'string' && action.repliesJson.trim().length > 0) {
