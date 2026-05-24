@@ -10,6 +10,9 @@
     getUsernameCooldown
   } from '$lib/services/profile/actions.js';
   import { calculateAge } from '$lib/utils/time.js';
+  import EmojiPicker from '$lib/components/emojiPicker/EmojiPicker.svelte';
+  import { addRecentEmoji } from '$lib/stores/emojiRecents.js';
+  import { insertEmojiAtCursor } from '$lib/utils/emojiInserter.js';
 
   export let user = null;
 
@@ -24,6 +27,9 @@
 
   let bioDraft = '';
   let savingBio = false;
+  let bioEmojiOpen = false;
+  /** @type {HTMLTextAreaElement|null} */
+  let bioTextareaRef = null;
 
   let now = Date.now();
   let timer = 0;
@@ -129,6 +135,16 @@
   function clampBio() {
     if (bioDraft.length <= 120) return;
     bioDraft = bioDraft.slice(0, 120);
+  }
+
+  function canInsertBioEmoji() {
+    if (!bioTextareaRef) return bioDraft.length < 120;
+    const start = typeof bioTextareaRef.selectionStart === 'number' ? bioTextareaRef.selectionStart : null;
+    const end = typeof bioTextareaRef.selectionEnd === 'number' ? bioTextareaRef.selectionEnd : null;
+    if (start === null || end === null) return bioDraft.length < 120;
+    // If there's an active selection, insertion may replace chars; allow.
+    if (end > start) return true;
+    return bioDraft.length < 120;
   }
 
   async function saveBio() {
@@ -241,12 +257,49 @@
   <div class="field">
     <div class="label-row">
       <div class="label">Biography</div>
-      <button type="button" class="btn btn-primary" on:click={saveBio} disabled={savingBio || !bioDirty}>
-        {savingBio ? 'Saving...' : 'Save'}
-      </button>
+      <div class="bio-actions">
+        <button
+          type="button"
+          class="btn-emoji"
+          on:click={() => (bioEmojiOpen = !bioEmojiOpen)}
+          aria-label="Open emoji picker"
+          title="Emoji"
+        >
+          😊
+        </button>
+        <button type="button" class="btn btn-primary" on:click={saveBio} disabled={savingBio || !bioDirty}>
+          {savingBio ? 'Saving...' : 'Save'}
+        </button>
+      </div>
     </div>
 
-    <textarea class="textarea" rows="3" bind:value={bioDraft} maxlength="120" on:input={clampBio} placeholder="Optional (max 120 characters)"></textarea>
+    {#if bioEmojiOpen}
+      <EmojiPicker
+        open={bioEmojiOpen}
+        on:pick={(ev) => {
+          const char = String(ev?.detail?.char ?? '');
+          if (!char) return;
+          if (!canInsertBioEmoji()) return;
+          if (!bioTextareaRef) return;
+          insertEmojiAtCursor(bioTextareaRef, char);
+          addRecentEmoji(char);
+          // Enforce 120-char limit after insertion.
+          clampBio();
+          bioTextareaRef.focus?.();
+        }}
+        on:close={() => (bioEmojiOpen = false)}
+      />
+    {/if}
+
+    <textarea
+      class="textarea"
+      rows="3"
+      bind:this={bioTextareaRef}
+      bind:value={bioDraft}
+      maxlength="120"
+      on:input={clampBio}
+      placeholder="Optional (max 120 characters)"
+    ></textarea>
     <div class="counter">{bioDraft.length} / 120</div>
   </div>
 </section>
@@ -281,6 +334,25 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-md);
+  }
+
+  .bio-actions {
+    display: inline-flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .btn-emoji {
+    height: 44px;
+    width: 44px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    font-size: 20px;
+    flex: none;
   }
 
   .label {
@@ -389,6 +461,9 @@
     }
     .btn-primary:hover:not(:disabled) {
       background: var(--accent-hover);
+    }
+    .btn-emoji:hover {
+      background: var(--bg-overlay);
     }
     .suggestion:hover {
       background: var(--bg-overlay);

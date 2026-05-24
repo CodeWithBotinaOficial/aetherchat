@@ -25,12 +25,11 @@
   import { addRecentItem } from '$lib/stores/klipyRecents.js';
   import { createComposer } from '$lib/utils/mediaComposer.js';
   import MediaPicker from '$lib/components/mediaPicker/MediaPicker.svelte';
-
+  import EmojiPickerSlot from '$lib/components/emojiPicker/EmojiPickerSlot.svelte';
   import ChatInput from '$lib/components/ChatInput.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import MessageBubble from '$lib/components/MessageBubble.svelte';
   import UserTooltip from '$lib/components/UserTooltip.svelte';
-
   /** @type {HTMLDivElement|null} */ let listEl = null;
 
   // Tooltip state
@@ -72,6 +71,9 @@
   /** @type {import('$lib/services/klipy/types.js').MessageMedia[]} */
   let composerMedia = [];
   let pickerOpen = false;
+  let emojiPickerOpen = false;
+  /** @type {HTMLTextAreaElement|null} */
+  let textareaRef = null;
   $: composer.setText(composerValue);
   $: composer.setMedia(composerMedia);
   let showMsgDelete = false;
@@ -369,6 +371,9 @@
 
   <div class="gc-input">
     <div bind:this={composerEl}>
+      {#if emojiPickerOpen}
+        <EmojiPickerSlot bind:open={emojiPickerOpen} inputEl={textareaRef} />
+      {/if}
       {#if pickerOpen}
         <MediaPicker
           open={pickerOpen}
@@ -398,6 +403,7 @@
       {/if}
       <ChatInput
         bind:value={composerValue}
+        bind:textareaRef
         mediaItems={composerMedia}
         mediaDisabled={composerMedia.length >= 2}
         mode={isEditing ? 'edit' : 'compose'}
@@ -413,12 +419,18 @@
           composerValue = '';
           composerMedia = [];
           composer.reset();
+          emojiPickerOpen = false;
           // Keep picker open when sending text+media; close only for solo media.
           if (String(text ?? '').trim().length === 0) pickerOpen = false;
         }}
         on:toggleMediaPicker={() => {
           if (composerMedia.length >= 2) return;
+          emojiPickerOpen = false;
           pickerOpen = !pickerOpen;
+        }}
+        on:toggleEmojiPicker={() => {
+          pickerOpen = false;
+          emojiPickerOpen = !emojiPickerOpen;
         }}
         on:removeMedia={(ev) => { composer.removeItem(ev.detail.id); composerMedia = composer.toPayload().media ?? []; }}
         on:cancelEdit={() => {
@@ -427,13 +439,13 @@
           composerMedia = [];
           composer.reset();
           pickerOpen = false;
+          emojiPickerOpen = false;
           clearPendingReplies();
         }}
         placeholder="Message the global room..."
       />
     </div>
   </div>
-
   <UserTooltip
     user={tooltipUser}
     position={tooltipPos}
@@ -442,7 +454,6 @@
     on:viewProfile={openWallFromTooltip}
   />
 </div>
-
 {#if showMsgDelete && msgDeleteTarget}
   <ConfirmDialog
     title="Delete message?"
@@ -456,18 +467,15 @@
     }}
   />
 {/if}
-
 <style>
   .gc {
     --chat-pad-x: clamp(12px, 2.2vw, 32px);
     --chat-pad-y: clamp(12px, 1.8vw, 24px);
     --msg-gap: clamp(10px, 1.3vh, 16px);
   }
-
   .gc-scroll {
     padding: var(--chat-pad-y) var(--chat-pad-x);
   }
-
   @media (max-width: 639px) {
     .gc-input {
       position: fixed;
@@ -476,18 +484,15 @@
       bottom: calc(56px + env(safe-area-inset-bottom, 0px));
       z-index: 45;
     }
-
     .gc-list {
       padding-bottom: var(--composer-pad, 160px);
     }
   }
-
   @media (min-width: 640px) {
     .gc-input {
       position: static;
     }
   }
-
   .gc-inner {
     width: 100%;
   }

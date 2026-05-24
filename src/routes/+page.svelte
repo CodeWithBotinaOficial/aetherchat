@@ -12,6 +12,7 @@
   import { isRegistered, user } from '$lib/stores/userStore.js';
   import { loadFollowState } from '$lib/stores/wall/followState.js';
   import { clearExpired as clearKlipyExpired } from '$lib/services/klipy/index.js';
+  import { clearExpired as clearEmojiExpired } from '$lib/services/emojiHub/index.js';
 
   let cleanupTimer = null;
   let appReady = false;
@@ -143,6 +144,11 @@
     // Best-effort localStorage cleanup; never block boot.
     try {
       clearKlipyExpired();
+    } catch {
+      // ignore
+    }
+    try {
+      clearEmojiExpired();
     } catch {
       // ignore
     }

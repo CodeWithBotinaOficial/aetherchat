@@ -50,6 +50,7 @@
   /** @type {import('$lib/services/klipy/types.js').MessageMedia[]} */
   let composerMedia = [];
   let pickerOpen = false;
+  let emojiPickerOpen = false;
   let showActiveBanner = false;
   let bannerTimer = 0;
   let prevKeyState = '';
@@ -401,6 +402,7 @@
       bind:composerValue
       bind:composerMedia
       bind:pickerOpen
+      bind:emojiPickerOpen
       isEditingThisChat={isEditingThisChat}
       editLabel={editLabel}
       msgToBubble={msgToBubble}
@@ -430,7 +432,11 @@
         }
       }}
       onMediaRemove={(id) => { composer.removeItem(id); composerMedia = composer.toPayload().media ?? []; }}
-      onTogglePicker={() => { if (composerMedia.length >= 2) return; pickerOpen = !pickerOpen; }}
+      onTogglePicker={() => { if (composerMedia.length >= 2) return; emojiPickerOpen = false; pickerOpen = !pickerOpen; }}
+      onToggleEmojiPicker={() => {
+        pickerOpen = false;
+        emojiPickerOpen = !emojiPickerOpen;
+      }}
       onRequestDeleteConversation={requestDeleteConversation}
       onBack={closeChat}
     />

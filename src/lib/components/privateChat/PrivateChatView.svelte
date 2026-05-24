@@ -3,6 +3,7 @@
   import ChatInput from '$lib/components/ChatInput.svelte';
   import MessageBubble from '$lib/components/MessageBubble.svelte';
   import MediaPicker from '$lib/components/mediaPicker/MediaPicker.svelte';
+  import EmojiPickerSlot from '$lib/components/emojiPicker/EmojiPickerSlot.svelte';
 
   export let chat;
   export let listEl;
@@ -22,6 +23,7 @@
   /** @type {import('$lib/services/klipy/types.js').MessageMedia[]} */
   export let composerMedia = [];
   export let pickerOpen = false;
+  export let emojiPickerOpen = false;
   export let isEditingThisChat;
   export let editLabel;
 
@@ -39,8 +41,12 @@
   export let onMediaPick;
   export let onMediaRemove;
   export let onTogglePicker;
+  export let onToggleEmojiPicker;
   export let onRequestDeleteConversation;
   export let onBack;
+
+  /** @type {HTMLTextAreaElement|null} */
+  let textareaRef = null;
 </script>
 
 <div class="pc h-full flex flex-col bg-[var(--bg-base)]">
@@ -197,6 +203,9 @@
   </div>
 
   <div class="composer-wrap" title={inputDisabled ? 'Setting up encryption...' : ''}>
+    {#if emojiPickerOpen}
+      <EmojiPickerSlot bind:open={emojiPickerOpen} inputEl={textareaRef} />
+    {/if}
     {#if pickerOpen}
       <MediaPicker
         open={pickerOpen}
@@ -209,6 +218,7 @@
     <ChatInput
       disabled={inputDisabled}
       bind:value={composerValue}
+      bind:textareaRef
       mediaItems={composerMedia}
       mediaDisabled={composerMedia.length >= 2}
       mode={isEditingThisChat ? 'edit' : 'compose'}
@@ -217,8 +227,9 @@
       placeholder={inputPlaceholder}
       on:removePendingReply={(ev) => onRemovePendingReply(ev.detail.messageId)}
       on:jumpToOriginal={(ev) => onJumpToOriginal(ev.detail.messageId)}
-      on:send={onSend}
+      on:send={(ev) => { emojiPickerOpen = false; onSend?.(ev); }}
       on:toggleMediaPicker={onTogglePicker}
+      on:toggleEmojiPicker={onToggleEmojiPicker}
       on:removeMedia={(ev) => onMediaRemove?.(ev.detail.id)}
       on:cancelEdit={onCancelEdit}
     />
