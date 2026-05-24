@@ -2,6 +2,7 @@
   import { postWallComment } from '$lib/stores/wall/comments.js';
   import MediaPicker from '$lib/components/mediaPicker/MediaPicker.svelte';
   import MediaPreviewStrip from '$lib/components/mediaPicker/MediaPreviewStrip.svelte';
+  import EmojiPickerSlot from '$lib/components/emojiPicker/EmojiPickerSlot.svelte';
   import { createComposer } from '$lib/utils/mediaComposer.js';
   import { addRecentItem } from '$lib/stores/klipyRecents.js';
 
@@ -10,6 +11,9 @@
   /** @type {import('$lib/services/klipy/types.js').MessageMedia[]} */
   let mediaItems = [];
   let pickerOpen = false;
+  let emojiPickerOpen = false;
+  /** @type {HTMLTextAreaElement|null} */
+  let textareaRef = null;
 
   $: composer.setText(text);
   $: composer.setMedia(mediaItems);
@@ -20,6 +24,7 @@
 
   async function post() {
     if (!canPost) return;
+    emojiPickerOpen = false;
     const { text: rawText, media } = composer.toPayload();
     const body = String(rawText ?? '');
     const solo = body.trim().length === 0 && Array.isArray(media) && media.length > 0;
@@ -43,6 +48,7 @@
 </script>
 
 <div class="wrap">
+  <EmojiPickerSlot bind:open={emojiPickerOpen} inputEl={textareaRef} />
   <MediaPicker
     bind:open={pickerOpen}
     maxItems={2}
@@ -66,6 +72,7 @@
 
     <textarea
       class="ta"
+      bind:this={textareaRef}
       bind:value={text}
       rows="3"
       maxlength="500"
@@ -77,9 +84,23 @@
       <button
         type="button"
         class="media"
+        on:click={() => {
+          pickerOpen = false;
+          emojiPickerOpen = !emojiPickerOpen;
+        }}
+        aria-label="Open emoji picker"
+        title="Emoji"
+      >
+        <span class="emo" aria-hidden="true">😊</span>
+      </button>
+
+      <button
+        type="button"
+        class="media"
         disabled={mediaItems.length >= 2}
         on:click={() => {
           if (mediaItems.length >= 2) return;
+          emojiPickerOpen = false;
           pickerOpen = !pickerOpen;
         }}
         aria-label="Open media picker"
@@ -162,6 +183,11 @@
   .ico {
     height: 20px;
     width: 20px;
+  }
+
+  .emo {
+    font-size: 20px;
+    line-height: 1;
   }
 
   .counter {

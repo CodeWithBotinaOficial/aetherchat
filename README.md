@@ -13,6 +13,7 @@ AetherChat connects people across the globe using WebRTC (via PeerJS) so message
 - **Message replies + multi-quote**: reply to one or more messages at once (Global + Private), with clickable quote cards that jump to the original.
 - **Message edit + delete**: edit/delete your own messages (Global has a 30-minute window; Private has no time limit). Edited messages show an indicator; deleted messages are soft-deleted with a placeholder (IDs are preserved for quotes).
 - **Quote cascades**: if a cited message is edited or deleted, every message that quoted it updates its preview (or shows `[ Original message deleted ]` with no click behavior).
+- **Interactive media**: GIF/sticker picker (Klipy) and emoji picker (EmojiHub) available across chat and wall contexts.
 - **No centralized message server**: there is no backend that stores or processes chat content.
 - **Local-only identity**: profiles live in your browser storage; clearing site data resets identity and local history.
 - **Offline-first UX**: the UI loads and remains usable even when the network is unavailable (private messages and private edits can queue locally until encryption/session is ready).
@@ -24,6 +25,28 @@ AetherChat connects people across the globe using WebRTC (via PeerJS) so message
 - **Production-ready Cloudflare Pages config**: SPA fallback routing and security headers (`_redirects`, `_headers`).
 
 ---
+
+## 🎛️ Interactive Media
+
+### GIFs & Stickers (Klipy)
+
+- Access: GIF button in Global Chat, Private Chat, and Wall Comment inputs.
+- Tabs: GIFs, Stickers, Recents.
+- Search: keyword search.
+- Sending: media-only messages auto-send on click; stays open when text is present.
+- Limits: max 2 items per message.
+- Available in: Global Chat, Private Chat, Wall Comments.
+- Setup: see [.docs/setup/Klipy/SETUP.md](.docs/setup/Klipy/SETUP.md).
+
+### Emojis (EmojiHub)
+
+- Access: emoji button in Global Chat, Private Chat, Wall Comment inputs, and Profile Bio editor.
+- Categories: 8 EmojiHub categories + Recents tab.
+- Search: search by emoji name (client-side).
+- Insertion: click to insert at the current cursor position; picker stays open for multiple picks.
+- Available in: Global Chat, Private Chat, Wall Comments, Profile Bio.
+- No API key required.
+- Caching: EmojiHub API data is cached in localStorage for 24 hours to minimize requests.
 
 ## 🛠️ Tech Stack
 

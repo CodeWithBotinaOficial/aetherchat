@@ -13,6 +13,8 @@
   /** @type {import('$lib/services/klipy/types.js').MessageMedia[]} */
   export let mediaItems = [];
   export let mediaDisabled = false;
+  /** @type {HTMLTextAreaElement|null} */
+  export let textareaRef = null;
 
   const dispatch = createEventDispatcher();
 
@@ -58,6 +60,7 @@
     updateHeight();
   });
 
+  $: textareaRef = textarea;
   $: if (textarea) updateHeight();
 </script>
 
@@ -185,6 +188,17 @@
         Cancel
       </button>
     {/if}
+
+    <button
+      type="button"
+      class="emoji-btn h-[44px] w-[44px] grid place-items-center rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed"
+      disabled={disabled}
+      on:click={() => dispatch('toggleEmojiPicker')}
+      aria-label="Open emoji picker"
+      title="Emoji"
+    >
+      <span aria-hidden="true">😊</span>
+    </button>
 
     <button
       type="button"
