@@ -122,14 +122,16 @@ vi.mock('$lib/stores/chatStore.js', () => ({
   deleteMessage: (...args) => hoisted.deleteGlobalMessageMock(...args),
   cascadeUpdateCitations: (...args) => hoisted.cascadeGlobalCitationsMock(...args),
   persistMessagePatchWithCascade: (...args) => hoisted.persistGlobalPatchWithCascadeMock(...args),
-  GLOBAL_DELETED_PLACEHOLDER: '[ This message was deleted ]'
+  GLOBAL_DELETED_PLACEHOLDER: '[ This message was deleted ]',
+  globalMessages: { subscribe: vi.fn((run) => { run([]); return () => {}; }), set: vi.fn(), update: vi.fn() }
 }));
 
 vi.mock('$lib/services/db.js', () => {
   const globalMessages = {
     where: vi.fn(() => ({ equals: vi.fn(() => ({ toArray: vi.fn().mockResolvedValue([]), delete: vi.fn().mockResolvedValue(0) })) })),
     add: vi.fn().mockResolvedValue(0),
-    put: vi.fn().mockResolvedValue(0)
+    put: vi.fn().mockResolvedValue(0),
+    orderBy: vi.fn(() => ({ reverse: vi.fn(() => ({ limit: vi.fn(() => ({ toArray: vi.fn().mockResolvedValue([]) })) })) }))
   };
   const usernameRegistry = { add: vi.fn().mockResolvedValue(0), put: vi.fn().mockResolvedValue(0), where: vi.fn(() => ({ equals: vi.fn(() => ({ delete: vi.fn().mockResolvedValue(0) })) })) };
   const privateMessages = { get: vi.fn().mockResolvedValue(null), where: vi.fn(() => ({ equals: vi.fn(() => ({ toArray: vi.fn().mockResolvedValue([]) })) })) };

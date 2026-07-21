@@ -370,6 +370,7 @@ it('deleteChatFromStore clears activeChatId before removing from Map, deletes DB
 });
 
 it('deleteChatFromStore does not throw if DB delete fails', async () => {
+  const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
   const dbMod = await import('$lib/services/db.js');
   vi.spyOn(dbMod, 'deletePrivateChat').mockRejectedValueOnce(new Error('boom'));
 
@@ -400,6 +401,7 @@ it('deleteChatFromStore does not throw if DB delete fails', async () => {
   await expect(deleteChatFromStore('a:b')).resolves.toBeUndefined();
   expect(get(privateChatStore).activeChatId).toBeNull();
   expect(get(privateChatStore).chats.has('a:b')).toBe(false);
+  spy.mockRestore();
 });
 
 it('totalUnread derived store sums unreadCounts correctly', () => {
