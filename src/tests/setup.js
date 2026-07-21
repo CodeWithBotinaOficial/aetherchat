@@ -3,6 +3,17 @@ import 'fake-indexeddb/auto';
 import { webcrypto } from 'node:crypto';
 
 // jsdom doesn't guarantee Web Crypto or IndexedDB. We rely on both for unit tests.
+if (typeof globalThis.localStorage === 'undefined') {
+  globalThis.localStorage = {
+    _data: {},
+    getItem(key) { return Object.prototype.hasOwnProperty.call(this._data, key) ? this._data[key] : null; },
+    setItem(key, value) { this._data[key] = String(value); },
+    removeItem(key) { delete this._data[key]; },
+    clear() { this._data = {}; },
+    get length() { return Object.keys(this._data).length; },
+    key(i) { return Object.keys(this._data)[i] || null; }
+  };
+}
 if (!globalThis.crypto?.subtle) {
   globalThis.crypto = webcrypto;
 }
