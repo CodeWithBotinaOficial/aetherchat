@@ -31,6 +31,8 @@ export class AetherChatDB extends Dexie {
   /** @type {Dexie.Table<{ id: 'cooldown', until: number }, string>} */ cooldown;
   /** @type {Dexie.Table<Follow, number>} */ follows;
   /** @type {Dexie.Table<WallComment, string>} */ wallComments;
+  /** @type {Dexie.Table<any, string>} */ imageAttachments;
+  /** @type {Dexie.Table<any, string>} */ imageTransfers;
 
   /**
    * @param {string} [name='AetherChatDB']
@@ -417,10 +419,30 @@ export class AetherChatDB extends Dexie {
           if (!Object.prototype.hasOwnProperty.call(m, 'media')) m.media = null;
         });
         await walls.toCollection().modify((c) => {
-          if (!Object.prototype.hasOwnProperty.call(c, 'media')) c.media = null;
-        });
-      });
-  }
-}
+           if (!Object.prototype.hasOwnProperty.call(c, 'media')) c.media = null;
+         });
+       });
 
-export const db = new AetherChatDB();
+    // Phase 19: add image transfer tables for P2P image transfers
+    this.version(19).stores({
+      users: 'id, username, createdAt',
+      globalMessages: 'id, timestamp, peerId, username',
+      privateChats: 'id, myPeerId, myUsername, theirPeerId, theirUsername, createdAt, lastActivity',
+      privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+      knownPeers: '++id, peerId, lastSeen, username',
+      usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+      peerIds: 'username, peerId',
+      queuedMessages: 'id, chatId, theirPeerId, timestamp',
+      queuedActions: 'id, chatId, theirPeerId, timestamp, kind',
+      sentMessagesPlaintext: 'id, chatId, timestamp',
+      sessionKeys: 'id, updatedAt',
+      cooldown: 'id',
+      follows: '++id, followerPeerId, targetPeerId, [followerPeerId+targetPeerId]',
+      wallComments: 'id, wallOwnerPeerId, authorPeerId, createdAt, [wallOwnerPeerId+authorPeerId], [wallOwnerPeerId+createdAt]',
+      imageAttachments: 'transferId, messageId, context, storedAt',
+      imageTransfers: 'transferId, messageId, senderPeerId, state, createdAt'
+    });
+   }
+ }
+
+ export const db = new AetherChatDB();

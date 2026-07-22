@@ -9,6 +9,7 @@ import * as usernames from './username.js';
 import * as globalMsg from './messaging.global.js';
 import * as privateMsg from './messaging.private.js';
 import * as social from './social.js';
+import * as imageTransfer from '../imageTransfer/receiver.js';
 
 /**
  * Router-only: validate + emit, then delegate by msg.type.
@@ -103,6 +104,21 @@ export async function handleMessage(msg, fromConn, profile) {
     }
     case 'WALL_DATA_RESPONSE':
       return await social.handleWallDataResponseMessage(msg);
+
+    case 'IMAGE_TRANSFER_START':
+      return await imageTransfer.handleTransferStart(msg.payload?.meta, msg.from.peerId, fromConn);
+    case 'IMAGE_TRANSFER_START_ACK':
+      return; // listener-driven (sender listens for this)
+    case 'IMAGE_TRANSFER_REJECTED':
+      return; // listener-driven (sender listens for this)
+    case 'IMAGE_CHUNK_ACK':
+      return; // listener-driven (sender listens for this)
+    case 'IMAGE_CHUNK_REQUEST':
+      return; // listener-driven (sender handles retransmission)
+    case 'IMAGE_TRANSFER_COMPLETE':
+      return await imageTransfer.handleTransferComplete(msg.payload?.transferId, msg.from.peerId, fromConn);
+    case 'IMAGE_TRANSFER_CANCELLED':
+      return await imageTransfer.handleTransferCancelled(msg.payload?.transferId);
 
     default:
       // Defensive: ignore unknown types.

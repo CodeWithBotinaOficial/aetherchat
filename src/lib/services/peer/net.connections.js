@@ -250,8 +250,21 @@ export function handleIncomingConnection(conn, profile) {
 
   conn.on('data', (data) => {
     (async () => {
-      await dispatchIncomingMessage(data, conn, effectiveProfile);
-    })().catch((err) => console.error('dispatchIncomingMessage failed', err));
+      // Handle binary chunks separately from JSON messages
+      if (data instanceof ArrayBuffer) {
+        try {
+          const { unframeChunk } = await import('$lib/services/imageTransfer/binary.js');
+          const { transferId, chunkIndex, totalChunks, data: chunkData } = unframeChunk(data);
+          const { handleChunk } = await import('$lib/services/imageTransfer/receiver.js');
+          await handleChunk(transferId, chunkIndex, totalChunks, chunkData, remotePeerId, conn);
+        } catch (err) {
+          console.error('handleImageChunk failed', err);
+        }
+      } else {
+        // JSON message
+        await dispatchIncomingMessage(data, conn, effectiveProfile);
+      }
+    })().catch((err) => console.error('Message handling failed', err));
   });
 
   conn.on('close', () => {
