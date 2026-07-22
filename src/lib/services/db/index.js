@@ -15,3 +15,7 @@ export * from './cooldown.db.js';
 
 export * from './follows.db.js';
 export * from './wallComments.db.js';
+
+export * from './imageAttachments.db.js';
+export * from './imageTransfers.db.js';
+
