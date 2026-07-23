@@ -1,8 +1,9 @@
 <script>
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
   import { slide, fade } from 'svelte/transition';
+  import { imageRecents } from '$lib/stores/imageRecents.js';
+  import { pickImageFiles } from '$lib/utils/imageFileInput.js';
   import ImageRecentStrip from './ImageRecentStrip.svelte';
-  import ImageGalleryGrid from './ImageGalleryGrid.svelte';
   import ImagePreviewPanel from './ImagePreviewPanel.svelte';
   
   export let open = false;
@@ -14,16 +15,46 @@
   
   /** @type {File[]} */
   let selectedFiles = [];
-  let showGallery = false;
-  
+  let hasRecentImages = false;
+  let isLoadingFiles = false;
+
+  $: hasRecentImages = $imageRecents.length > 0;
+
+  onMount(async () => {
+    // If picker opens and there are no recent images, trigger file picker immediately
+    const unsubscribe = imageRecents.subscribe((recents) => {
+      hasRecentImages = recents.length > 0;
+    });
+
+    return unsubscribe;
+  });
+
+  $: if (open && !hasRecentImages && !isLoadingFiles && selectedFiles.length === 0) {
+    // No recent images and picker just opened: trigger file picker immediately
+    triggerFilePickerImmediate();
+  }
+
   $: if (!open) {
     selectedFiles = [];
-    showGallery = false;
   } else if (preselectedFiles.length > 0) {
     selectedFiles = [...preselectedFiles];
     preselectedFiles = []; // Consume
   }
   
+  async function triggerFilePickerImmediate() {
+    isLoadingFiles = true;
+    try {
+      const { valid } = await pickImageFiles({ multiple: true, maxImages });
+      if (valid.length > 0) {
+        selectedFiles = [...valid];
+      }
+    } catch (err) {
+      console.error('Failed to pick images', err);
+    } finally {
+      isLoadingFiles = false;
+    }
+  }
+
   function handleToggleFile(ev) {
     const { file } = ev.detail;
     const index = selectedFiles.findIndex(f => 
@@ -42,16 +73,20 @@
     }
   }
   
-  function handleAddFiles(ev) {
-    const { files } = ev.detail;
-    const remaining = maxImages - selectedFiles.length;
-    const toAdd = files.slice(0, remaining);
-    if (toAdd.length > 0) {
-      selectedFiles = [...selectedFiles, ...toAdd];
-    }
-    // Automatically close gallery if we reached max after adding from device
-    if (selectedFiles.length >= maxImages) {
-      showGallery = false;
+  async function handleChooseFromDevice() {
+    isLoadingFiles = true;
+    try {
+      const remaining = maxImages - selectedFiles.length;
+      if (remaining <= 0) return;
+
+      const { valid } = await pickImageFiles({ multiple: true, maxImages: remaining });
+      if (valid.length > 0) {
+        selectedFiles = [...selectedFiles, ...valid];
+      }
+    } catch (err) {
+      console.error('Failed to pick images', err);
+    } finally {
+      isLoadingFiles = false;
     }
   }
   
@@ -72,9 +107,9 @@
   }
 </script>
 
-{#if open}
-  <div class="relative w-full border-t border-[var(--border)] bg-[var(--bg-surface)] overflow-hidden" style="max-height: 440px; display: flex; flex-direction: column;" transition:slide|local={{ duration: 200 }}>
-    
+{#if open && (hasRecentImages || selectedFiles.length > 0)}
+  <div class="relative w-full border-t border-[var(--border)] bg-[var(--bg-surface)] overflow-hidden" style="max-height: 380px; display: flex; flex-direction: column;" transition:slide|local={{ duration: 200 }}>
+
     <!-- Header -->
     <div class="flex items-center justify-between px-[var(--space-md)] py-[var(--space-sm)] border-b border-[var(--border)]">
       <h3 class="text-[var(--font-size-sm)] font-bold m-0 text-[var(--text-primary)]">Send Image</h3>
@@ -92,54 +127,61 @@
     </div>
     
     <div class="relative flex-1 overflow-y-auto overflow-x-hidden min-h-[160px]">
-      <!-- Recent Strip -->
-      <div class="py-[var(--space-xs)] border-b border-[var(--border)]">
-        <ImageRecentStrip 
-          {selectedFiles} 
-          {maxImages}
-          on:toggleFile={handleToggleFile}
-          on:browse={() => showGallery = true}
-        />
-      </div>
-      
-      <!-- Previews -->
+      <!-- Recent Strip (only if has recent images) -->
+      {#if hasRecentImages}
+        <div class="border-b border-[var(--border)]">
+          <ImageRecentStrip
+            {selectedFiles}
+            {maxImages}
+            on:toggleFile={handleToggleFile}
+          />
+
+          <!-- "Choose from device" button -->
+          <div class="p-[var(--space-md)] border-b border-[var(--border)]">
+            <button
+              type="button"
+              disabled={isLoadingFiles || selectedFiles.length >= maxImages}
+              class="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-overlay)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--font-size-sm)] text-[var(--text-primary)] font-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors flex items-center justify-center gap-[var(--space-xs)]"
+              on:click={handleChooseFromDevice}
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+              </svg>
+              Choose from device
+            </button>
+          </div>
+        </div>
+      {/if}
+
+      <!-- Selected images preview -->
       {#if selectedFiles.length > 0}
-        <div class="py-[var(--space-xs)]" transition:slide|local={{ duration: 150 }}>
-          <ImagePreviewPanel 
+        <div class="border-b border-[var(--border)]" transition:slide|local={{ duration: 150 }}>
+          <ImagePreviewPanel
             files={selectedFiles}
             on:remove={handleRemovePreview}
           />
         </div>
       {/if}
-      
-      <!-- Actions -->
-      <div class="p-[var(--space-md)] flex items-center justify-between border-t border-[var(--border)] mt-auto bg-[var(--bg-surface)]">
+    </div>
+
+    <!-- Bottom action bar -->
+    <div class="p-[var(--space-md)] flex items-center justify-between border-t border-[var(--border)] bg-[var(--bg-surface)]">
+      {#if selectedFiles.length > 0}
         <div class="text-[var(--font-size-xs)] text-[var(--text-muted)]">
           {selectedFiles.length} of {maxImages} selected
         </div>
-        
-        <button 
-          type="button"
-          class="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--accent)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-primary)] font-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-          disabled={selectedFiles.length === 0}
-          on:click={handleConfirm}
-        >
-          Send {selectedFiles.length > 0 ? selectedFiles.length : ''} image{#if selectedFiles.length !== 1}s{/if}
-        </button>
-      </div>
-      
-      <!-- Full gallery overlay -->
-      {#if showGallery}
-        <div class="absolute inset-0 z-10" transition:fade|local={{ duration: 150 }}>
-          <ImageGalleryGrid
-            {selectedFiles}
-            {maxImages}
-            on:toggleFile={handleToggleFile}
-            on:addFiles={handleAddFiles}
-            on:close={() => showGallery = false}
-          />
-        </div>
+      {:else}
+        <div></div>
       {/if}
+
+      <button
+        type="button"
+        class="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--accent)] px-[var(--space-md)] py-[var(--space-sm)] text-[var(--text-primary)] font-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+        disabled={selectedFiles.length === 0}
+        on:click={handleConfirm}
+      >
+        Send {selectedFiles.length > 0 ? selectedFiles.length : ''} image{#if selectedFiles.length !== 1}s{/if}
+      </button>
     </div>
   </div>
 {/if}

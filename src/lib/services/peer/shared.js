@@ -245,18 +245,30 @@ export function safeClose(conn) {
   }
 }
 
-export function broadcastToAll(envelope) {
+/**
+ * Returns array of all currently connected peer IDs.
+ * Safe to call even when peerStore is not initialized.
+ * @returns {string[]}
+ */
+export function getConnectedPeerIds() {
   const state = get(peerStore);
-  for (const entry of state.connectedPeers.values()) safeSend(entry.connection, envelope);
+  return [...state.connectedPeers.entries()]
+    .filter(([, entry]) => entry.connection?.open !== false)
+    .map(([peerId]) => peerId);
 }
 
+export function broadcastToAll(envelope) {
+   const state = get(peerStore);
+   for (const entry of state.connectedPeers.values()) safeSend(entry.connection, envelope);
+ }
+
 export function sendToPeer(peerId, envelope) {
-  const state = get(peerStore);
-  const entry = state.connectedPeers.get(peerId);
-  if (!entry) return;
-  if (entry.connection?.open === false) return;
-  safeSend(entry.connection, envelope);
-}
+   const state = get(peerStore);
+   const entry = state.connectedPeers.get(peerId);
+   if (!entry) return;
+   if (entry.connection?.open === false) return;
+   safeSend(entry.connection, envelope);
+ }
 
 export function flushGlobalOutbox() {
   const state = get(peerStore);
