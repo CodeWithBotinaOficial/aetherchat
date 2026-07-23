@@ -82,7 +82,7 @@ export async function sendImage(file, targetPeerIds, messageId, context, overrid
       transferId,
       messageId: meta.messageId,
       context: meta.context,
-      blob: file,
+      blob: new Blob([buffer], { type: meta.mimeType }),
       mimeType: meta.mimeType,
       filename: meta.filename,
       sizeBytes: meta.sizeBytes,
@@ -104,16 +104,16 @@ export async function sendImage(file, targetPeerIds, messageId, context, overrid
     }
 
     // Broadcast IMAGE_TRANSFER_START to all targets
+    const { ensureBinaryChannel } = await import('./binaryChannel.js');
     const profile = { username: 'system', color: '#000', dateOfBirth: null };
     const startMsg = buildMessage('IMAGE_TRANSFER_START', myPeerId, profile, { meta });
 
-    const conns = state.connectedPeers;
     const targetConns = [];
     for (const peerId of targets) {
-      const entry = conns.get(peerId);
-      if (entry?.connection?.open) {
-        targetConns.push({ peerId, conn: entry.connection });
-        safeSend(entry.connection, startMsg);
+      const conn = ensureBinaryChannel(peerId);
+      if (conn?.open) {
+        targetConns.push({ peerId, conn });
+        safeSend(conn, startMsg);
       }
     }
 
@@ -132,10 +132,13 @@ export async function sendImage(file, targetPeerIds, messageId, context, overrid
       }
     });
 
-    await new Promise((resolve) => {
-      setTimeout(resolve, CHUNK_TIMEOUT_MS);
-    });
-    unsubscribe();
+    try {
+      await new Promise((resolve) => {
+        setTimeout(resolve, CHUNK_TIMEOUT_MS);
+      });
+    } finally {
+      unsubscribe();
+    }
 
     if (acksReceived.size === 0) {
       await updateImageTransferState(transferId, 'failed', {

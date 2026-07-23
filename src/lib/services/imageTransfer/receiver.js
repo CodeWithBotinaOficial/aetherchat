@@ -152,17 +152,24 @@ export async function handleTransferComplete(transferId, senderPeerId, senderCon
     const id = String(transferId ?? '').trim();
     if (!id) return;
 
-    const chunks = getAssembledChunks(id);
-    if (chunks) {
-      // Already complete; nothing to do
-      return;
-    }
-
-    // Get transfer to check which chunks are missing
     const { getImageTransfer } = await import('$lib/services/db.js');
     const transfer = await getImageTransfer(id);
     if (!transfer) {
       console.warn(`handleTransferComplete: transfer ${id} not found`);
+      return;
+    }
+
+    if (transfer.state === 'complete') {
+      // Already complete, just ensure assembly is cleared
+      const { clearAssembly } = await import('./assemblyBuffer.js');
+      clearAssembly(id);
+      return;
+    }
+
+    const { getAssembledChunks } = await import('./assemblyBuffer.js');
+    const chunks = getAssembledChunks(id);
+    if (chunks) {
+      // It has chunks but state is not complete? Let handleChunk finish it.
       return;
     }
 

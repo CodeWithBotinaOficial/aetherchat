@@ -83,6 +83,16 @@ export async function getStaleTransfers(olderThanMs) {
   try {
     const ms = Number(olderThanMs);
     if (!Number.isFinite(ms) || ms <= 0) return [];
+    
+    // Clean up old completed/failed transfers first (older than 1 hour)
+    const ONE_HOUR = 60 * 60 * 1000;
+    const cleanupCutoff = Date.now() - ONE_HOUR;
+    await db.imageTransfers
+      .where('createdAt')
+      .below(cleanupCutoff)
+      .filter((t) => ['complete', 'failed', 'cancelled'].includes(t.state))
+      .delete();
+
     const cutoff = Date.now() - ms;
     const stuck = await db.imageTransfers
       .where('state')
