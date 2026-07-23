@@ -1,6 +1,5 @@
 <script>
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
-  import { get } from 'svelte/store';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { imageRecents } from '$lib/stores/imageRecents.js';
   import { getImageAttachment } from '$lib/services/db/imageAttachments.db.js';
@@ -14,7 +13,7 @@
   // Cache to store created File objects so reference equality works for selection
   const fileCache = new SvelteMap(); // transferId -> File
   let thumbnailUrls = {}; // transferId -> string|null
-  let isLoading = new SvelteSet(); // Set of transferIds currently loading
+  const isLoading = new SvelteSet(); // Set of transferIds currently loading
 
   onMount(async () => {
     // We still subscribe to imageRecents reactively in the template for the array,
@@ -22,9 +21,9 @@
     // Let's make a reactive statement that loads missing thumbnails, but doesn't recreate object URLs.
   });
 
-  $: {
-    for (const recent of $imageRecents) {
-      if (!thumbnailUrls.hasOwnProperty(recent.transferId) && !isLoading.has(recent.transferId)) {
+  function loadThumbnails(recents) {
+    for (const recent of recents) {
+      if (!Object.hasOwn(thumbnailUrls, recent.transferId) && !isLoading.has(recent.transferId)) {
         isLoading.add(recent.transferId);
         getImageAttachment(recent.transferId).then(attachment => {
           if (attachment?.blob) {
@@ -46,6 +45,8 @@
       }
     }
   }
+
+  $: loadThumbnails($imageRecents);
 
   onDestroy(() => {
     Object.values(thumbnailUrls).forEach(url => {
