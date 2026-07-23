@@ -30,6 +30,7 @@
 
   $: {
     if (open !== prevOpen) {
+      // eslint-disable-next-line no-useless-assignment
       prevOpen = open;
       if (open) {
         if (!hasRecentImages && !isLoadingFiles && selectedFiles.length === 0) {
