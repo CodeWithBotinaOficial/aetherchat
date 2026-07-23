@@ -5,37 +5,45 @@ import { mainPeer } from '$lib/services/peer/shared.js';
 const binaryChannels = new Map();
 
 export function ensureBinaryChannel(peerId) {
+  const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('firefox');
   const existing = binaryChannels.get(peerId);
   
   if (existing) {
-    if (existing.open) {
-      return existing;
+    const { conn, createdAt } = existing;
+    const age = Date.now() - createdAt;
+    
+    if (conn.open && age <= 30000 && !isFirefox) {
+      return conn;
     } else {
       binaryChannels.delete(peerId);
     }
   }
 
-  const state = get(peerStore);
-  let conn = state.connectedPeers.get(peerId)?.connection;
-
-  if (!conn || !conn.open) {
-    if (!mainPeer) throw new Error('Peer not initialized');
-    conn = mainPeer.connect(peerId);
+  let conn;
+  if (!isFirefox) {
+    const state = get(peerStore);
+    conn = state.connectedPeers.get(peerId)?.connection;
   }
 
-  binaryChannels.set(peerId, conn);
+  if (!conn || !conn.open || isFirefox) {
+    if (!mainPeer) throw new Error('Peer not initialized');
+    console.warn(`Creating fresh binary channel for ${peerId} (Firefox: ${isFirefox})`);
+    conn = mainPeer.connect(peerId, { reliable: true });
+  } else {
+    console.warn(`Reusing binary channel for ${peerId}`);
+  }
 
-  conn.on('close', () => {
-    if (binaryChannels.get(peerId) === conn) {
+  binaryChannels.set(peerId, { conn, createdAt: Date.now() });
+
+  const cleanup = () => {
+    const cached = binaryChannels.get(peerId);
+    if (cached && cached.conn === conn) {
       binaryChannels.delete(peerId);
     }
-  });
+  };
 
-  conn.on('error', () => {
-    if (binaryChannels.get(peerId) === conn) {
-      binaryChannels.delete(peerId);
-    }
-  });
+  conn.on('close', cleanup);
+  conn.on('error', cleanup);
 
   return conn;
 }

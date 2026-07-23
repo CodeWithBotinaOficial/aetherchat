@@ -108,13 +108,37 @@ export async function sendImage(file, targetPeerIds, messageId, context, overrid
     const profile = { username: 'system', color: '#000', dateOfBirth: null };
     const startMsg = buildMessage('IMAGE_TRANSFER_START', myPeerId, profile, { meta });
 
-    const targetConns = [];
-    for (const peerId of targets) {
+    const targetConnsPromises = targets.map(async (peerId) => {
       const conn = ensureBinaryChannel(peerId);
-      if (conn?.open) {
-        targetConns.push({ peerId, conn });
-        safeSend(conn, startMsg);
+      if (!conn) return null;
+
+      if (!conn.open) {
+        await new Promise((resolve) => {
+          let resolved = false;
+          const timeout = setTimeout(() => {
+            if (!resolved) { resolved = true; resolve(); }
+          }, 3000);
+          conn.on('open', () => {
+            if (!resolved) {
+              resolved = true;
+              clearTimeout(timeout);
+              resolve();
+            }
+          });
+        });
       }
+
+      if (conn.open) {
+        return { peerId, conn };
+      }
+      return null;
+    });
+
+    const targetConnsResults = await Promise.all(targetConnsPromises);
+    const targetConns = targetConnsResults.filter(Boolean);
+
+    for (const tc of targetConns) {
+      safeSend(tc.conn, startMsg);
     }
 
     if (targetConns.length === 0) {
