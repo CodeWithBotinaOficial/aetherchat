@@ -3,9 +3,11 @@
       import { user as userStore } from '$lib/stores/userStore.js';
 	  import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
 	  import { calculateAge, formatMessageTime } from '$lib/utils/time.js';
-	  import { previewText } from '$lib/utils/replies.js';
+    import { previewText } from '$lib/utils/replies.js';
     import { createSwipeToReply, SWIPE_THRESHOLD_PX } from '$lib/components/messageBubble/swipe.js';
     import MessageMedia from '$lib/components/mediaPicker/MessageMedia.svelte';
+    import ImageAttachmentView from '$lib/components/imagePicker/ImageAttachmentView.svelte';
+    import ImageLightbox from '$lib/components/imagePicker/ImageLightbox.svelte';
 
   /** @type {{ message: any, isOwn: boolean }} */
 	  export let message;
@@ -45,6 +47,16 @@
   let dragX = 0;
   let animatingBack = false;
   let suppressTap = false;
+
+  let lightboxImages = [];
+  let lightboxIndex = 0;
+  let showLightbox = false;
+
+  function handleOpenLightbox(ev) {
+    lightboxIndex = ev.detail.index;
+    lightboxImages = ev.detail.images;
+    showLightbox = true;
+  }
 
   function updateMqFlags() {
     isMobile = Boolean(mqMobile?.matches);
@@ -343,6 +355,13 @@
                   {message.text}
                 </div>
 
+                {#if Array.isArray(message.imageTransferIds) && message.imageTransferIds.length > 0}
+                  <ImageAttachmentView 
+                    transferIds={message.imageTransferIds}
+                    on:openLightbox={handleOpenLightbox}
+                  />
+                {/if}
+
                 <MessageMedia media={message?.media ?? null} username={displayUsername} />
 
                 <div class="time-row" title={new Date(message.timestamp).toLocaleString()}>
@@ -389,6 +408,14 @@
     {/if}
   </div>
 </div>
+
+{#if showLightbox}
+  <ImageLightbox
+    images={lightboxImages}
+    currentIndex={lightboxIndex}
+    on:close={() => showLightbox = false}
+  />
+{/if}
 
 <style>
   .bubble {

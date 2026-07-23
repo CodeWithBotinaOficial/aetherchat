@@ -13,6 +13,8 @@
   /** @type {import('$lib/services/klipy/types.js').MessageMedia[]} */
   export let mediaItems = [];
   export let mediaDisabled = false;
+  /** @type {File[]} */
+  export let imageFiles = [];
   /** @type {HTMLTextAreaElement|null} */
   export let textareaRef = null;
 
@@ -34,8 +36,9 @@
   function send() {
     const text = value.trim();
     const media = Array.isArray(mediaItems) && mediaItems.length > 0 ? mediaItems.slice(0, 2) : null;
-    if (!text && !media) return;
-    dispatch('send', { text, media, replies: Array.isArray(pendingReplies) ? pendingReplies : [] });
+    const images = Array.isArray(imageFiles) && imageFiles.length > 0 ? imageFiles.slice(0, 4) : null;
+    if (!text && !media && !images) return;
+    dispatch('send', { text, media, imageFiles: images, replies: Array.isArray(pendingReplies) ? pendingReplies : [] });
     value = '';
     updateHeight();
   }
@@ -54,7 +57,7 @@
   }
 
   $: showCounter = value.length >= Math.floor(maxLength * 0.8);
-  $: canSend = !disabled && (value.trim().length > 0 || (Array.isArray(mediaItems) && mediaItems.length > 0));
+  $: canSend = !disabled && (value.trim().length > 0 || (Array.isArray(mediaItems) && mediaItems.length > 0) || (Array.isArray(imageFiles) && imageFiles.length > 0));
 
   onMount(() => {
     updateHeight();
@@ -203,7 +206,7 @@
     <button
       type="button"
       class="media-btn h-[44px] w-[44px] grid place-items-center rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed"
-      disabled={disabled || mediaDisabled}
+      disabled={disabled || mediaDisabled || imageFiles.length > 0}
       on:click={() => dispatch('toggleMediaPicker')}
       aria-label="Open media picker"
       title="GIFs & Stickers"
@@ -212,6 +215,21 @@
         <path
           d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5Zm2 0v14h12V5H6Zm2 3h8v2H8V8Zm0 4h5v2H8v-2Z"
         />
+      </svg>
+    </button>
+
+    <button
+      type="button"
+      class="image-btn h-[44px] w-[44px] grid place-items-center rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed"
+      disabled={disabled || mediaItems.length > 0}
+      on:click={() => dispatch('toggleImagePicker')}
+      aria-label="Attach Image"
+      title="Attach Image"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+        <circle cx="8.5" cy="8.5" r="1.5"></circle>
+        <polyline points="21 15 16 10 5 21"></polyline>
       </svg>
     </button>
 

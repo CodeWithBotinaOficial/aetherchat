@@ -1,0 +1,86 @@
+<script>
+  import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import { getImageAttachment } from '$lib/services/db/imageAttachments.db.js';
+
+  /** @type {string[]} */
+  export let transferIds = [];
+
+  const dispatch = createEventDispatcher();
+  
+  /** @type {Array<{ id: string, url: string, blob: Blob }>} */
+  let images = [];
+  let loading = true;
+  let error = false;
+  
+  onMount(async () => {
+    loading = true;
+    error = false;
+    
+    try {
+      if (Array.isArray(transferIds) && transferIds.length > 0) {
+        const promises = transferIds.map(async (id) => {
+          try {
+            const attachment = await getImageAttachment(id);
+            if (attachment && attachment.blob && attachment.blob.size > 0) {
+              const url = URL.createObjectURL(attachment.blob);
+              return { id, url, blob: attachment.blob };
+            }
+          } catch (e) {
+            console.error('Failed to load image attachment', id, e);
+          }
+          return null;
+        });
+        
+        const results = await Promise.all(promises);
+        images = results.filter(img => img !== null);
+      }
+    } catch (e) {
+      console.error('Error loading images', e);
+      error = true;
+    } finally {
+      loading = false;
+    }
+  });
+  
+  onDestroy(() => {
+    images.forEach(img => {
+      if (img.url) {
+        URL.revokeObjectURL(img.url);
+      }
+    });
+  });
+
+  function handleImageClick(index) {
+    dispatch('openLightbox', { index, images });
+  }
+</script>
+
+{#if loading}
+  <div class="mt-[var(--space-xs)] grid grid-cols-2 gap-[var(--space-xs)] animate-pulse">
+    {#each transferIds as id}
+      <div class="bg-[var(--bg-overlay)] aspect-square rounded-[var(--radius-sm)] w-full"></div>
+    {/each}
+  </div>
+{:else if error || (images.length === 0 && transferIds.length > 0)}
+  <div class="mt-[var(--space-xs)] text-[var(--font-size-xs)] text-[var(--text-muted)] italic p-[var(--space-sm)] bg-[var(--bg-elevated)] rounded-[var(--radius-sm)] border border-[var(--border)]">
+    Failed to load {transferIds.length} image{transferIds.length === 1 ? '' : 's'}
+  </div>
+{:else if images.length > 0}
+  <div class={`mt-[var(--space-xs)] grid gap-[var(--space-xs)] ${images.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+    {#each images as img, i}
+      <button 
+        type="button"
+        class="relative bg-[var(--bg-elevated)] rounded-[var(--radius-sm)] overflow-hidden cursor-pointer group border border-[var(--border)] p-0 m-0 w-full aspect-square text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        on:click|stopPropagation={() => handleImageClick(i)}
+      >
+        <img 
+          src={img.url} 
+          alt="Attachment" 
+          class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+          loading="lazy"
+        />
+        <div class="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors duration-200"></div>
+      </button>
+    {/each}
+  </div>
+{/if}

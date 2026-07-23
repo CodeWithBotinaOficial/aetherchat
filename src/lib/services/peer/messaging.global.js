@@ -13,14 +13,15 @@ import { getGlobalMessage } from '$lib/services/db.js';
 import { GLOBAL_EDIT_WINDOW_MS } from './config.js';
 import { avatarCache, buildMessage, pendingGlobalActionOutbox, pendingGlobalOutbox, safeSend } from './shared.js';
 
-export async function broadcastGlobalMessage(text, media = null, profile, replies = null) {
+export async function broadcastGlobalMessage(text, media = null, profile, replies = null, imageTransferIds = null) {
   const state = get(peerStore);
   const id = state.peerId;
   if (!id) return;
 
   const trimmed = String(text ?? '').trim();
   const safeMedia = Array.isArray(media) && media.length > 0 ? media.slice(0, 2) : null;
-  if (!trimmed && !safeMedia) return;
+  const safeImageTransferIds = Array.isArray(imageTransferIds) && imageTransferIds.length > 0 ? imageTransferIds.slice(0, 4) : null;
+  if (!trimmed && !safeMedia && !safeImageTransferIds) return;
 
   const msgId = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `m-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const timestamp = Date.now();
@@ -33,6 +34,7 @@ export async function broadcastGlobalMessage(text, media = null, profile, replie
     color: profile.color,
     text: trimmed,
     media: safeMedia,
+    imageTransferIds: safeImageTransferIds,
     replies: Array.isArray(replies) && replies.length > 0 ? replies : null,
     timestamp
   };
@@ -50,14 +52,15 @@ export async function broadcastGlobalMessage(text, media = null, profile, replie
   for (const entry of openPeers) safeSend(entry.connection, envelope);
 }
 
-export async function broadcastGlobalMessageEdit(messageId, text, media = null, profile, replies = null) {
+export async function broadcastGlobalMessageEdit(messageId, text, media = null, profile, replies = null, imageTransferIds = null) {
   const id = String(messageId ?? '').trim();
   if (!id) return;
   if (!profile?.username || profile.username === 'pre-registration') return;
 
   const trimmed = String(text ?? '').trim();
   const safeMedia = Array.isArray(media) && media.length > 0 ? media.slice(0, 2) : null;
-  if (!trimmed && !safeMedia) return;
+  const safeImageTransferIds = Array.isArray(imageTransferIds) && imageTransferIds.length > 0 ? imageTransferIds.slice(0, 4) : null;
+  if (!trimmed && !safeMedia && !safeImageTransferIds) return;
 
   const original = await getGlobalMessage(id);
   if (!original) return;
@@ -68,11 +71,11 @@ export async function broadcastGlobalMessageEdit(messageId, text, media = null, 
   const editedAt = Date.now();
   const safeReplies = Array.isArray(replies) && replies.length > 0 ? replies : null;
 
-  updateGlobalMessageInStore(id, { text: trimmed, editedAt, replies: safeReplies, media: safeMedia }, profile.username);
+  updateGlobalMessageInStore(id, { text: trimmed, editedAt, replies: safeReplies, media: safeMedia, imageTransferIds: safeImageTransferIds }, profile.username);
   cascadeGlobalCitations(id, { newSnapshot: trimmed });
   await persistGlobalPatchWithCascade(
     id,
-    { text: trimmed, editedAt, replies: safeReplies, media: safeMedia },
+    { text: trimmed, editedAt, replies: safeReplies, media: safeMedia, imageTransferIds: safeImageTransferIds },
     { cascadeFromText: trimmed }
   );
 
@@ -84,7 +87,7 @@ export async function broadcastGlobalMessageEdit(messageId, text, media = null, 
     'GLOBAL_MSG_EDIT',
     myPeerId,
     profile,
-    { messageId: id, text: trimmed, media: safeMedia, replies: safeReplies, editedAt },
+    { messageId: id, text: trimmed, media: safeMedia, imageTransferIds: safeImageTransferIds, replies: safeReplies, editedAt },
     Date.now()
   );
 
@@ -130,7 +133,8 @@ export async function handleIncomingGlobalMessage(msg) {
   const safeText = typeof text === 'string' ? text.trim() : '';
   const replies = Array.isArray(incoming?.replies) ? incoming.replies : null;
   const media = Array.isArray(incoming?.media) && incoming.media.length > 0 ? incoming.media.slice(0, 2) : null;
-  if (!safeText && !media) return;
+  const imageTransferIds = Array.isArray(incoming?.imageTransferIds) && incoming.imageTransferIds.length > 0 ? incoming.imageTransferIds.slice(0, 4) : null;
+  if (!safeText && !media && !imageTransferIds) return;
 
   const incomingId = incoming?.id;
   const messageId =
@@ -149,6 +153,7 @@ export async function handleIncomingGlobalMessage(msg) {
     avatarBase64: get(avatarCache).get(msg.from.peerId) ?? null,
     text: safeText,
     media,
+    imageTransferIds,
     replies,
     timestamp: typeof incoming?.timestamp === 'number' ? incoming.timestamp : msg.timestamp
   });
@@ -159,9 +164,10 @@ export async function handleIncomingGlobalMessageEdit(msg) {
   const text = typeof msg.payload?.text === 'string' ? msg.payload.text.trim() : '';
   const replies = Array.isArray(msg.payload?.replies) ? msg.payload.replies : null;
   const media = Array.isArray(msg.payload?.media) && msg.payload.media.length > 0 ? msg.payload.media.slice(0, 2) : null;
+  const imageTransferIds = Array.isArray(msg.payload?.imageTransferIds) && msg.payload.imageTransferIds.length > 0 ? msg.payload.imageTransferIds.slice(0, 4) : null;
   const editedAt = typeof msg.payload?.editedAt === 'number' ? msg.payload.editedAt : null;
   if (!id) return;
-  if (!text && !media) return;
+  if (!text && !media && !imageTransferIds) return;
 
   const original = await getGlobalMessage(id);
   if (!original) return;
@@ -170,13 +176,13 @@ export async function handleIncomingGlobalMessageEdit(msg) {
   const originalTs = typeof original.timestamp === 'number' ? original.timestamp : 0;
   if (Date.now() - originalTs > GLOBAL_EDIT_WINDOW_MS) return;
 
-  updateGlobalMessageInStore(id, { text, editedAt: editedAt ?? Date.now(), replies, media }, msg.from.username);
+  updateGlobalMessageInStore(id, { text, editedAt: editedAt ?? Date.now(), replies, media, imageTransferIds }, msg.from.username);
   cascadeGlobalCitations(id, { newSnapshot: text });
 
   try {
     await persistGlobalPatchWithCascade(
       id,
-      { text, editedAt: editedAt ?? Date.now(), replies, media },
+      { text, editedAt: editedAt ?? Date.now(), replies, media, imageTransferIds },
       { cascadeFromText: text }
     );
   } catch (err) {

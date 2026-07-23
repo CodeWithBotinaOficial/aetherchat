@@ -10,6 +10,7 @@ AetherChat connects people across the globe using WebRTC (via PeerJS) so message
 
 - **Global Chat**: real-time public chat shared peer-to-peer between connected browsers.
 - **Private Chats (E2EE)**: end-to-end encrypted 1-to-1 messaging using ECDH (P-256) + HKDF-SHA256 + AES-GCM (256-bit).
+- **P2P Image Transfer**: send and receive images directly between peers without server storage, securely encrypted in private chats.
 - **Message replies + multi-quote**: reply to one or more messages at once (Global + Private), with clickable quote cards that jump to the original.
 - **Message edit + delete**: edit/delete your own messages (Global has a 30-minute window; Private has no time limit). Edited messages show an indicator; deleted messages are soft-deleted with a placeholder (IDs are preserved for quotes).
 - **Quote cascades**: if a cited message is edited or deleted, every message that quoted it updates its preview (or shows `[ Original message deleted ]` with no click behavior).
