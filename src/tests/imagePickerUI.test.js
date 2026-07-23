@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, waitFor } from '@testing-library/svelte';
-import { get } from 'svelte/store';
 import ImagePickerItem from '$lib/components/imagePicker/ImagePickerItem.svelte';
 import ImageAttachmentView from '$lib/components/imagePicker/ImageAttachmentView.svelte';
 import { getConnectedPeerIds } from '$lib/services/peer/shared.js';
@@ -139,7 +138,7 @@ describe('ImagePicker UI Components', () => {
   });
 
   describe('ImagePicker UX Flow', () => {
-    it('"Send X image(s)" button is disabled when no images selected', async () => {
+    it('ImagePicker UX Flow', () => {
       const mockConn = { open: true, send: vi.fn() };
       peerStore.set({
         peerId: 'myPeerId',
@@ -154,7 +153,7 @@ describe('ImagePicker UI Components', () => {
         connectedPeers: new Map([['peer1', { connection: mockConn, username: 'user1', color: '#fff', dateOfBirth: null }]])
       });
 
-      const { queryByText } = render(ImagePickerItem, {
+      render(ImagePickerItem, {
         props: { blob: new Blob(), selected: false, disabled: false }
       });
 
