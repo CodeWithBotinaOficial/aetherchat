@@ -28,13 +28,17 @@
     return unsubscribe;
   });
 
+  // eslint-disable-next-line svelte/infinite-reactive-loop
   $: if (open && !pickerWasJustOpened) {
-    // Only run once when picker opens
+    // Only run once when picker opens (guard prevents repeated execution)
     pickerWasJustOpened = true;
     if (!hasRecentImages && !isLoadingFiles && selectedFiles.length === 0) {
-      triggerFilePickerImmediate();
+      void triggerFilePickerImmediate();
     }
-  } else if (!open) {
+  }
+
+  // eslint-disable-next-line no-useless-assignment
+  $: if (!open) {
     // Reset state when picker closes
     pickerWasJustOpened = false;
     selectedFiles = [];
