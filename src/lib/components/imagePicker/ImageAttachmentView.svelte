@@ -58,7 +58,7 @@
       }
     } catch (e) {
       console.error('Error loading images', e);
-      statusMessage = 'Image unavailable';
+      statusMessage = 'Image not available';
     } finally {
       loading = false;
     }
@@ -91,7 +91,7 @@
 
     timeoutId = setTimeout(() => {
       if (images.length === 0) {
-        statusMessage = 'Image unavailable';
+        statusMessage = 'Image not available';
         if (unsubEvent) {
           unsubEvent();
           unsubEvent = null;

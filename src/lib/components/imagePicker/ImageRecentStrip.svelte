@@ -14,41 +14,38 @@
   const fileCache = new SvelteMap(); // transferId -> File
   let thumbnailUrls = {}; // transferId -> string|null
   const isLoading = new SvelteSet(); // Set of transferIds currently loading
+  let unsubscribe;
 
-  onMount(async () => {
-    // We still subscribe to imageRecents reactively in the template for the array,
-    // but we can load thumbnails here. Actually, imageRecents can change over time.
-    // Let's make a reactive statement that loads missing thumbnails, but doesn't recreate object URLs.
+  onMount(() => {
+    unsubscribe = imageRecents.subscribe(recents => {
+      for (const recent of recents) {
+        if (!Object.hasOwn(thumbnailUrls, recent.transferId) && !isLoading.has(recent.transferId)) {
+          isLoading.add(recent.transferId);
+          
+          getImageAttachment(recent.transferId).then(attachment => {
+            if (attachment?.blob) {
+              const url = URL.createObjectURL(attachment.blob);
+              thumbnailUrls[recent.transferId] = url;
+              const file = new File([attachment.blob], recent.filename || 'image.jpg', { type: recent.mimeType || attachment.blob.type });
+              file._sourceId = recent.transferId;
+              fileCache.set(recent.transferId, file);
+            } else {
+              thumbnailUrls[recent.transferId] = null;
+            }
+          }).catch(err => {
+            console.error('Failed to load recent image blob', err);
+            thumbnailUrls[recent.transferId] = null;
+          }).finally(() => {
+            isLoading.delete(recent.transferId);
+            thumbnailUrls = { ...thumbnailUrls }; // trigger reactivity
+          });
+        }
+      }
+    });
   });
 
-  function loadThumbnails(recents) {
-    for (const recent of recents) {
-      if (!Object.hasOwn(thumbnailUrls, recent.transferId) && !isLoading.has(recent.transferId)) {
-        isLoading.add(recent.transferId);
-        getImageAttachment(recent.transferId).then(attachment => {
-          if (attachment?.blob) {
-            thumbnailUrls[recent.transferId] = URL.createObjectURL(attachment.blob);
-            const file = new File([attachment.blob], recent.filename || 'image.jpg', { type: recent.mimeType || attachment.blob.type });
-            file._sourceId = recent.transferId;
-            fileCache.set(recent.transferId, file);
-          } else {
-            thumbnailUrls[recent.transferId] = null;
-          }
-          thumbnailUrls = { ...thumbnailUrls }; // trigger reactivity
-          isLoading.delete(recent.transferId);
-        }).catch(err => {
-          console.error('Failed to load recent image blob', err);
-          thumbnailUrls[recent.transferId] = null;
-          thumbnailUrls = { ...thumbnailUrls };
-          isLoading.delete(recent.transferId);
-        });
-      }
-    }
-  }
-
-  $: loadThumbnails($imageRecents);
-
   onDestroy(() => {
+    if (unsubscribe) unsubscribe();
     Object.values(thumbnailUrls).forEach(url => {
       if (url) URL.revokeObjectURL(url);
     });
