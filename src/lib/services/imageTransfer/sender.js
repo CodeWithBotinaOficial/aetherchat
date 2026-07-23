@@ -23,7 +23,7 @@ import { emitImageEvent } from './events.js';
  * @param {string} context - 'global' | 'private' | 'wall'
  * @returns {Promise<{ transferId: string, meta: import('./types.js').ImageMeta }>}
  */
-export async function sendImage(file, targetPeerIds, messageId, context) {
+export async function sendImage(file, targetPeerIds, messageId, context, overrideTransferId = null) {
   try {
     // Validate file
     const validation = validateImageFile(file);
@@ -45,7 +45,7 @@ export async function sendImage(file, targetPeerIds, messageId, context) {
     const buffer = await fileToArrayBuffer(file);
 
     // Generate transfer ID
-    const transferId = globalThis.crypto?.randomUUID?.() || String(Date.now());
+    const transferId = overrideTransferId || globalThis.crypto?.randomUUID?.() || String(Date.now());
 
     // Build metadata
     const totalChunks = Math.ceil(buffer.byteLength / CHUNK_SIZE);
@@ -74,6 +74,21 @@ export async function sendImage(file, targetPeerIds, messageId, context) {
       receivedChunks: 0,
       totalChunks,
       createdAt: Date.now()
+    });
+
+    // Save image attachment locally for the sender
+    const { saveImageAttachment } = await import('$lib/services/db.js');
+    await saveImageAttachment({
+      transferId,
+      messageId: meta.messageId,
+      context: meta.context,
+      blob: file,
+      mimeType: meta.mimeType,
+      filename: meta.filename,
+      sizeBytes: meta.sizeBytes,
+      width: meta.width,
+      height: meta.height,
+      storedAt: Date.now()
     });
 
     // Filter and validate target peers
@@ -215,7 +230,6 @@ async function sendChunksToPeer(transferId, meta, buffer, peerId, conn, _profile
 
   // Track which chunks the peer has ACKed
   const ackedChunks = new Set();
-  let listeningForAcks = false;
 
   const handleAck = (msg) => {
     if (msg.payload?.transferId === transferId && msg.from.peerId === peerId) {
@@ -223,7 +237,7 @@ async function sendChunksToPeer(transferId, meta, buffer, peerId, conn, _profile
     }
   };
 
-  let unsubscribe = () => {};
+  const unsubscribe = onMessage('IMAGE_CHUNK_ACK', handleAck);
 
   try {
     for (let chunkIndex = 0; chunkIndex < meta.totalChunks; chunkIndex++) {
@@ -231,12 +245,6 @@ async function sendChunksToPeer(transferId, meta, buffer, peerId, conn, _profile
       const start = chunkIndex * CHUNK_SIZE;
       const end = Math.min(start + CHUNK_SIZE, buffer.byteLength);
       const chunkData = buffer.slice(start, end);
-
-      // Start listening for ACKs (only once)
-      if (!listeningForAcks) {
-        unsubscribe = onMessage('IMAGE_CHUNK_ACK', handleAck);
-        listeningForAcks = true;
-      }
 
       // Send with retries
       let retries = 0;

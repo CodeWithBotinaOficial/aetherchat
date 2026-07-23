@@ -120,6 +120,25 @@ export async function handleMessage(msg, fromConn, profile) {
     case 'IMAGE_TRANSFER_CANCELLED':
       return await imageTransfer.handleTransferCancelled(msg.payload?.transferId);
 
+    case 'IMAGE_REQUEST': {
+      const { getImageAttachment, getImageTransfer } = await import('$lib/services/db.js');
+      const transferId = msg.payload?.transferId;
+      if (!transferId) return;
+
+      const attachment = await getImageAttachment(transferId);
+      const transfer = await getImageTransfer(transferId);
+
+      if (attachment?.blob && transfer?.meta) {
+        const { sendImage } = await import('../imageTransfer/sender.js');
+        const file = new File([attachment.blob], transfer.meta.filename || 'image.jpg', { type: transfer.meta.mimeType || attachment.blob.type });
+        // Use overrideTransferId to reuse the existing ID
+        sendImage(file, [msg.from.peerId], transfer.meta.messageId, transfer.meta.context, transferId).catch(err => {
+          console.error('Failed to send image on request', err);
+        });
+      }
+      return;
+    }
+
     default:
       // Defensive: ignore unknown types.
       return;

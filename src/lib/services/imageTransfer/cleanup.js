@@ -32,6 +32,12 @@ export async function cleanupStaleTransfers() {
       }
     }
 
+    // Delete old completed/failed transfers (older than 1 hour)
+    const OLD_TRANSFER_AGE_MS = 60 * 60 * 1000;
+    const { db } = await import('$lib/services/db/schema.js');
+    const oldCutoff = Date.now() - OLD_TRANSFER_AGE_MS;
+    await db.imageTransfers.where('createdAt').below(oldCutoff).delete();
+
     // Clean old attachments (older than 30 days)
     const ATTACHMENT_AGE_MS = 30 * 24 * 60 * 60 * 1000;
     const deletedCount = await cleanOldImageAttachments(ATTACHMENT_AGE_MS);
