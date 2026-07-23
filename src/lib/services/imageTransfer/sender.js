@@ -5,7 +5,7 @@
  * and retries. Sends to multiple target peers concurrently (per-peer state tracking).
  */
 
-import { validateImageFile, getImageDimensions, fileToArrayBuffer, assembleChunks } from '$lib/utils/imageValidator.js';
+import { validateImageFile, getImageDimensions, fileToArrayBuffer } from '$lib/utils/imageValidator.js';
 import { saveImageTransfer, updateImageTransferState } from '$lib/services/db.js';
 import { frameChunk } from './binary.js';
 import { broadcastToAll, safeSend, onMessage, buildMessage } from '$lib/services/peer/shared.js';
@@ -209,7 +209,7 @@ export async function cancelOutgoingTransfer(transferId) {
  * @param {Object} profile
  * @returns {Promise<void>}
  */
-async function sendChunksToPeer(transferId, meta, buffer, peerId, conn, profile) {
+async function sendChunksToPeer(transferId, meta, buffer, peerId, conn, _profile) {
   const myPeerId = get(peerStore).peerId;
   if (!myPeerId) throw new Error('Local peer ID not available');
 

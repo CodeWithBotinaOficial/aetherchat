@@ -14,7 +14,8 @@ export async function saveGlobalMessage(msg) {
       ...msg,
       id,
       replies: Array.isArray(msg?.replies) && msg.replies.length > 0 ? msg.replies : null,
-      media: Array.isArray(msg?.media) && msg.media.length > 0 ? msg.media.slice(0, 2) : null
+      media: Array.isArray(msg?.media) && msg.media.length > 0 ? msg.media.slice(0, 2) : null,
+      imageTransferIds: Array.isArray(msg?.imageTransferIds) && msg.imageTransferIds.length > 0 ? msg.imageTransferIds.slice(0, 4) : null
     });
   } catch (err) {
     console.error('saveGlobalMessage failed', err);

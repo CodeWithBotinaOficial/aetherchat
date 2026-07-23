@@ -36,7 +36,7 @@ export async function cleanupStaleTransfers() {
     const ATTACHMENT_AGE_MS = 30 * 24 * 60 * 60 * 1000;
     const deletedCount = await cleanOldImageAttachments(ATTACHMENT_AGE_MS);
     if (deletedCount > 0) {
-      console.log(`Cleaned ${deletedCount} old image attachments`);
+      console.warn(`Cleaned ${deletedCount} old image attachments`);
     }
   } catch (err) {
     console.error('cleanupStaleTransfers failed', err);

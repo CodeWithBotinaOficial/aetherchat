@@ -226,6 +226,19 @@
         </li>
       </ul>
 
+      <h2 class="h2">5.7 IMAGE TRANSFERS (P2P)</h2>
+      <ul class="list">
+        <li>
+          AetherChat allows you to send images directly to other peers via WebRTC. Images are not uploaded to any central server; they are transferred peer-to-peer and stored in the local IndexedDB database of the sender and recipients.
+        </li>
+        <li>
+          You must not send images containing illegal content, including CSAM, as outlined in Section 5.1.
+        </li>
+        <li>
+          Images are subject to the same local data retention policies as messages and will be deleted from your device according to the schedule in Section 7.6.
+        </li>
+      </ul>
+
       <hr class="rule" />
 
       <h2 class="h2">6. DISCLAIMER OF LIABILITY FOR USER CONTENT</h2>

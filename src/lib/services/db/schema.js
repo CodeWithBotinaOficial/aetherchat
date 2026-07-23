@@ -442,7 +442,38 @@ export class AetherChatDB extends Dexie {
       imageAttachments: 'transferId, messageId, context, storedAt',
       imageTransfers: 'transferId, messageId, senderPeerId, state, createdAt'
     });
-   }
- }
 
- export const db = new AetherChatDB();
+    // Phase 20: add imageTransferIds to messages
+    this.version(20)
+      .stores({
+        users: 'id, username, createdAt',
+        globalMessages: 'id, timestamp, peerId, username',
+        privateChats: 'id, myPeerId, myUsername, theirPeerId, theirUsername, createdAt, lastActivity',
+        privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+        knownPeers: '++id, peerId, lastSeen, username',
+        usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+        peerIds: 'username, peerId',
+        queuedMessages: 'id, chatId, theirPeerId, timestamp',
+        queuedActions: 'id, chatId, theirPeerId, timestamp, kind',
+        sentMessagesPlaintext: 'id, chatId, timestamp',
+        sessionKeys: 'id, updatedAt',
+        cooldown: 'id',
+        follows: '++id, followerPeerId, targetPeerId, [followerPeerId+targetPeerId]',
+        wallComments: 'id, wallOwnerPeerId, authorPeerId, createdAt, [wallOwnerPeerId+authorPeerId], [wallOwnerPeerId+createdAt]',
+        imageAttachments: 'transferId, messageId, context, storedAt',
+        imageTransfers: 'transferId, messageId, senderPeerId, state, createdAt'
+      })
+      .upgrade(async (tx) => {
+        const globals = tx.table('globalMessages');
+        const privates = tx.table('privateMessages');
+        await globals.toCollection().modify((m) => {
+          if (!Object.prototype.hasOwnProperty.call(m, 'imageTransferIds')) m.imageTransferIds = null;
+        });
+        await privates.toCollection().modify((m) => {
+          if (!Object.prototype.hasOwnProperty.call(m, 'imageTransferIds')) m.imageTransferIds = null;
+        });
+      });
+  }
+}
+
+export const db = new AetherChatDB();

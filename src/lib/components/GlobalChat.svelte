@@ -26,6 +26,7 @@
   import { createComposer } from '$lib/utils/mediaComposer.js';
   import MediaPicker from '$lib/components/mediaPicker/MediaPicker.svelte';
   import EmojiPickerSlot from '$lib/components/emojiPicker/EmojiPickerSlot.svelte';
+  import ImagePicker from '$lib/components/imagePicker/ImagePicker.svelte';
   import ChatInput from '$lib/components/ChatInput.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import MessageBubble from '$lib/components/MessageBubble.svelte';
@@ -72,6 +73,9 @@
   let composerMedia = [];
   let pickerOpen = false;
   let emojiPickerOpen = false;
+  let imagePickerOpen = false;
+  /** @type {File[]} */
+  let imageFiles = [];
   /** @type {HTMLTextAreaElement|null} */
   let textareaRef = null;
   $: composer.setText(composerValue);
@@ -296,8 +300,10 @@
       editingMessageId.set(null);
       composerValue = '';
       composerMedia = [];
+      imageFiles = [];
       composer.reset();
       pickerOpen = false;
+      imagePickerOpen = false;
       clearPendingReplies();
     }
 
@@ -401,45 +407,74 @@
           on:close={() => (pickerOpen = false)}
         />
       {/if}
+      <ImagePicker
+        bind:open={imagePickerOpen}
+        maxImages={4}
+        on:confirm={(ev) => {
+          imageFiles = ev.detail.files;
+          if (!$editingMessageId && composerValue.trim().length === 0 && imageFiles.length > 0) {
+            onSend({ detail: { text: '', media: null, imageFiles, replies: $pendingReplies } }).then(() => {
+              composerValue = '';
+              imageFiles = [];
+              imagePickerOpen = false;
+            });
+          }
+        }}
+      />
       <ChatInput
         bind:value={composerValue}
         bind:textareaRef
         mediaItems={composerMedia}
-        mediaDisabled={composerMedia.length >= 2}
+        mediaDisabled={composerMedia.length >= 2 || imageFiles.length > 0}
+        imageFiles={imageFiles}
         mode={isEditing ? 'edit' : 'compose'}
         editLabel={editLabel}
         pendingReplies={$pendingReplies}
         on:removePendingReply={(ev) => removePendingReply(ev.detail.messageId)}
         on:jumpToOriginal={(ev) => scrollToAndHighlight(ev.detail.messageId)}
         on:send={async (ev) => {
-          const { text, media } = ev.detail ?? {};
+          const { text, media, imageFiles: outImageFiles } = ev.detail ?? {};
           // Delegate validation to the existing handler; it will no-op if invalid.
-          await onSend({ detail: { text, media, replies: ev?.detail?.replies } });
+          await onSend({ detail: { text, media, imageFiles: outImageFiles, replies: ev?.detail?.replies } });
           // Reset after send attempt (the handler only succeeds for valid payloads).
           composerValue = '';
           composerMedia = [];
+          imageFiles = [];
           composer.reset();
           emojiPickerOpen = false;
           // Keep picker open when sending text+media; close only for solo media.
-          if (String(text ?? '').trim().length === 0) pickerOpen = false;
+          if (String(text ?? '').trim().length === 0) {
+            pickerOpen = false;
+            imagePickerOpen = false;
+          }
         }}
         on:toggleMediaPicker={() => {
-          if (composerMedia.length >= 2) return;
+          if (composerMedia.length >= 2 || imageFiles.length > 0) return;
           emojiPickerOpen = false;
+          imagePickerOpen = false;
           pickerOpen = !pickerOpen;
         }}
         on:toggleEmojiPicker={() => {
           pickerOpen = false;
+          imagePickerOpen = false;
           emojiPickerOpen = !emojiPickerOpen;
+        }}
+        on:toggleImagePicker={() => {
+          if (composerMedia.length > 0) return;
+          emojiPickerOpen = false;
+          pickerOpen = false;
+          imagePickerOpen = !imagePickerOpen;
         }}
         on:removeMedia={(ev) => { composer.removeItem(ev.detail.id); composerMedia = composer.toPayload().media ?? []; }}
         on:cancelEdit={() => {
           editingMessageId.set(null);
           composerValue = '';
           composerMedia = [];
+          imageFiles = [];
           composer.reset();
           pickerOpen = false;
           emojiPickerOpen = false;
+          imagePickerOpen = false;
           clearPendingReplies();
         }}
         placeholder="Message the global room..."
