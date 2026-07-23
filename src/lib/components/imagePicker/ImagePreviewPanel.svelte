@@ -1,12 +1,13 @@
 <script>
   import { createEventDispatcher, onDestroy } from 'svelte';
+  import { SvelteMap } from 'svelte/reactivity';
   
   /** @type {File[]} */
   export let files = []; 
   
   const dispatch = createEventDispatcher();
   
-  let objectUrls = new Map(); // file -> url
+  const objectUrls = new SvelteMap(); // file -> url
   
   function getUrl(file) {
     if (!objectUrls.has(file)) {
@@ -38,14 +39,14 @@
   }
   
   function formatSize(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 </script>
 
 <div class="flex gap-[var(--space-sm)] overflow-x-auto p-[var(--space-sm)]">
-  {#each files as file, i}
+  {#each files as file, i (file.name + i)}
     <div class="relative flex flex-col items-center min-w-[120px] max-w-[120px]">
       <div class="relative w-[120px] h-[120px] rounded-[var(--radius-md)] overflow-hidden border border-[var(--border)] bg-[var(--bg-elevated)]">
         <img src={getUrl(file)} alt="Preview" class="w-full h-full object-cover" />

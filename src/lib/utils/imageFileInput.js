@@ -1,7 +1,7 @@
 import { validateImageFile } from '$lib/services/imageTransfer/index.js';
 import { SUPPORTED_IMAGE_TYPES } from '$lib/services/imageTransfer/types.js';
 
-let managedURLs = new Set();
+const managedURLs = new Set();
 
 /**
  * Opens a file input dialog and returns validated image Files.

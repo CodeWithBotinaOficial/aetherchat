@@ -13,8 +13,8 @@ export async function saveImageAttachment(attachment) {
     if (attachment.blob && typeof attachment.blob.arrayBuffer === 'function') {
       try {
         data = await attachment.blob.arrayBuffer();
-      } catch (err) {
-        console.error('Failed to read blob arrayBuffer', err);
+      } catch (_err) {
+        console.error('Failed to read blob arrayBuffer', _err);
         data = null;
       }
     }
@@ -53,7 +53,7 @@ export async function getImageAttachment(transferId) {
     if (rec.data && !(rec.data instanceof Blob)) {
       try {
         rec.blob = new Blob([rec.data], { type: rec.mimeType || 'application/octet-stream' });
-      } catch (err) {
+      } catch (_err) {
         // Fallback: empty blob
         rec.blob = new Blob([], { type: rec.mimeType || 'application/octet-stream' });
       }
@@ -83,7 +83,7 @@ export async function getImageAttachmentByMessageId(messageId) {
       if (rec.data && !(rec.data instanceof Blob)) {
         try {
           rec.blob = new Blob([rec.data], { type: rec.mimeType || 'application/octet-stream' });
-        } catch {
+        } catch (_err) {
           rec.blob = new Blob([], { type: rec.mimeType || 'application/octet-stream' });
         }
       } else if (rec.blob && rec.blob instanceof Blob) {

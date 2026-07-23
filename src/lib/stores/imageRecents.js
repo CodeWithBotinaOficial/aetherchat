@@ -17,7 +17,9 @@ function createStore() {
   if (typeof localStorage !== 'undefined') {
     try {
       initial = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
-    } catch (err) {}
+    } catch (err) {
+      console.warn('Failed to parse imageRecents from localStorage', err);
+    }
   }
 
   const { subscribe, update } = writable(initial);
@@ -34,7 +36,9 @@ function createStore() {
         if (typeof localStorage !== 'undefined') {
           try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-          } catch (err) {}
+          } catch (err) {
+            console.warn('Failed to write imageRecents to localStorage', err);
+          }
         }
         return next;
       });

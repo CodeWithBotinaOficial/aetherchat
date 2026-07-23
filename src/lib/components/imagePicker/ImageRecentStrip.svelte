@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { imageRecents } from '$lib/stores/imageRecents.js';
   import { getImageAttachment } from '$lib/services/db/imageAttachments.db.js';
   import ImagePickerItem from './ImagePickerItem.svelte';
@@ -11,8 +12,8 @@
   const dispatch = createEventDispatcher();
   
   // Cache to store created File objects so reference equality works for selection
-  let fileCache = new Map(); // transferId -> File
-  let loadingBlobs = new Set();
+  const fileCache = new SvelteMap(); // transferId -> File
+  const loadingBlobs = new SvelteSet();
   
   $: {
     for (const recent of $imageRecents) {
@@ -24,7 +25,6 @@
             // Tag the file so we know it came from here, helpful for UI matching
             file._sourceId = recent.transferId;
             fileCache.set(recent.transferId, file);
-            fileCache = fileCache; // trigger reactivity
           }
           loadingBlobs.delete(recent.transferId);
         }).catch(err => {

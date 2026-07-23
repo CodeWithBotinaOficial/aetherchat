@@ -1,5 +1,5 @@
 <script>
-  import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
   import { fade, scale } from 'svelte/transition';
 
   /** @type {Array<{ id: string, url: string, blob: Blob }>} */
@@ -13,6 +13,17 @@
   
   function handleClose() {
     dispatch('close');
+  }
+
+  function downloadImage() {
+    const current = images[currentIndex];
+    if (!current?.url) return;
+    const a = document.createElement('a');
+    a.href = current.url;
+    a.download = current.blob?.name || `image_${current.id}.jpg`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
   
   function next() {
@@ -50,6 +61,9 @@
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div 
+  role="dialog"
+  aria-modal="true"
+  aria-label="Image gallery lightbox"
   class="fixed inset-0 z-[100] bg-black/90 flex flex-col backdrop-blur-sm outline-none"
   transition:fade={{ duration: 200 }}
   on:click={handleClose}
@@ -58,16 +72,18 @@
   bind:this={lightboxEl}
 >
   <!-- Header -->
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div class="flex items-center justify-between p-[var(--space-md)] text-white absolute top-0 left-0 right-0 z-10" on:click|stopPropagation>
     <div class="text-[var(--font-size-sm)] font-bold">
       {currentIndex + 1} of {images.length}
     </div>
     
     <div class="flex items-center gap-[var(--space-sm)]">
-      <a 
-        href={images[currentIndex]?.url} 
-        download={`image_${images[currentIndex]?.id}.jpg`}
-        class="w-[44px] h-[44px] rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 text-white cursor-pointer transition-colors"
+      <button 
+        type="button"
+        class="w-[44px] h-[44px] rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 text-white cursor-pointer transition-colors border-none p-0"
+        on:click|stopPropagation={downloadImage}
         aria-label="Download image"
         title="Download"
       >
@@ -76,7 +92,7 @@
           <polyline points="7 10 12 15 17 10"></polyline>
           <line x1="12" y1="15" x2="12" y2="3"></line>
         </svg>
-      </a>
+      </button>
       
       <button 
         type="button"
@@ -93,6 +109,8 @@
   </div>
   
   <!-- Image Container -->
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div class="flex-1 flex items-center justify-center p-[var(--space-md)] overflow-hidden relative" on:click|stopPropagation>
     {#key currentIndex}
       <!-- svelte-ignore a11y-click-events-have-key-events -->

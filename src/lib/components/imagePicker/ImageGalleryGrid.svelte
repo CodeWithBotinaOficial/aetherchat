@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher, onMount } from 'svelte';
+  import { SvelteMap } from 'svelte/reactivity';
   import { db } from '$lib/services/db/schema.js';
   import { pickImageFiles } from '$lib/utils/imageFileInput.js';
   import ImagePickerItem from './ImagePickerItem.svelte';
@@ -11,7 +12,7 @@
   const dispatch = createEventDispatcher();
   
   let dbImages = [];
-  let fileCache = new Map(); // transferId -> File
+  const fileCache = new SvelteMap(); // transferId -> File
   
   onMount(async () => {
     try {

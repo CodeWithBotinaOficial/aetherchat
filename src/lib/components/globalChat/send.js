@@ -45,7 +45,6 @@ export async function handleGlobalChatSend(opts) {
   const msgId = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : String(Date.now());
 
   if (imageFiles.length > 0) {
-    const transferIds = [];
     // If peerId is set, it means we are in private chat (which is not handled by handleGlobalChatSend anyway)
     // Wait, globalChat is for everyone, so targetPeerIds = all open peers
     // Actually we need `peerStore` connected peers for sendImage.
@@ -57,7 +56,7 @@ export async function handleGlobalChatSend(opts) {
     if (targetPeerIds.length > 0 || !opts.peerId) { // !opts.peerId means we still want to save it locally
       const promises = imageFiles.map(async (file) => {
         try {
-          const { transferId, meta } = await sendImage(file, targetPeerIds, opts.editingMessageId || msgId, 'global');
+          const { transferId } = await sendImage(file, targetPeerIds, opts.editingMessageId || msgId, 'global');
           // Add to recents
           imageRecents.addImageRecent({
             transferId,

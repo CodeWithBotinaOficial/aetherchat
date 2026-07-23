@@ -57,7 +57,7 @@
 
 {#if loading}
   <div class="mt-[var(--space-xs)] grid grid-cols-2 gap-[var(--space-xs)] animate-pulse">
-    {#each transferIds as id}
+    {#each transferIds as _id (_id)}
       <div class="bg-[var(--bg-overlay)] aspect-square rounded-[var(--radius-sm)] w-full"></div>
     {/each}
   </div>
@@ -67,7 +67,7 @@
   </div>
 {:else if images.length > 0}
   <div class={`mt-[var(--space-xs)] grid gap-[var(--space-xs)] ${images.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-    {#each images as img, i}
+    {#each images as img, i (img.id)}
       <button 
         type="button"
         class="relative bg-[var(--bg-elevated)] rounded-[var(--radius-sm)] overflow-hidden cursor-pointer group border border-[var(--border)] p-0 m-0 w-full aspect-square text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
