@@ -88,50 +88,50 @@ export async function handleChunk(transferId, chunkIndex, totalChunks, data, sen
     const isComplete = receiveChunk(id, chunkIndex, data);
 
     if (isComplete) {
-      // All chunks received—assemble and save
-      const chunks = getAssembledChunks(id);
-      if (!chunks) {
-        console.error('handleChunk: assembled chunks is null');
+      try {
+        // All chunks received—assemble and save
+        const chunks = getAssembledChunks(id);
+        if (!chunks) {
+          console.error('handleChunk: assembled chunks is null');
+          return;
+        }
+
+        const { getImageTransfer, saveImageAttachment, updateImageTransferState } = await import('$lib/services/db.js');
+        const transfer = await getImageTransfer(id);
+        if (!transfer?.meta) {
+          console.error('handleChunk: transfer not found');
+          return;
+        }
+
+        const blob = assembleChunks(chunks, transfer.meta.mimeType);
+
+        // Save attachment
+        await saveImageAttachment({
+          transferId: id,
+          messageId: transfer.meta.messageId,
+          context: transfer.meta.context,
+          blob,
+          mimeType: transfer.meta.mimeType,
+          filename: transfer.meta.filename,
+          sizeBytes: transfer.meta.sizeBytes,
+          width: transfer.meta.width,
+          height: transfer.meta.height,
+          storedAt: Date.now()
+        });
+
+        // Update transfer state
+        await updateImageTransferState(id, 'complete', { completedAt: Date.now() });
+
+        // Emit event
+        emitImageEvent('imageReady', {
+          transferId: id,
+          messageId: transfer.meta.messageId,
+          context: transfer.meta.context
+        });
+      } finally {
+        // Clear assembly buffer
         clearAssembly(id);
-        return;
       }
-
-      const { getImageTransfer, saveImageAttachment, updateImageTransferState } = await import('$lib/services/db.js');
-      const transfer = await getImageTransfer(id);
-      if (!transfer?.meta) {
-        console.error('handleChunk: transfer not found');
-        clearAssembly(id);
-        return;
-      }
-
-      const blob = assembleChunks(chunks, transfer.meta.mimeType);
-
-      // Save attachment
-      await saveImageAttachment({
-        transferId: id,
-        messageId: transfer.meta.messageId,
-        context: transfer.meta.context,
-        blob,
-        mimeType: transfer.meta.mimeType,
-        filename: transfer.meta.filename,
-        sizeBytes: transfer.meta.sizeBytes,
-        width: transfer.meta.width,
-        height: transfer.meta.height,
-        storedAt: Date.now()
-      });
-
-      // Update transfer state
-      await updateImageTransferState(id, 'complete', { completedAt: Date.now() });
-
-      // Clear assembly buffer
-      clearAssembly(id);
-
-      // Emit event
-      emitImageEvent('imageReady', {
-        transferId: id,
-        messageId: transfer.meta.messageId,
-        context: transfer.meta.context
-      });
     }
   } catch (err) {
     console.error('handleChunk failed', err);

@@ -1,5 +1,6 @@
 <script>
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { imageRecents } from '$lib/stores/imageRecents.js';
   import { getImageAttachment } from '$lib/services/db/imageAttachments.db.js';
@@ -12,29 +13,45 @@
   
   // Cache to store created File objects so reference equality works for selection
   const fileCache = new SvelteMap(); // transferId -> File
-  const loadingBlobs = new SvelteSet();
-  const blobCache = new SvelteMap(); // transferId -> Blob
+  let thumbnailUrls = {}; // transferId -> string|null
+  let isLoading = new SvelteSet(); // Set of transferIds currently loading
+
+  onMount(async () => {
+    // We still subscribe to imageRecents reactively in the template for the array,
+    // but we can load thumbnails here. Actually, imageRecents can change over time.
+    // Let's make a reactive statement that loads missing thumbnails, but doesn't recreate object URLs.
+  });
 
   $: {
     for (const recent of $imageRecents) {
-      if (!fileCache.has(recent.transferId) && !loadingBlobs.has(recent.transferId)) {
-        loadingBlobs.add(recent.transferId);
+      if (!thumbnailUrls.hasOwnProperty(recent.transferId) && !isLoading.has(recent.transferId)) {
+        isLoading.add(recent.transferId);
         getImageAttachment(recent.transferId).then(attachment => {
-          if (attachment && attachment.blob) {
-            blobCache.set(recent.transferId, attachment.blob);
+          if (attachment?.blob) {
+            thumbnailUrls[recent.transferId] = URL.createObjectURL(attachment.blob);
             const file = new File([attachment.blob], recent.filename || 'image.jpg', { type: recent.mimeType || attachment.blob.type });
-            // Tag the file so we know it came from here, helpful for UI matching
             file._sourceId = recent.transferId;
             fileCache.set(recent.transferId, file);
+          } else {
+            thumbnailUrls[recent.transferId] = null;
           }
-          loadingBlobs.delete(recent.transferId);
+          thumbnailUrls = { ...thumbnailUrls }; // trigger reactivity
+          isLoading.delete(recent.transferId);
         }).catch(err => {
           console.error('Failed to load recent image blob', err);
-          loadingBlobs.delete(recent.transferId);
+          thumbnailUrls[recent.transferId] = null;
+          thumbnailUrls = { ...thumbnailUrls };
+          isLoading.delete(recent.transferId);
         });
       }
     }
   }
+
+  onDestroy(() => {
+    Object.values(thumbnailUrls).forEach(url => {
+      if (url) URL.revokeObjectURL(url);
+    });
+  });
   
   function handleToggle(recent) {
     const file = fileCache.get(recent.transferId);
@@ -47,11 +64,6 @@
     const cachedFile = fileCache.get(recent.transferId);
     if (!cachedFile) return false;
     return selectedFiles.some(f => f === cachedFile || f._sourceId === recent.transferId);
-  }
-
-  function getBlobUrl(transferId) {
-    const blob = blobCache.get(transferId);
-    return blob ? URL.createObjectURL(blob) : '';
   }
 </script>
 
@@ -73,16 +85,16 @@
         on:click={() => handleToggle(recent)}
         aria-label="Select image"
       >
-        {#if loadingBlobs.has(recent.transferId)}
+        {#if isLoading.has(recent.transferId)}
           <div class="absolute inset-0 bg-[var(--bg-elevated)] flex items-center justify-center">
             <svg class="w-4 h-4 animate-spin text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" opacity="0.2"></circle>
               <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
           </div>
-        {:else if fileCache.has(recent.transferId)}
+        {:else if thumbnailUrls[recent.transferId]}
           <img
-            src={getBlobUrl(recent.transferId)}
+            src={thumbnailUrls[recent.transferId]}
             alt={recent.filename || 'Image'}
             class="w-full h-full object-cover"
           />
