@@ -7,17 +7,17 @@ import { db } from './schema.js';
  */
 export async function saveImageAttachment(attachment) {
   try {
-    if (!attachment?.transferId) throw new Error('Missing transferId');
-    // Store binary data as ArrayBuffer for broad IndexedDB compatibility in tests
-    let data = null;
-    if (attachment.blob && typeof attachment.blob.arrayBuffer === 'function') {
-      try {
-        data = await attachment.blob.arrayBuffer();
-      } catch (_err) {
-        console.error('Failed to read blob arrayBuffer', _err);
-        data = null;
-      }
-    }
+     if (!attachment?.transferId) throw new Error('Missing transferId');
+     // Store binary data as ArrayBuffer for broad IndexedDB compatibility in tests
+     let data = null;
+     if (attachment.blob && typeof attachment.blob.arrayBuffer === 'function') {
+       try {
+         data = await attachment.blob.arrayBuffer();
+       } catch (err) {
+         console.error('Failed to read blob arrayBuffer', err);
+         data = null;
+       }
+     }
 
     await db.imageAttachments.put({
       transferId: attachment.transferId,
@@ -49,14 +49,14 @@ export async function getImageAttachment(transferId) {
     if (!key) return null;
     const rec = (await db.imageAttachments.get(key)) ?? null;
     if (!rec) return null;
-    // Reconstruct Blob if stored as ArrayBuffer
-    if (rec.data && !(rec.data instanceof Blob)) {
-      try {
-        rec.blob = new Blob([rec.data], { type: rec.mimeType || 'application/octet-stream' });
-      } catch (_err) {
-        // Fallback: empty blob
-        rec.blob = new Blob([], { type: rec.mimeType || 'application/octet-stream' });
-      }
+     // Reconstruct Blob if stored as ArrayBuffer
+     if (rec.data && !(rec.data instanceof Blob)) {
+       try {
+         rec.blob = new Blob([rec.data], { type: rec.mimeType || 'application/octet-stream' });
+       } catch {
+         // Fallback: empty blob
+         rec.blob = new Blob([], { type: rec.mimeType || 'application/octet-stream' });
+       }
     } else if (rec.blob && rec.blob instanceof Blob) {
       // already a Blob
     } else {
@@ -78,14 +78,14 @@ export async function getImageAttachmentByMessageId(messageId) {
   try {
     const id = String(messageId ?? '').trim();
     if (!id) return [];
-    const rows = await db.imageAttachments.where('messageId').equals(id).toArray();
-    return rows.map((rec) => {
-      if (rec.data && !(rec.data instanceof Blob)) {
-        try {
-          rec.blob = new Blob([rec.data], { type: rec.mimeType || 'application/octet-stream' });
-        } catch (_err) {
-          rec.blob = new Blob([], { type: rec.mimeType || 'application/octet-stream' });
-        }
+     const rows = await db.imageAttachments.where('messageId').equals(id).toArray();
+     return rows.map((rec) => {
+       if (rec.data && !(rec.data instanceof Blob)) {
+         try {
+           rec.blob = new Blob([rec.data], { type: rec.mimeType || 'application/octet-stream' });
+         } catch {
+           rec.blob = new Blob([], { type: rec.mimeType || 'application/octet-stream' });
+         }
       } else if (rec.blob && rec.blob instanceof Blob) {
         // ok
       } else {
