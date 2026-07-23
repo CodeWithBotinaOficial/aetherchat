@@ -17,7 +17,7 @@
   let selectedFiles = [];
   let hasRecentImages = false;
   let isLoadingFiles = false;
-  let pickerWasJustOpened = false;
+  let prevOpen = false;
 
   onMount(() => {
     // Track recent images changes
@@ -28,26 +28,22 @@
     return unsubscribe;
   });
 
-  // eslint-disable-next-line svelte/infinite-reactive-loop
-  $: if (open && !pickerWasJustOpened) {
-    // Only run once when picker opens (guard prevents repeated execution)
-    pickerWasJustOpened = true;
-    if (!hasRecentImages && !isLoadingFiles && selectedFiles.length === 0) {
-      void triggerFilePickerImmediate();
+  $: {
+    if (open !== prevOpen) {
+      prevOpen = open;
+      if (open) {
+        if (!hasRecentImages && !isLoadingFiles && selectedFiles.length === 0) {
+          setTimeout(triggerFilePickerImmediate, 0);
+        }
+      } else {
+        selectedFiles = [];
+      }
     }
   }
 
-  // eslint-disable-next-line no-useless-assignment
-  $: if (!open) {
-    // Reset state when picker closes
-    pickerWasJustOpened = false;
-    selectedFiles = [];
-  }
-
   $: if (preselectedFiles.length > 0 && open) {
-    // Handle preselected files
     selectedFiles = [...preselectedFiles];
-    preselectedFiles = []; // Consume
+    preselectedFiles = [];
   }
   
   async function triggerFilePickerImmediate() {
