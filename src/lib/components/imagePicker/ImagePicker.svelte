@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher, onMount } from 'svelte';
-  import { slide, fade } from 'svelte/transition';
+  import { slide } from 'svelte/transition';
   import { imageRecents } from '$lib/stores/imageRecents.js';
   import { pickImageFiles } from '$lib/utils/imageFileInput.js';
   import ImageRecentStrip from './ImageRecentStrip.svelte';
@@ -17,11 +17,10 @@
   let selectedFiles = [];
   let hasRecentImages = false;
   let isLoadingFiles = false;
+  let pickerWasJustOpened = false;
 
-  $: hasRecentImages = $imageRecents.length > 0;
-
-  onMount(async () => {
-    // If picker opens and there are no recent images, trigger file picker immediately
+  onMount(() => {
+    // Track recent images changes
     const unsubscribe = imageRecents.subscribe((recents) => {
       hasRecentImages = recents.length > 0;
     });
@@ -29,14 +28,20 @@
     return unsubscribe;
   });
 
-  $: if (open && !hasRecentImages && !isLoadingFiles && selectedFiles.length === 0) {
-    // No recent images and picker just opened: trigger file picker immediately
-    triggerFilePickerImmediate();
+  $: if (open && !pickerWasJustOpened) {
+    // Only run once when picker opens
+    pickerWasJustOpened = true;
+    if (!hasRecentImages && !isLoadingFiles && selectedFiles.length === 0) {
+      triggerFilePickerImmediate();
+    }
+  } else if (!open) {
+    // Reset state when picker closes
+    pickerWasJustOpened = false;
+    selectedFiles = [];
   }
 
-  $: if (!open) {
-    selectedFiles = [];
-  } else if (preselectedFiles.length > 0) {
+  $: if (preselectedFiles.length > 0 && open) {
+    // Handle preselected files
     selectedFiles = [...preselectedFiles];
     preselectedFiles = []; // Consume
   }

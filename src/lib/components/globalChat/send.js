@@ -1,10 +1,8 @@
 import { sendImage } from '$lib/services/imageTransfer/index.js';
 import { imageRecents } from '$lib/stores/imageRecents.js';
-import { get } from 'svelte/store';
 import { getConnectedPeerIds } from '$lib/services/peer/shared.js';
 import { saveImageAttachment } from '$lib/services/db/imageAttachments.db.js';
 import { fileToArrayBuffer, getImageDimensions } from '$lib/utils/imageValidator.js';
-import { CHUNK_SIZE } from '$lib/services/imageTransfer/types.js';
 
 /**
  * GlobalChat send handler extracted to keep the component small.
@@ -52,53 +50,34 @@ export async function handleGlobalChatSend(opts) {
      // Use helper to get connected peer IDs
      const targetPeerIds = getConnectedPeerIds();
 
-     const promises = imageFiles.map(async (file) => {
-       try {
-         // Send to peers (if any are connected)
-         let transferId = null;
-         let meta = null;
+      const promises = imageFiles.map(async (file) => {
+        try {
+          // Send to peers (if any are connected)
+          let transferId = null;
 
-         if (targetPeerIds.length > 0) {
-           const result = await sendImage(file, targetPeerIds, opts.editingMessageId || msgId, 'global');
-           transferId = result.transferId;
-           meta = result.meta;
-         } else {
-           // No peers connected: generate transferId locally but don't send
-           transferId = globalThis.crypto?.randomUUID?.() || String(Date.now());
-           const { width, height } = await getImageDimensions(file);
-           const buffer = await fileToArrayBuffer(file);
-           const totalChunks = Math.ceil(buffer.byteLength / CHUNK_SIZE);
+          if (targetPeerIds.length > 0) {
+            const result = await sendImage(file, targetPeerIds, opts.editingMessageId || msgId, 'global');
+            transferId = result.transferId;
+          } else {
+            // No peers connected: generate transferId locally but don't send
+            transferId = globalThis.crypto?.randomUUID?.() || String(Date.now());
+          }
 
-           meta = {
-             transferId,
-             filename: file.name,
-             mimeType: file.type,
-             sizeBytes: file.size,
-             totalChunks,
-             width,
-             height,
-             context: 'global',
-             messageId: opts.editingMessageId || msgId,
-             senderPeerId: 'local',
-             createdAt: Date.now()
-           };
-         }
-
-         // Save sender's own image to IndexedDB immediately (no waiting for P2P)
-         const buffer = await fileToArrayBuffer(file);
-         const { width, height } = await getImageDimensions(file);
-         await saveImageAttachment({
-           transferId,
-           messageId: opts.editingMessageId || msgId,
-           context: 'global',
-           blob: new Blob([buffer], { type: file.type }),
-           mimeType: file.type,
-           filename: file.name,
-           sizeBytes: file.size,
-           width,
-           height,
-           storedAt: Date.now()
-         });
+          // Save sender's own image to IndexedDB immediately (no waiting for P2P)
+          const buffer = await fileToArrayBuffer(file);
+          const { width, height } = await getImageDimensions(file);
+          await saveImageAttachment({
+            transferId,
+            messageId: opts.editingMessageId || msgId,
+            context: 'global',
+            blob: new Blob([buffer], { type: file.type }),
+            mimeType: file.type,
+            filename: file.name,
+            sizeBytes: file.size,
+            width,
+            height,
+            storedAt: Date.now()
+          });
 
          // Add to recents
          imageRecents.addImageRecent({
