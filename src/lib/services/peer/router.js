@@ -1,4 +1,5 @@
-import { validateProtocolMessage, emitMessage } from './shared.js';
+import { validateProtocolMessage, emitMessage, buildMessage, safeSend } from './shared.js';
+import { get } from 'svelte/store';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
 
 import * as net from './net.js';
@@ -10,6 +11,8 @@ import * as globalMsg from './messaging.global.js';
 import * as privateMsg from './messaging.private.js';
 import * as social from './social.js';
 import * as imageTransfer from '../imageTransfer/receiver.js';
+import { getImageAttachment, getImageTransfer } from '$lib/services/db.js';
+import { sendImage } from '../imageTransfer/sender.js';
 
 /**
  * Router-only: validate + emit, then delegate by msg.type.
@@ -138,7 +141,6 @@ export async function handleMessage(msg, fromConn, profile) {
       return await imageTransfer.handleTransferCancelled(msg.payload?.transferId);
 
     case 'IMAGE_REQUEST': {
-      const { getImageAttachment, getImageTransfer } = await import('$lib/services/db.js');
       const transferId = msg.payload?.transferId;
       if (!transferId) return;
 
@@ -161,10 +163,9 @@ export async function handleMessage(msg, fromConn, profile) {
           console.warn('ensureBinaryChannel failed for requester', msg.from.peerId, e);
         }
 
-        const { sendImage } = await import('../imageTransfer/sender.js');
         const file = new File([attachment.blob], transfer.meta.filename || 'image.jpg', { type: transfer.meta.mimeType || attachment.blob.type });
         // Use overrideTransferId to reuse the existing ID
-        sendImage(file, [msg.from.peerId], transfer.meta.messageId, transfer.meta.context, transferId).catch(err => {
+        sendImage(file, [msg.from.peerId], transfer.meta.messageId, transfer.meta.context, transferId).catch((err) => {
           console.error('Failed to send image on request', err);
         });
       }

@@ -6,7 +6,7 @@
  */
 
 import { validateImageFile, getImageDimensions, fileToArrayBuffer } from '$lib/utils/imageValidator.js';
-import { saveImageTransfer, updateImageTransferState } from '$lib/services/db.js';
+import { saveImageTransfer, updateImageTransferState, saveImageAttachment } from '$lib/services/db.js';
 import { frameChunk } from './binary.js';
 import { broadcastToAll, safeSend, onMessage, buildMessage } from '$lib/services/peer/shared.js';
 import { get } from 'svelte/store';
@@ -77,7 +77,6 @@ export async function sendImage(file, targetPeerIds, messageId, context, overrid
     });
 
     // Save image attachment locally for the sender
-    const { saveImageAttachment } = await import('$lib/services/db.js');
     await saveImageAttachment({
       transferId,
       messageId: meta.messageId,
@@ -308,9 +307,10 @@ async function sendChunksToPeer(transferId, meta, buffer, peerId, conn, _profile
             // Remove stale channel so future sends recreate it
             try {
               const mod = await import('./binaryChannel.js');
-              const cached = mod && mod.binaryChannels && mod.binaryChannels.get ? mod.binaryChannels.get(peerId) : null;
-            } catch (e) {
-              // ignore
+              // Trigger ensureBinaryChannel to recreate/remove stale entries as needed.
+              try { await mod.ensureBinaryChannel(peerId); } catch { /* ignored */ }
+            } catch {
+              // Intentionally ignored: best-effort cleanup
             }
             throw err;
           }

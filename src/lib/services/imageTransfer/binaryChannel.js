@@ -64,44 +64,59 @@ export async function probeChannel(conn, peerId, timeoutMs = 2000) {
 
   return await new Promise((resolve) => {
     let resolved = false;
+    let unsubscribe = null;
+    let timeout = null;
+
+    function cleanup() {
+      try {
+        if (typeof unsubscribe === 'function') unsubscribe();
+      } catch {
+        // Intentionally ignored: unsubscribe may not be available
+      }
+      try {
+        if (timeout) clearTimeout(timeout);
+      } catch {
+        // Intentionally ignored
+      }
+      // If probe failed, remove stale channel
+      try {
+        const cached = binaryChannels.get(peerId);
+        if (cached && cached.conn === conn) {
+          binaryChannels.delete(peerId);
+          try { conn.close(); } catch {
+            // Intentionally ignored: channel may already be closed
+          }
+        }
+      } catch {
+        // Intentionally ignored
+      }
+    }
+
     const onMsg = (msg) => {
       try {
         if (msg.type === 'IMAGE_PONG' && msg.payload?.nonce === nonce && msg.from.peerId === peerId) {
           if (!resolved) { resolved = true; cleanup(); resolve(true); }
         }
-      } catch (e) {
-        // ignore
+      } catch {
+        // Intentionally ignored
       }
     };
 
     // Temporary global listener via window message hub: rely on router emitting messages
     // Import onMessage dynamically to avoid cycles
     import('$lib/services/peer/shared.js').then((mod) => {
-      const unsubscribe = mod.onMessage('IMAGE_PONG', onMsg);
+      unsubscribe = mod.onMessage('IMAGE_PONG', onMsg);
 
-      const timeout = setTimeout(() => {
+      timeout = setTimeout(() => {
         if (!resolved) { resolved = true; cleanup(); resolve(false); }
       }, Number(timeoutMs) || 2000);
-
-      function cleanup() {
-        try { unsubscribe(); } catch (e) {}
-        try { clearTimeout(timeout); } catch (e) {}
-        // If probe failed, remove stale channel
-        try {
-          const cached = binaryChannels.get(peerId);
-          if (cached && cached.conn === conn) {
-            binaryChannels.delete(peerId);
-            try { conn.close(); } catch (e) {}
-          }
-        } catch (e) {}
-      }
 
       // Send ping
       try {
         const profile = { username: 'system', color: '#000', dateOfBirth: null };
         const msg = buildMessage('IMAGE_PING', myPeerId, profile, { nonce });
         safeSend(conn, msg);
-      } catch (e) {
+      } catch {
         cleanup();
         if (!resolved) { resolved = true; resolve(false); }
       }
@@ -122,7 +137,7 @@ function startChannelHeartbeat(peerId, conn) {
         const cached = binaryChannels.get(peerId);
         if (cached && cached.conn === conn) binaryChannels.delete(peerId);
       }
-    } catch (e) {
+    } catch {
       stopped = true;
       const cached = binaryChannels.get(peerId);
       if (cached && cached.conn === conn) binaryChannels.delete(peerId);
