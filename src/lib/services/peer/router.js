@@ -109,6 +109,23 @@ export async function handleMessage(msg, fromConn, profile) {
       return await imageTransfer.handleTransferStart(msg.payload?.meta, msg.from.peerId, fromConn);
     case 'IMAGE_TRANSFER_START_ACK':
       return; // listener-driven (sender listens for this)
+    case 'IMAGE_PING': {
+      // Respond to ping so probeChannel can verify binary channel is alive
+      try {
+        const state = get(peerStore);
+        const myPeerId = state.peerId;
+        if (!myPeerId) return;
+        const profile = { username: 'system', color: '#000', dateOfBirth: null };
+        const nonce = msg.payload?.nonce;
+        const resp = buildMessage('IMAGE_PONG', myPeerId, profile, { nonce });
+        safeSend(fromConn, resp);
+      } catch (e) {
+        console.error('Failed to respond to IMAGE_PING', e);
+      }
+      return;
+    }
+    case 'IMAGE_PONG':
+      return; // listener-driven (probeChannel listens for this)
     case 'IMAGE_TRANSFER_REJECTED':
       return; // listener-driven (sender listens for this)
     case 'IMAGE_CHUNK_ACK':
