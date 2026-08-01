@@ -129,6 +129,21 @@ export async function handleMessage(msg, fromConn, profile) {
       const transfer = await getImageTransfer(transferId);
 
       if (attachment?.blob && transfer?.meta) {
+        // Ensure we have a binary channel to the requesting peer before initiating send
+        try {
+          const mod = await import('../imageTransfer/binaryChannel.js');
+          const conn = mod.ensureBinaryChannel(msg.from.peerId);
+          if (conn && !conn.open) {
+            await new Promise((resolve) => {
+              let resolved = false;
+              const timeout = setTimeout(() => { if (!resolved) { resolved = true; resolve(); } }, 3000);
+              conn.on('open', () => { if (!resolved) { resolved = true; clearTimeout(timeout); resolve(); } });
+            });
+          }
+        } catch (e) {
+          console.warn('ensureBinaryChannel failed for requester', msg.from.peerId, e);
+        }
+
         const { sendImage } = await import('../imageTransfer/sender.js');
         const file = new File([attachment.blob], transfer.meta.filename || 'image.jpg', { type: transfer.meta.mimeType || attachment.blob.type });
         // Use overrideTransferId to reuse the existing ID

@@ -3,7 +3,7 @@
   import { getImageAttachment } from '$lib/services/db/imageAttachments.db.js';
   import { get } from 'svelte/store';
   import { peer as peerStore } from '$lib/stores/peerStore.js';
-  import { broadcastToAll, buildMessage, cachedProfile, userProfileRef } from '$lib/services/peer/shared.js';
+  import { broadcastToAll, buildMessage, cachedProfile, userProfileRef, getConnectedPeerIds } from '$lib/services/peer/shared.js';
   import { onImageEvent } from '$lib/services/imageTransfer/events.js';
 
   /** @type {string[]} */
@@ -64,24 +64,16 @@
     }
   }
 
-  function requestMissingImages() {
+  async function requestMissingImages() {
     const state = get(peerStore);
-    const hasOnlinePeers = Array.from(state.connectedPeers.values()).some(p => p.connection?.open);
+    const connected = getConnectedPeerIds();
 
-    if (!hasOnlinePeers) {
-      statusMessage = 'Image not available offline';
+    if (!connected || connected.length === 0) {
+      statusMessage = 'Image not available offline — connect to peers to load';
       return;
     }
 
-    statusMessage = 'Requesting image...';
-    const profile = userProfileRef || cachedProfile || { username: 'system', color: '#000', dateOfBirth: null };
-
-    // Broadcast request for each missing image
-    for (const id of transferIds) {
-      const msg = buildMessage('IMAGE_REQUEST', state.peerId, profile, { transferId: id });
-      broadcastToAll(msg);
-    }
-
+    // Register imageReady listener BEFORE sending requests so we don't miss events
     unsubEvent = onImageEvent('imageReady', (payload) => {
       if (transferIds.includes(payload.transferId)) {
         if (timeoutId) clearTimeout(timeoutId);
@@ -89,9 +81,41 @@
       }
     });
 
+    statusMessage = 'Requesting image from peers...';
+    const profile = userProfileRef || cachedProfile || { username: 'system', color: '#000', dateOfBirth: null };
+
+    // Ensure binary channel (and its on('data') handler) is registered for each connected peer
+    try {
+      const mod = await import('$lib/services/imageTransfer/binaryChannel.js');
+      const ensureBinaryChannel = mod.ensureBinaryChannel;
+      await Promise.all(connected.map(async (pid) => {
+        try {
+          const conn = ensureBinaryChannel(pid);
+          if (!conn) return;
+          if (!conn.open) {
+            await new Promise((resolve) => {
+              let resolved = false;
+              const timeout = setTimeout(() => { if (!resolved) { resolved = true; resolve(); } }, 3000);
+              conn.on('open', () => { if (!resolved) { resolved = true; clearTimeout(timeout); resolve(); } });
+            });
+          }
+        } catch (e) {
+          console.warn('ensureBinaryChannel failed for', pid, e);
+        }
+      }));
+    } catch (e) {
+      console.warn('Error ensuring binary channels', e);
+    }
+
+    // Broadcast request for each missing image
+    for (const id of transferIds) {
+      const msg = buildMessage('IMAGE_REQUEST', state.peerId, profile, { transferId: id });
+      broadcastToAll(msg);
+    }
+
     timeoutId = setTimeout(() => {
       if (images.length === 0) {
-        statusMessage = 'Image not available';
+        statusMessage = 'Image unavailable';
         if (unsubEvent) {
           unsubEvent();
           unsubEvent = null;
