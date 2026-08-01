@@ -1,4 +1,5 @@
-import { validateProtocolMessage, emitMessage } from './shared.js';
+import { validateProtocolMessage, emitMessage, buildMessage, safeSend } from './shared.js';
+import { get } from 'svelte/store';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
 
 import * as net from './net.js';
@@ -10,6 +11,8 @@ import * as globalMsg from './messaging.global.js';
 import * as privateMsg from './messaging.private.js';
 import * as social from './social.js';
 import * as imageTransfer from '../imageTransfer/receiver.js';
+import { getImageAttachment, getImageTransfer } from '$lib/services/db.js';
+import { sendImage } from '../imageTransfer/sender.js';
 
 /**
  * Router-only: validate + emit, then delegate by msg.type.
@@ -109,6 +112,23 @@ export async function handleMessage(msg, fromConn, profile) {
       return await imageTransfer.handleTransferStart(msg.payload?.meta, msg.from.peerId, fromConn);
     case 'IMAGE_TRANSFER_START_ACK':
       return; // listener-driven (sender listens for this)
+    case 'IMAGE_PING': {
+      // Respond to ping so probeChannel can verify binary channel is alive
+      try {
+        const state = get(peerStore);
+        const myPeerId = state.peerId;
+        if (!myPeerId) return;
+        const profile = { username: 'system', color: '#000', dateOfBirth: null };
+        const nonce = msg.payload?.nonce;
+        const resp = buildMessage('IMAGE_PONG', myPeerId, profile, { nonce });
+        safeSend(fromConn, resp);
+      } catch (e) {
+        console.error('Failed to respond to IMAGE_PING', e);
+      }
+      return;
+    }
+    case 'IMAGE_PONG':
+      return; // listener-driven (probeChannel listens for this)
     case 'IMAGE_TRANSFER_REJECTED':
       return; // listener-driven (sender listens for this)
     case 'IMAGE_CHUNK_ACK':
@@ -121,7 +141,6 @@ export async function handleMessage(msg, fromConn, profile) {
       return await imageTransfer.handleTransferCancelled(msg.payload?.transferId);
 
     case 'IMAGE_REQUEST': {
-      const { getImageAttachment, getImageTransfer } = await import('$lib/services/db.js');
       const transferId = msg.payload?.transferId;
       if (!transferId) return;
 
@@ -129,10 +148,24 @@ export async function handleMessage(msg, fromConn, profile) {
       const transfer = await getImageTransfer(transferId);
 
       if (attachment?.blob && transfer?.meta) {
-        const { sendImage } = await import('../imageTransfer/sender.js');
+        // Ensure we have a binary channel to the requesting peer before initiating send
+        try {
+          const mod = await import('../imageTransfer/binaryChannel.js');
+          const conn = mod.ensureBinaryChannel(msg.from.peerId);
+          if (conn && !conn.open) {
+            await new Promise((resolve) => {
+              let resolved = false;
+              const timeout = setTimeout(() => { if (!resolved) { resolved = true; resolve(); } }, 3000);
+              conn.on('open', () => { if (!resolved) { resolved = true; clearTimeout(timeout); resolve(); } });
+            });
+          }
+        } catch (e) {
+          console.warn('ensureBinaryChannel failed for requester', msg.from.peerId, e);
+        }
+
         const file = new File([attachment.blob], transfer.meta.filename || 'image.jpg', { type: transfer.meta.mimeType || attachment.blob.type });
         // Use overrideTransferId to reuse the existing ID
-        sendImage(file, [msg.from.peerId], transfer.meta.messageId, transfer.meta.context, transferId).catch(err => {
+        sendImage(file, [msg.from.peerId], transfer.meta.messageId, transfer.meta.context, transferId).catch((err) => {
           console.error('Failed to send image on request', err);
         });
       }

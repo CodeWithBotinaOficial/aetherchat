@@ -6,6 +6,7 @@
  */
 
 import { initAssembly, receiveChunk, getAssembledChunks, clearAssembly } from './assemblyBuffer.js';
+import { getImageTransfer, saveImageAttachment, updateImageTransferState, saveImageTransfer } from '$lib/services/db.js';
 import { assembleChunks } from '$lib/utils/imageValidator.js';
 import { emitImageEvent } from './events.js';
 import { buildMessage, safeSend } from '$lib/services/peer/shared.js';
@@ -45,7 +46,6 @@ export async function handleTransferStart(meta, senderPeerId, senderConn) {
     initAssembly(meta);
 
     // Save transfer record with 'receiving' state
-    const { saveImageTransfer } = await import('$lib/services/db.js');
     await saveImageTransfer({
       transferId: meta.transferId,
       messageId: meta.messageId,
@@ -96,7 +96,6 @@ export async function handleChunk(transferId, chunkIndex, totalChunks, data, sen
           return;
         }
 
-        const { getImageTransfer, saveImageAttachment, updateImageTransferState } = await import('$lib/services/db.js');
         const transfer = await getImageTransfer(id);
         if (!transfer?.meta) {
           console.error('handleChunk: transfer not found');
@@ -152,7 +151,6 @@ export async function handleTransferComplete(transferId, senderPeerId, senderCon
     const id = String(transferId ?? '').trim();
     if (!id) return;
 
-    const { getImageTransfer } = await import('$lib/services/db.js');
     const transfer = await getImageTransfer(id);
     if (!transfer) {
       console.warn(`handleTransferComplete: transfer ${id} not found`);
@@ -161,12 +159,10 @@ export async function handleTransferComplete(transferId, senderPeerId, senderCon
 
     if (transfer.state === 'complete') {
       // Already complete, just ensure assembly is cleared
-      const { clearAssembly } = await import('./assemblyBuffer.js');
       clearAssembly(id);
       return;
     }
 
-    const { getAssembledChunks } = await import('./assemblyBuffer.js');
     const chunks = getAssembledChunks(id);
     if (chunks) {
       // It has chunks but state is not complete? Let handleChunk finish it.
@@ -201,7 +197,6 @@ export async function handleTransferCancelled(transferId) {
 
     clearAssembly(id);
 
-    const { updateImageTransferState } = await import('$lib/services/db.js');
     await updateImageTransferState(id, 'cancelled');
 
     emitImageEvent('transferCancelled', { transferId: id });

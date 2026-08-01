@@ -92,7 +92,9 @@ export const ALLOWED_TYPES = new Set([
   'IMAGE_TRANSFER_COMPLETE',
   'IMAGE_TRANSFER_CANCELLED',
   'IMAGE_REQUEST',
-  'IMAGE_OFFER'
+  'IMAGE_OFFER',
+  'IMAGE_PING',
+  'IMAGE_PONG'
 ]);
 
 export const REQUIRES_TO = new Set([

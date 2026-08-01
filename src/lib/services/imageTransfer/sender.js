@@ -6,7 +6,7 @@
  */
 
 import { validateImageFile, getImageDimensions, fileToArrayBuffer } from '$lib/utils/imageValidator.js';
-import { saveImageTransfer, updateImageTransferState } from '$lib/services/db.js';
+import { saveImageTransfer, updateImageTransferState, saveImageAttachment } from '$lib/services/db.js';
 import { frameChunk } from './binary.js';
 import { broadcastToAll, safeSend, onMessage, buildMessage } from '$lib/services/peer/shared.js';
 import { get } from 'svelte/store';
@@ -77,7 +77,6 @@ export async function sendImage(file, targetPeerIds, messageId, context, overrid
     });
 
     // Save image attachment locally for the sender
-    const { saveImageAttachment } = await import('$lib/services/db.js');
     await saveImageAttachment({
       transferId,
       messageId: meta.messageId,
@@ -267,6 +266,26 @@ async function sendChunksToPeer(transferId, meta, buffer, peerId, conn, _profile
   const unsubscribe = onMessage('IMAGE_CHUNK_ACK', handleAck);
 
   try {
+    // Probe channel health before sending
+    try {
+      const mod = await import('./binaryChannel.js');
+      const alive = await mod.probeChannel(conn, peerId, 2000);
+      if (!alive) {
+        // recreate channel and use the fresh one
+        mod && mod && mod;
+        const { ensureBinaryChannel } = await import('./binaryChannel.js');
+        conn = ensureBinaryChannel(peerId);
+        if (conn && !conn.open) {
+          await new Promise((resolve) => {
+            const timeout = setTimeout(resolve, 3000);
+            conn.on('open', () => { clearTimeout(timeout); resolve(); });
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('probeChannel failed', e);
+    }
+
     for (let chunkIndex = 0; chunkIndex < meta.totalChunks; chunkIndex++) {
       // Extract chunk data
       const start = chunkIndex * CHUNK_SIZE;
@@ -281,7 +300,20 @@ async function sendChunksToPeer(transferId, meta, buffer, peerId, conn, _profile
 
           // Frame and send binary chunk
           const framedChunk = frameChunk(transferId, chunkIndex, meta.totalChunks, chunkData);
-          safeSend(conn, framedChunk);
+          try {
+            conn.send(framedChunk);
+          } catch (err) {
+            console.error(`DataChannel send failed for peer ${peerId}`, err);
+            // Remove stale channel so future sends recreate it
+            try {
+              const mod = await import('./binaryChannel.js');
+              // Trigger ensureBinaryChannel to recreate/remove stale entries as needed.
+              try { await mod.ensureBinaryChannel(peerId); } catch { /* ignored */ }
+            } catch {
+              // Intentionally ignored: best-effort cleanup
+            }
+            throw err;
+          }
 
           // Wait for ACK or timeout
           const ackReceived = await waitForAck(ackedChunks, chunkIndex, CHUNK_TIMEOUT_MS);
@@ -292,8 +324,9 @@ async function sendChunksToPeer(transferId, meta, buffer, peerId, conn, _profile
 
           retries++;
           if (retries < MAX_CHUNK_RETRIES) {
-            // Retry
-            await new Promise((resolve) => setTimeout(resolve, 200));
+            // Retry with exponential backoff (500ms, 1000ms, 2000ms)
+            const delay = 500 * Math.pow(2, Math.max(0, retries - 1));
+            await new Promise((resolve) => setTimeout(resolve, delay));
           }
         } catch (err) {
           console.error(`Chunk ${chunkIndex} send failed`, err);

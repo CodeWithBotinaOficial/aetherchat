@@ -23,6 +23,8 @@ import {
 } from './shared.js';
 import { buildMessage } from './shared.js';
 import { flushQueueForPeer } from './queue.js';
+import { unframeChunk } from '$lib/services/imageTransfer/binary.js';
+import { handleChunk } from '$lib/services/imageTransfer/receiver.js';
 
 // Avoid repeatedly trying to connect to peer IDs that just failed.
 const recentConnectFailures = new Map(); // peerId -> { lastFailedAt, count }
@@ -253,9 +255,7 @@ export function handleIncomingConnection(conn, profile) {
       // Handle binary chunks separately from JSON messages
       if (data instanceof ArrayBuffer) {
         try {
-          const { unframeChunk } = await import('$lib/services/imageTransfer/binary.js');
           const { transferId, chunkIndex, totalChunks, data: chunkData } = unframeChunk(data);
-          const { handleChunk } = await import('$lib/services/imageTransfer/receiver.js');
           await handleChunk(transferId, chunkIndex, totalChunks, chunkData, remotePeerId, conn);
         } catch (err) {
           console.error('handleImageChunk failed', err);
