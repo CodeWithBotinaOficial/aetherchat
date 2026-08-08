@@ -8,11 +8,111 @@
 import { validateImageFile, getImageDimensions, fileToArrayBuffer } from '$lib/utils/imageValidator.js';
 import { saveImageTransfer, updateImageTransferState, saveImageAttachment } from '$lib/services/db.js';
 import { frameChunk } from './binary.js';
-import { broadcastToAll, safeSend, onMessage, buildMessage } from '$lib/services/peer/shared.js';
+import { broadcastToAll, safeSend, buildMessage } from '$lib/services/peer/shared.js';
 import { get } from 'svelte/store';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
 import { CHUNK_SIZE, CHUNK_TIMEOUT_MS, MAX_CHUNK_RETRIES } from './types.js';
 import { emitImageEvent } from './events.js';
+
+export function getStandardConnection(peerId) {
+  const entry = get(peerStore).connectedPeers.get(peerId);
+  return entry?.connection ?? null;
+}
+
+function removeDataListener(conn, handler) {
+  if (typeof conn?.off === 'function') {
+    conn.off('data', handler);
+    return;
+  }
+  if (typeof conn?.removeListener === 'function') {
+    conn.removeListener('data', handler);
+  }
+}
+
+async function waitForConnectionOpen(conn, timeoutMs = 3000) {
+  if (!conn || conn.open !== false) return Boolean(conn);
+
+  return await new Promise((resolve) => {
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    conn.on?.('open', () => finish(true));
+  });
+}
+
+export function waitForAck(conn, messageType, transferId, timeoutMs, predicate = null) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      removeDataListener(conn, handler);
+      resolve(false);
+    }, timeoutMs);
+
+    function handler(data) {
+      if (data instanceof ArrayBuffer) return;
+      if (data?.type !== messageType) return;
+      if (data?.payload?.transferId !== transferId) return;
+      if (typeof predicate === 'function' && !predicate(data)) return;
+
+      clearTimeout(timer);
+      removeDataListener(conn, handler);
+      resolve(true);
+    }
+
+    conn.on?.('data', handler);
+  });
+}
+
+export async function probeChannel(peerId, timeoutMs = 2000) {
+  const conn = getStandardConnection(peerId);
+  if (!conn || !conn.open) return false;
+
+  const nonce = globalThis.crypto?.randomUUID?.() || String(Date.now());
+
+  return await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      removeDataListener(conn, handler);
+      resolve(false);
+    }, timeoutMs);
+
+    function handler(data) {
+      if (data instanceof ArrayBuffer) return;
+      if (data?.type === 'IMAGE_PONG' && data?.payload?.nonce === nonce) {
+        clearTimeout(timer);
+        removeDataListener(conn, handler);
+        resolve(true);
+      }
+    }
+
+    conn.on?.('data', handler);
+
+    try {
+      const myPeerId = get(peerStore).peerId;
+      if (!myPeerId) throw new Error('Local peer ID not available');
+      const profile = { username: 'system', color: '#000', dateOfBirth: null };
+      conn.send(buildMessage('IMAGE_PING', myPeerId, profile, { nonce }));
+    } catch {
+      clearTimeout(timer);
+      removeDataListener(conn, handler);
+      resolve(false);
+    }
+  });
+}
+
+async function sendChunkToConn(conn, framedChunk) {
+  return new Promise((resolve, reject) => {
+    try {
+      conn.send(framedChunk);
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
 
 /**
  * Initiates a P2P image transfer to one or more peers.
@@ -102,32 +202,14 @@ export async function sendImage(file, targetPeerIds, messageId, context, overrid
       throw new Error('No valid target peers specified');
     }
 
-    // Broadcast IMAGE_TRANSFER_START to all targets
-    const { ensureBinaryChannel } = await import('./binaryChannel.js');
+    // Send IMAGE_TRANSFER_START to all targets on the standard JSON connection.
     const profile = { username: 'system', color: '#000', dateOfBirth: null };
     const startMsg = buildMessage('IMAGE_TRANSFER_START', myPeerId, profile, { meta });
 
     const targetConnsPromises = targets.map(async (peerId) => {
-      const conn = ensureBinaryChannel(peerId);
+      const conn = getStandardConnection(peerId);
       if (!conn) return null;
-
-      if (!conn.open) {
-        await new Promise((resolve) => {
-          let resolved = false;
-          const timeout = setTimeout(() => {
-            if (!resolved) { resolved = true; resolve(); }
-          }, 3000);
-          conn.on('open', () => {
-            if (!resolved) {
-              resolved = true;
-              clearTimeout(timeout);
-              resolve();
-            }
-          });
-        });
-      }
-
-      if (conn.open) {
+      if (await waitForConnectionOpen(conn)) {
         return { peerId, conn };
       }
       return null;
@@ -147,23 +229,21 @@ export async function sendImage(file, targetPeerIds, messageId, context, overrid
       throw new Error('No connected target peers');
     }
 
-    // Wait for START_ACK from each peer (with timeout)
-    const acksReceived = new Set();
-    const unsubscribe = onMessage('IMAGE_TRANSFER_START_ACK', (msg) => {
-      if (msg.payload?.transferId === transferId) {
-        acksReceived.add(msg.from.peerId);
-      }
-    });
+    const ackResults = await Promise.all(
+      targetConns.map(async (tc) => ({
+        ...tc,
+        acked: await waitForAck(
+          tc.conn,
+          'IMAGE_TRANSFER_START_ACK',
+          transferId,
+          CHUNK_TIMEOUT_MS,
+          (msg) => msg.from?.peerId === tc.peerId
+        )
+      }))
+    );
+    const ackedTargetConns = ackResults.filter((tc) => tc.acked);
 
-    try {
-      await new Promise((resolve) => {
-        setTimeout(resolve, CHUNK_TIMEOUT_MS);
-      });
-    } finally {
-      unsubscribe();
-    }
-
-    if (acksReceived.size === 0) {
+    if (ackedTargetConns.length === 0) {
       await updateImageTransferState(transferId, 'failed', {
         errorMessage: 'No peers acknowledged transfer start'
       });
@@ -172,11 +252,11 @@ export async function sendImage(file, targetPeerIds, messageId, context, overrid
 
     // Begin sending chunks to each peer
     const sendResults = await Promise.allSettled(
-      targetConns.map((tc) => sendChunksToPeer(transferId, meta, buffer, tc.peerId, tc.conn, profile))
+      ackedTargetConns.map((tc) => sendChunksToPeer(transferId, meta, buffer, tc.peerId, tc.conn, profile))
     );
 
     const failures = sendResults.filter((r) => r.status === 'rejected');
-    if (failures.length === targetConns.length) {
+    if (failures.length === ackedTargetConns.length) {
       await updateImageTransferState(transferId, 'failed', {
         errorMessage: 'All peers failed to receive chunks'
       });
@@ -185,7 +265,7 @@ export async function sendImage(file, targetPeerIds, messageId, context, overrid
 
     // Send COMPLETE to all peers that received chunks
     const completeMsg = buildMessage('IMAGE_TRANSFER_COMPLETE', myPeerId, profile, { transferId });
-    for (const tc of targetConns) {
+    for (const tc of ackedTargetConns) {
       safeSend(tc.conn, completeMsg);
     }
 
@@ -254,38 +334,10 @@ async function sendChunksToPeer(transferId, meta, buffer, peerId, conn, _profile
   const myPeerId = get(peerStore).peerId;
   if (!myPeerId) throw new Error('Local peer ID not available');
 
-  // Track which chunks the peer has ACKed
-  const ackedChunks = new Set();
-
-  const handleAck = (msg) => {
-    if (msg.payload?.transferId === transferId && msg.from.peerId === peerId) {
-      ackedChunks.add(msg.payload.chunkIndex);
-    }
-  };
-
-  const unsubscribe = onMessage('IMAGE_CHUNK_ACK', handleAck);
+  const alive = await probeChannel(peerId, 2000);
+  if (!alive) throw new Error(`Connection probe failed for peer ${peerId}`);
 
   try {
-    // Probe channel health before sending
-    try {
-      const mod = await import('./binaryChannel.js');
-      const alive = await mod.probeChannel(conn, peerId, 2000);
-      if (!alive) {
-        // recreate channel and use the fresh one
-        mod && mod && mod;
-        const { ensureBinaryChannel } = await import('./binaryChannel.js');
-        conn = ensureBinaryChannel(peerId);
-        if (conn && !conn.open) {
-          await new Promise((resolve) => {
-            const timeout = setTimeout(resolve, 3000);
-            conn.on('open', () => { clearTimeout(timeout); resolve(); });
-          });
-        }
-      }
-    } catch (e) {
-      console.warn('probeChannel failed', e);
-    }
-
     for (let chunkIndex = 0; chunkIndex < meta.totalChunks; chunkIndex++) {
       // Extract chunk data
       const start = chunkIndex * CHUNK_SIZE;
@@ -296,27 +348,18 @@ async function sendChunksToPeer(transferId, meta, buffer, peerId, conn, _profile
       let retries = 0;
       while (retries < MAX_CHUNK_RETRIES) {
         try {
-          ackedChunks.delete(chunkIndex); // Clear ack flag
-
           // Frame and send binary chunk
           const framedChunk = frameChunk(transferId, chunkIndex, meta.totalChunks, chunkData);
-          try {
-            conn.send(framedChunk);
-          } catch (err) {
-            console.error(`DataChannel send failed for peer ${peerId}`, err);
-            // Remove stale channel so future sends recreate it
-            try {
-              const mod = await import('./binaryChannel.js');
-              // Trigger ensureBinaryChannel to recreate/remove stale entries as needed.
-              try { await mod.ensureBinaryChannel(peerId); } catch { /* ignored */ }
-            } catch {
-              // Intentionally ignored: best-effort cleanup
-            }
-            throw err;
-          }
+          await sendChunkToConn(conn, framedChunk);
 
           // Wait for ACK or timeout
-          const ackReceived = await waitForAck(ackedChunks, chunkIndex, CHUNK_TIMEOUT_MS);
+          const ackReceived = await waitForAck(
+            conn,
+            'IMAGE_CHUNK_ACK',
+            transferId,
+            CHUNK_TIMEOUT_MS,
+            (msg) => msg.from?.peerId === peerId && msg.payload?.chunkIndex === chunkIndex
+          );
 
           if (ackReceived) {
             break; // Move to next chunk
@@ -338,35 +381,16 @@ async function sendChunksToPeer(transferId, meta, buffer, peerId, conn, _profile
         throw new Error(`Chunk ${chunkIndex} max retries exceeded`);
       }
     }
-  } finally {
-    unsubscribe();
+  } catch (err) {
+    console.error(`sendChunksToPeer failed for peer ${peerId}`, err);
+    throw err;
   }
 }
 
-/**
- * Waits for a specific chunk to be ACKed or times out.
- *
- * @param {Set<number>} ackedChunks
- * @param {number} chunkIndex
- * @param {number} timeoutMs
- * @returns {Promise<boolean>}
- */
-function waitForAck(ackedChunks, chunkIndex, timeoutMs) {
-  return new Promise((resolve) => {
-    const deadline = Date.now() + timeoutMs;
-
-    const checkInterval = setInterval(() => {
-      if (ackedChunks.has(chunkIndex)) {
-        clearInterval(checkInterval);
-        resolve(true);
-        return;
-      }
-
-      if (Date.now() >= deadline) {
-        clearInterval(checkInterval);
-        resolve(false);
-      }
-    }, 50);
+export async function retransmitChunks(transferId, requesterPeerId, missingChunks) {
+  console.warn('IMAGE_CHUNK_REQUEST received but retransmission cache is unavailable', {
+    transferId,
+    requesterPeerId,
+    missingChunks
   });
 }
-

@@ -11,6 +11,7 @@
  * - Event bus
  */
 
+import { vi } from 'vitest';
 import {
   validateImageFile,
   assembleChunks
@@ -43,6 +44,50 @@ import {
   onImageEvent,
   emitImageEvent
 } from '$lib/services/imageTransfer/events.js';
+import {
+  getStandardConnection,
+  probeChannel,
+  waitForAck
+} from '$lib/services/imageTransfer/sender.js';
+import { peer as peerStore } from '$lib/stores/peerStore.js';
+
+function makeMockConnection({ open = true } = {}) {
+  const listeners = new Map();
+  const conn = {
+    open,
+    sent: [],
+    send: vi.fn((data) => {
+      conn.sent.push(data);
+    }),
+    on: vi.fn((event, handler) => {
+      if (!listeners.has(event)) listeners.set(event, new Set());
+      listeners.get(event).add(handler);
+    }),
+    off: vi.fn((event, handler) => {
+      listeners.get(event)?.delete(handler);
+    }),
+    emit(event, data) {
+      for (const handler of listeners.get(event) ?? []) handler(data);
+    }
+  };
+  return conn;
+}
+
+function setPeerState(overrides = {}) {
+  peerStore.set({
+    peerId: 'local-peer',
+    isConnected: true,
+    connectionState: 'connected',
+    error: null,
+    reconnectAttempt: 0,
+    isLobbyHost: false,
+    lobbyPeer: null,
+    currentLobbyHostId: null,
+    lastSyncAt: null,
+    connectedPeers: new Map(),
+    ...overrides
+  });
+}
 
 async function clearImageTables() {
   await db.transaction('rw', db.imageAttachments, db.imageTransfers, async () => {
@@ -54,6 +99,9 @@ async function clearImageTables() {
 }
 
 beforeEach(async () => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  setPeerState();
   await clearImageTables();
 });
 
@@ -605,17 +653,100 @@ describe('Image Transfer Flow (Mocks)', () => {
     expect(true).toBe(true);
   });
 
-  it('Binary channel reuse: ensureBinaryChannel returns the same connection on second call when open', () => {
-    // AetherChat uses connection multiplexing, so binary channel is the main JSON channel.
-    expect(true).toBe(true);
+  it('getStandardConnection returns null when peer is not in store', () => {
+    setPeerState({ connectedPeers: new Map() });
+    expect(getStandardConnection('missing-peer')).toBeNull();
   });
 
-  it('Binary channel reuse: ensureBinaryChannel creates a new connection when existing one is not open', () => {
-    expect(true).toBe(true);
+  it('getStandardConnection returns the connection when peer is connected', () => {
+    const conn = makeMockConnection();
+    setPeerState({
+      connectedPeers: new Map([
+        ['peer-1', { username: 'peer', color: '#fff', dateOfBirth: null, connection: conn }]
+      ])
+    });
+
+    expect(getStandardConnection('peer-1')).toBe(conn);
   });
 
-  it('Binary channel reuse: Closed channel is removed from the map via the close event handler', () => {
-    expect(true).toBe(true);
+  it('probeChannel sends IMAGE_PING on standard connection and resolves true on PONG', async () => {
+    vi.useFakeTimers();
+    const conn = makeMockConnection();
+    setPeerState({
+      connectedPeers: new Map([
+        ['peer-1', { username: 'peer', color: '#fff', dateOfBirth: null, connection: conn }]
+      ])
+    });
+
+    const promise = probeChannel('peer-1', 1000);
+    expect(conn.send).toHaveBeenCalledOnce();
+    const ping = conn.sent[0];
+    expect(ping.type).toBe('IMAGE_PING');
+
+    conn.emit('data', {
+      type: 'IMAGE_PONG',
+      from: { peerId: 'peer-1', username: 'peer', color: '#fff', dateOfBirth: null },
+      payload: { nonce: ping.payload.nonce },
+      timestamp: Date.now()
+    });
+
+    await expect(promise).resolves.toBe(true);
+    vi.useRealTimers();
+  });
+
+  it('probeChannel resolves false on timeout', async () => {
+    vi.useFakeTimers();
+    const conn = makeMockConnection();
+    setPeerState({
+      connectedPeers: new Map([
+        ['peer-1', { username: 'peer', color: '#fff', dateOfBirth: null, connection: conn }]
+      ])
+    });
+
+    const promise = probeChannel('peer-1', 1000);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(promise).resolves.toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('waitForAck resolves true when matching message type and transferId arrive', async () => {
+    vi.useFakeTimers();
+    const conn = makeMockConnection();
+    const promise = waitForAck(conn, 'IMAGE_TRANSFER_START_ACK', 'transfer-1', 1000);
+
+    conn.emit('data', {
+      type: 'IMAGE_TRANSFER_START_ACK',
+      from: { peerId: 'peer-1', username: 'peer', color: '#fff', dateOfBirth: null },
+      payload: { transferId: 'transfer-1' },
+      timestamp: Date.now()
+    });
+
+    await expect(promise).resolves.toBe(true);
+    vi.useRealTimers();
+  });
+
+  it('waitForAck resolves false on timeout', async () => {
+    vi.useFakeTimers();
+    const conn = makeMockConnection();
+    const promise = waitForAck(conn, 'IMAGE_TRANSFER_START_ACK', 'transfer-1', 1000);
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(promise).resolves.toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('waitForAck ignores ArrayBuffer data events', async () => {
+    vi.useFakeTimers();
+    const conn = makeMockConnection();
+    const promise = waitForAck(conn, 'IMAGE_TRANSFER_START_ACK', 'transfer-1', 1000);
+
+    conn.emit('data', new ArrayBuffer(8));
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(promise).resolves.toBe(false);
+    vi.useRealTimers();
   });
 
   it('Sender own image saved locally: After sendImage, getImageAttachment(transferId) returns non-null for sender', () => {
@@ -627,11 +758,52 @@ describe('Image Transfer Flow (Mocks)', () => {
     expect(true).toBe(true);
   });
 
-  it('Late-join image request: IMAGE_REQUEST handler calls sendImage to the requesting peer only', () => {
-    expect(true).toBe(true);
+  it('Late-join image request: IMAGE_REQUEST handler calls sendImage when attachment exists in DB', async () => {
+    const sendImageMock = vi.fn().mockResolvedValue({ transferId: 'transfer-1', meta: {} });
+    vi.resetModules();
+    vi.doMock('$lib/services/db.js', () => ({
+      getImageAttachment: vi.fn().mockResolvedValue({
+        transferId: 'transfer-1',
+        messageId: 'message-1',
+        context: 'global',
+        blob: new Blob(['image'], { type: 'image/png' }),
+        mimeType: 'image/png',
+        filename: 'image.png'
+      }),
+      updateImageTransferState: vi.fn()
+    }));
+    vi.doMock('$lib/services/imageTransfer/sender.js', () => ({
+      sendImage: sendImageMock,
+      retransmitChunks: vi.fn()
+    }));
+
+    const { handleImageRequest } = await import('$lib/services/peer/router.js');
+    await handleImageRequest('transfer-1', 'requester-peer', {});
+
+    expect(sendImageMock).toHaveBeenCalledOnce();
+    expect(sendImageMock.mock.calls[0][1]).toEqual(['requester-peer']);
+    expect(sendImageMock.mock.calls[0][4]).toBe('transfer-1');
+    vi.doUnmock('$lib/services/db.js');
+    vi.doUnmock('$lib/services/imageTransfer/sender.js');
   });
 
-  it('Late-join image request: IMAGE_REQUEST handler does nothing when the image is not in local DB', () => {
-    expect(true).toBe(true);
+  it('Late-join image request: IMAGE_REQUEST handler does nothing when attachment is not in DB', async () => {
+    const sendImageMock = vi.fn();
+    vi.resetModules();
+    vi.doMock('$lib/services/db.js', () => ({
+      getImageAttachment: vi.fn().mockResolvedValue(null),
+      updateImageTransferState: vi.fn()
+    }));
+    vi.doMock('$lib/services/imageTransfer/sender.js', () => ({
+      sendImage: sendImageMock,
+      retransmitChunks: vi.fn()
+    }));
+
+    const { handleImageRequest } = await import('$lib/services/peer/router.js');
+    await handleImageRequest('transfer-1', 'requester-peer', {});
+
+    expect(sendImageMock).not.toHaveBeenCalled();
+    vi.doUnmock('$lib/services/db.js');
+    vi.doUnmock('$lib/services/imageTransfer/sender.js');
   });
 });
