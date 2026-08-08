@@ -58,7 +58,7 @@
       }
     } catch (e) {
       console.error('Error loading images', e);
-      statusMessage = 'Image not available';
+      statusMessage = 'Image could not be received';
     } finally {
       loading = false;
     }
@@ -69,7 +69,7 @@
     const connected = getConnectedPeerIds();
 
     if (!connected || connected.length === 0) {
-      statusMessage = 'Image not available offline — connect to peers to load';
+      statusMessage = 'Connect to peers to load this image';
       return;
     }
 
@@ -81,31 +81,8 @@
       }
     });
 
-    statusMessage = 'Requesting image from peers...';
+    statusMessage = 'Requesting from peers...';
     const profile = userProfileRef || cachedProfile || { username: 'system', color: '#000', dateOfBirth: null };
-
-    // Ensure binary channel (and its on('data') handler) is registered for each connected peer
-    try {
-      const mod = await import('$lib/services/imageTransfer/binaryChannel.js');
-      const ensureBinaryChannel = mod.ensureBinaryChannel;
-      await Promise.all(connected.map(async (pid) => {
-        try {
-          const conn = ensureBinaryChannel(pid);
-          if (!conn) return;
-          if (!conn.open) {
-            await new Promise((resolve) => {
-              let resolved = false;
-              const timeout = setTimeout(() => { if (!resolved) { resolved = true; resolve(); } }, 3000);
-              conn.on('open', () => { if (!resolved) { resolved = true; clearTimeout(timeout); resolve(); } });
-            });
-          }
-        } catch (e) {
-          console.warn('ensureBinaryChannel failed for', pid, e);
-        }
-      }));
-    } catch (e) {
-      console.warn('Error ensuring binary channels', e);
-    }
 
     // Broadcast request for each missing image
     for (const id of transferIds) {
@@ -146,6 +123,7 @@
 
 {#if loading && !statusMessage}
   <div class="mt-[var(--space-xs)] grid grid-cols-2 gap-[var(--space-xs)] animate-pulse">
+    <span class="sr-only">Loading image...</span>
     {#each transferIds as _id (_id)}
       <div class="bg-[var(--bg-overlay)] aspect-square rounded-[var(--radius-sm)] w-full"></div>
     {/each}

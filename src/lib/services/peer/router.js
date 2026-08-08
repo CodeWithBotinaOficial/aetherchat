@@ -11,8 +11,8 @@ import * as globalMsg from './messaging.global.js';
 import * as privateMsg from './messaging.private.js';
 import * as social from './social.js';
 import * as imageTransfer from '../imageTransfer/receiver.js';
-import { getImageAttachment, getImageTransfer } from '$lib/services/db.js';
-import { sendImage } from '../imageTransfer/sender.js';
+import { getImageAttachment, updateImageTransferState } from '$lib/services/db.js';
+import { retransmitChunks, sendImage } from '../imageTransfer/sender.js';
 
 /**
  * Router-only: validate + emit, then delegate by msg.type.
@@ -130,50 +130,42 @@ export async function handleMessage(msg, fromConn, profile) {
     case 'IMAGE_PONG':
       return; // listener-driven (probeChannel listens for this)
     case 'IMAGE_TRANSFER_REJECTED':
-      return; // listener-driven (sender listens for this)
+      console.warn('Image transfer rejected', msg.payload?.reason);
+      if (msg.payload?.transferId) {
+        await updateImageTransferState(msg.payload.transferId, 'failed', {
+          errorMessage: 'Image could not be received'
+        });
+      }
+      return;
     case 'IMAGE_CHUNK_ACK':
       return; // listener-driven (sender listens for this)
     case 'IMAGE_CHUNK_REQUEST':
-      return; // listener-driven (sender handles retransmission)
+      return await retransmitChunks(msg.payload?.transferId, msg.from.peerId, msg.payload?.missingChunks);
     case 'IMAGE_TRANSFER_COMPLETE':
       return await imageTransfer.handleTransferComplete(msg.payload?.transferId, msg.from.peerId, fromConn);
     case 'IMAGE_TRANSFER_CANCELLED':
       return await imageTransfer.handleTransferCancelled(msg.payload?.transferId);
 
     case 'IMAGE_REQUEST': {
-      const transferId = msg.payload?.transferId;
-      if (!transferId) return;
-
-      const attachment = await getImageAttachment(transferId);
-      const transfer = await getImageTransfer(transferId);
-
-      if (attachment?.blob && transfer?.meta) {
-        // Ensure we have a binary channel to the requesting peer before initiating send
-        try {
-          const mod = await import('../imageTransfer/binaryChannel.js');
-          const conn = mod.ensureBinaryChannel(msg.from.peerId);
-          if (conn && !conn.open) {
-            await new Promise((resolve) => {
-              let resolved = false;
-              const timeout = setTimeout(() => { if (!resolved) { resolved = true; resolve(); } }, 3000);
-              conn.on('open', () => { if (!resolved) { resolved = true; clearTimeout(timeout); resolve(); } });
-            });
-          }
-        } catch (e) {
-          console.warn('ensureBinaryChannel failed for requester', msg.from.peerId, e);
-        }
-
-        const file = new File([attachment.blob], transfer.meta.filename || 'image.jpg', { type: transfer.meta.mimeType || attachment.blob.type });
-        // Use overrideTransferId to reuse the existing ID
-        sendImage(file, [msg.from.peerId], transfer.meta.messageId, transfer.meta.context, transferId).catch((err) => {
-          console.error('Failed to send image on request', err);
-        });
-      }
-      return;
+      return await handleImageRequest(msg.payload?.transferId, msg.from.peerId, fromConn);
     }
 
     default:
       // Defensive: ignore unknown types.
       return;
   }
+}
+
+export async function handleImageRequest(transferId, requesterPeerId, _fromConn) {
+  const id = String(transferId ?? '').trim();
+  if (!id || !requesterPeerId) return;
+
+  const attachment = await getImageAttachment(id);
+  if (!attachment?.blob) return;
+
+  const file = new File([attachment.blob], attachment.filename || 'image.jpg', {
+    type: attachment.mimeType || attachment.blob.type || 'image/jpeg'
+  });
+
+  await sendImage(file, [requesterPeerId], attachment.messageId, attachment.context, id);
 }
