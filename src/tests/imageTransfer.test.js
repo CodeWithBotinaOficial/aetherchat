@@ -25,7 +25,8 @@ import {
   receiveChunk,
   getAssembledChunks,
   clearAssembly,
-  getStaleAssemblies
+  getStaleAssemblies,
+  getAssemblyEntry
 } from '$lib/services/imageTransfer/assemblyBuffer.js';
 import {
   saveImageAttachment,
@@ -50,6 +51,15 @@ import {
   waitForTransferStartAck,
   waitForChunkAck
 } from '$lib/services/imageTransfer/sender.js';
+import {
+  handleTransferStart,
+  handleChunk,
+  handleTransferComplete,
+  sendChunkRequest,
+  sendTransferRejected,
+  sendTransferStartAck,
+  sendChunkAck
+} from '$lib/services/imageTransfer/receiver.js';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
 
 function makeMockConnection({ open = true } = {}) {
@@ -332,6 +342,56 @@ describe('Assembly Buffer', () => {
     const stale = getStaleAssemblies(30);
     expect(stale).toContain('old-1');
     expect(stale).not.toContain('new-1');
+  });
+
+  it('getAssemblyEntry returns null for unknown transferId', () => {
+    expect(getAssemblyEntry('nonexistent-id')).toBeNull();
+  });
+
+  it('getAssemblyEntry returns the entry after initAssembly', () => {
+    const meta = {
+      transferId: 'entry-test-1',
+      totalChunks: 3,
+      filename: 'entry.png',
+      mimeType: 'image/png'
+    };
+    initAssembly(meta);
+    const entry = getAssemblyEntry('entry-test-1');
+    expect(entry).not.toBeNull();
+    expect(entry.meta.transferId).toBe('entry-test-1');
+    expect(entry.received).toBe(0);
+    expect(entry.chunks.length).toBe(3);
+  });
+
+  it('initAssembly is idempotent: second call does not reset chunks', () => {
+    const meta = {
+      transferId: 'idempotent-1',
+      totalChunks: 2,
+      filename: 'idem.png',
+      mimeType: 'image/png'
+    };
+    initAssembly(meta);
+    receiveChunk('idempotent-1', 0, new Uint8Array([10, 20]).buffer);
+
+    // Second initAssembly call with a different meta — must NOT reset
+    const meta2 = { ...meta, totalChunks: 99 };
+    initAssembly(meta2);
+
+    const entry = getAssemblyEntry('idempotent-1');
+    expect(entry.chunks.length).toBe(2);   // original totalChunks preserved
+    expect(entry.received).toBe(1);         // chunk still counted
+  });
+
+  it('getAssemblyEntry returns null after clearAssembly', () => {
+    const meta = {
+      transferId: 'entry-clear-1',
+      totalChunks: 1,
+      filename: 'clear.png',
+      mimeType: 'image/png'
+    };
+    initAssembly(meta);
+    clearAssembly('entry-clear-1');
+    expect(getAssemblyEntry('entry-clear-1')).toBeNull();
   });
 });
 
@@ -959,3 +1019,116 @@ describe('Image Transfer Flow (Event Bus)', () => {
   });
 });
 
+// ============================================================================
+// Receiver Fallback Assembly Tests
+// ============================================================================
+
+describe('Receiver: fallback assembly init when START is missed', () => {
+  it('handleChunk auto-inits assembly for unknown transferId', async () => {
+    const conn = makeMockConnection();
+    const chunkData = new Uint8Array([1, 2, 3, 4]).buffer;
+
+    // No handleTransferStart called — START was "missed"
+    await handleChunk('fallback-xfer-1', 0, 2, chunkData, 'remote-peer', conn);
+
+    // Assembly should now exist
+    const entry = getAssemblyEntry('fallback-xfer-1');
+    expect(entry).not.toBeNull();
+    expect(entry.chunks.length).toBe(2);
+    expect(entry.received).toBe(1);
+
+    // Chunk ACK must have been sent back
+    const ack = conn.sent.find((m) => m?.type === 'IMAGE_CHUNK_ACK');
+    expect(ack).toBeDefined();
+    expect(ack.payload.chunkIndex).toBe(0);
+
+    clearAssembly('fallback-xfer-1');
+  });
+
+  it('handleChunk sends ACK even when assembly was freshly created by fallback', async () => {
+    const conn = makeMockConnection();
+
+    await handleChunk('fallback-xfer-2', 1, 3, new Uint8Array(8).buffer, 'remote-peer', conn);
+
+    const ack = conn.sent.find((m) => m?.type === 'IMAGE_CHUNK_ACK');
+    expect(ack).toBeDefined();
+    expect(ack.payload.chunkIndex).toBe(1);
+
+    clearAssembly('fallback-xfer-2');
+  });
+
+  it('handleChunk does NOT overwrite existing assembly when START arrived first', async () => {
+    const conn = makeMockConnection();
+    const meta = {
+      transferId: 'fallback-xfer-3',
+      filename: 'test.png',
+      mimeType: 'image/png',
+      sizeBytes: 8,
+      totalChunks: 2,
+      width: 0,
+      height: 0,
+      context: 'global',
+      messageId: 'msg-fbx3',
+      senderPeerId: 'remote-peer',
+      createdAt: Date.now()
+    };
+    await handleTransferStart(meta, 'remote-peer', conn);
+
+    // Entry created by handleTransferStart has the real mimeType
+    const entryBefore = getAssemblyEntry('fallback-xfer-3');
+    expect(entryBefore?.meta.mimeType).toBe('image/png');
+
+    // Receive a chunk — handleChunk must NOT re-create/reset the entry
+    await handleChunk('fallback-xfer-3', 0, 2, new Uint8Array(4).buffer, 'remote-peer', conn);
+
+    const entryAfter = getAssemblyEntry('fallback-xfer-3');
+    expect(entryAfter).not.toBeNull();
+    expect(entryAfter.chunks.length).toBe(2);           // real totalChunks, not 0
+    expect(entryAfter.meta.mimeType).toBe('image/png'); // real mimeType, not placeholder
+
+    clearAssembly('fallback-xfer-3');
+  });
+});
+
+// ============================================================================
+// Sender: stale connection checks
+// ============================================================================
+
+describe('Sender: connection validity checks', () => {
+  it('probeChannel returns false immediately when connection is closed (open=false)', async () => {
+    const closedConn = makeMockConnection({ open: false });
+    setPeerState({
+      connectedPeers: new Map([
+        ['peer-closed', { username: 'peer', color: '#fff', dateOfBirth: null, connection: closedConn }]
+      ])
+    });
+
+    const result = await probeChannel('peer-closed', 500);
+    expect(result).toBe(false);
+  });
+
+  it('probeChannel returns false when peer is not in the store', async () => {
+    setPeerState({ connectedPeers: new Map() });
+    expect(await probeChannel('ghost-peer', 500)).toBe(false);
+  });
+
+  it('waitForChunkAck ignores chunkAck events for a different chunkIndex', async () => {
+    vi.useFakeTimers();
+    const promise = waitForChunkAck('xfer-idx-test', 3, 'peer-x', 500);
+
+    // Wrong chunkIndex (7 instead of 3)
+    emitImageEvent('chunkAck', { transferId: 'xfer-idx-test', chunkIndex: 7, fromPeerId: 'peer-x' });
+
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(promise).resolves.toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('waitForTransferStartAck resolves false on timeout when no event fires', async () => {
+    vi.useFakeTimers();
+    const promise = waitForTransferStartAck('xfer-noevent-test', 'peer-y', 500);
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(promise).resolves.toBe(false);
+    vi.useRealTimers();
+  });
+});

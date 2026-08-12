@@ -27,7 +27,7 @@ const buffer = new Map();
 export function initAssembly(meta) {
   if (!meta?.transferId) return;
   const id = String(meta.transferId);
-  if (buffer.has(id)) return; // idempotent
+  if (buffer.has(id)) return; // idempotent — never reset an in-progress assembly
   buffer.set(id, {
     meta,
     chunks: new Array(meta.totalChunks || 0),
@@ -35,6 +35,20 @@ export function initAssembly(meta) {
     startedAt: Date.now()
   });
 }
+
+/**
+ * Returns the raw assembly entry for a transferId, or null if not present.
+ * Used by receiver.js to check existence before auto-initialising a fallback entry.
+ *
+ * @param {string} transferId
+ * @returns {AssemblyEntry|null}
+ */
+export function getAssemblyEntry(transferId) {
+  const id = String(transferId ?? '').trim();
+  if (!id) return null;
+  return buffer.get(id) ?? null;
+}
+
 
 /**
  * Stores a received chunk at the correct index.
