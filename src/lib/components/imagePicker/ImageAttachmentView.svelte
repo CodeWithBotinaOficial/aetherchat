@@ -73,14 +73,6 @@
       return;
     }
 
-    // Register imageReady listener BEFORE sending requests so we don't miss events
-    unsubEvent = onImageEvent('imageReady', (payload) => {
-      if (transferIds.includes(payload.transferId)) {
-        if (timeoutId) clearTimeout(timeoutId);
-        loadImages(); // Reload once ready
-      }
-    });
-
     statusMessage = 'Requesting from peers...';
     const profile = userProfileRef || cachedProfile || { username: 'system', color: '#000', dateOfBirth: null };
 
@@ -103,6 +95,17 @@
 
   onMount(() => {
     mountedTime = Date.now();
+
+    // 1. Register imageReady listener FIRST — before any DB lookup or peer request.
+    //    This guarantees we never miss an event even if the image arrives immediately.
+    unsubEvent = onImageEvent('imageReady', (payload) => {
+      if (transferIds.includes(payload.transferId)) {
+        if (timeoutId) clearTimeout(timeoutId);
+        loadImages();
+      }
+    });
+
+    // 2. Then attempt to load from local DB (and request from peers if missing).
     loadImages();
   });
   

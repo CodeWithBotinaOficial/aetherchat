@@ -12,7 +12,8 @@ import * as privateMsg from './messaging.private.js';
 import * as social from './social.js';
 import * as imageTransfer from '../imageTransfer/receiver.js';
 import { getImageAttachment, updateImageTransferState } from '$lib/services/db.js';
-import { retransmitChunks, sendImage } from '../imageTransfer/sender.js';
+import { sendImage } from '../imageTransfer/sender.js';
+import { emitImageEvent } from '../imageTransfer/events.js';
 
 /**
  * Router-only: validate + emit, then delegate by msg.type.
@@ -110,10 +111,17 @@ export async function handleMessage(msg, fromConn, profile) {
 
     case 'IMAGE_TRANSFER_START':
       return await imageTransfer.handleTransferStart(msg.payload?.meta, msg.from.peerId, fromConn);
+
     case 'IMAGE_TRANSFER_START_ACK':
-      return; // listener-driven (sender listens for this)
+      // Route to sender via event bus — eliminates conn.on race condition
+      emitImageEvent('transferStartAck', {
+        transferId: msg.payload?.transferId,
+        fromPeerId: msg.from?.peerId
+      });
+      return;
+
     case 'IMAGE_PING': {
-      // Respond to ping so probeChannel can verify binary channel is alive
+      // Respond immediately with PONG so probeChannel can verify the channel is alive
       try {
         const state = get(peerStore);
         const myPeerId = state.peerId;
@@ -127,9 +135,22 @@ export async function handleMessage(msg, fromConn, profile) {
       }
       return;
     }
+
     case 'IMAGE_PONG':
-      return; // listener-driven (probeChannel listens for this)
+      // Route to sender via event bus — eliminates conn.on race condition
+      emitImageEvent('imagePong', {
+        nonce: msg.payload?.nonce,
+        fromPeerId: msg.from?.peerId
+      });
+      return;
+
     case 'IMAGE_TRANSFER_REJECTED':
+      // Notify sender and update DB
+      emitImageEvent('transferRejected', {
+        transferId: msg.payload?.transferId,
+        reason: msg.payload?.reason,
+        fromPeerId: msg.from?.peerId
+      });
       console.warn('Image transfer rejected', msg.payload?.reason);
       if (msg.payload?.transferId) {
         await updateImageTransferState(msg.payload.transferId, 'failed', {
@@ -137,10 +158,25 @@ export async function handleMessage(msg, fromConn, profile) {
         });
       }
       return;
+
     case 'IMAGE_CHUNK_ACK':
-      return; // listener-driven (sender listens for this)
+      // Route to sender via event bus — eliminates conn.on race condition
+      emitImageEvent('chunkAck', {
+        transferId: msg.payload?.transferId,
+        chunkIndex: msg.payload?.chunkIndex,
+        fromPeerId: msg.from?.peerId
+      });
+      return;
+
     case 'IMAGE_CHUNK_REQUEST':
-      return await retransmitChunks(msg.payload?.transferId, msg.from.peerId, msg.payload?.missingChunks);
+      // Route to sender via event bus for retransmission
+      emitImageEvent('chunkRequest', {
+        transferId: msg.payload?.transferId,
+        missingChunks: msg.payload?.missingChunks ?? [],
+        fromPeerId: msg.from?.peerId
+      });
+      return;
+
     case 'IMAGE_TRANSFER_COMPLETE':
       return await imageTransfer.handleTransferComplete(msg.payload?.transferId, msg.from.peerId, fromConn);
     case 'IMAGE_TRANSFER_CANCELLED':
