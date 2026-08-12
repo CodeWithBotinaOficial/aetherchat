@@ -4,11 +4,20 @@
  * This decouples the receiver service from Svelte stores, enabling
  * the service layer to notify the UI when images are ready.
  *
- * Event names:
- * - 'imageReady'       payload: { transferId, messageId, context }
- * - 'transferProgress' payload: { transferId, receivedChunks, totalChunks }
- * - 'transferFailed'   payload: { transferId, error }
+ * Receiver → UI events (emitted by receiver.js / router.js):
+ * - 'imageReady'        payload: { transferId, messageId, context }
+ * - 'transferProgress'  payload: { transferId, receivedChunks, totalChunks }
+ * - 'transferFailed'    payload: { transferId, error }
  * - 'transferCancelled' payload: { transferId }
+ *
+ * ACK events — emitted by router.js, consumed by sender.js
+ * (eliminates the conn.on race condition where ACKs arrived before
+ * the sender's raw listener was registered):
+ * - 'transferStartAck'  payload: { transferId, fromPeerId }
+ * - 'chunkAck'          payload: { transferId, chunkIndex, fromPeerId }
+ * - 'transferRejected'  payload: { transferId, reason, fromPeerId }
+ * - 'chunkRequest'      payload: { transferId, missingChunks, fromPeerId }
+ * - 'imagePong'         payload: { nonce, fromPeerId }
  */
 
 /**

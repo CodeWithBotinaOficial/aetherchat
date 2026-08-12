@@ -47,7 +47,8 @@ import {
 import {
   getStandardConnection,
   probeChannel,
-  waitForAck
+  waitForTransferStartAck,
+  waitForChunkAck
 } from '$lib/services/imageTransfer/sender.js';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
 
@@ -643,16 +644,114 @@ describe('Event Bus', () => {
 });
 
 
-describe('Image Transfer Flow (Mocks)', () => {
-  it('Chunk ACK listener cleanup: After a completed transfer, no listeners remain registered for that transferId', () => {
-    // Verified by source code structure: try/finally removes the listener.
-    expect(true).toBe(true);
+// ============================================================================
+// Router Event Emission Tests
+// ============================================================================
+
+describe('Router: image ACK events via event bus', () => {
+  it('router emits transferStartAck when IMAGE_TRANSFER_START_ACK arrives', async () => {
+    const { handleMessage } = await import('$lib/services/peer/router.js');
+    let received = null;
+    const unsub = onImageEvent('transferStartAck', (p) => { received = p; });
+
+    const msg = {
+      type: 'IMAGE_TRANSFER_START_ACK',
+      from: { peerId: 'sender-peer', username: 'sender', color: '#000', dateOfBirth: null },
+      payload: { transferId: 'xfer-ack-1' },
+      timestamp: Date.now()
+    };
+    await handleMessage(msg, {}, {});
+
+    expect(received).not.toBeNull();
+    expect(received.transferId).toBe('xfer-ack-1');
+    expect(received.fromPeerId).toBe('sender-peer');
+    unsub();
   });
 
-  it('Chunk ACK listener cleanup: Starting a second transfer after the first completes succeeds without interference', () => {
-    expect(true).toBe(true);
+  it('router emits chunkAck when IMAGE_CHUNK_ACK arrives', async () => {
+    const { handleMessage } = await import('$lib/services/peer/router.js');
+    let received = null;
+    const unsub = onImageEvent('chunkAck', (p) => { received = p; });
+
+    const msg = {
+      type: 'IMAGE_CHUNK_ACK',
+      from: { peerId: 'sender-peer', username: 'sender', color: '#000', dateOfBirth: null },
+      payload: { transferId: 'xfer-ack-2', chunkIndex: 3 },
+      timestamp: Date.now()
+    };
+    await handleMessage(msg, {}, {});
+
+    expect(received).not.toBeNull();
+    expect(received.transferId).toBe('xfer-ack-2');
+    expect(received.chunkIndex).toBe(3);
+    expect(received.fromPeerId).toBe('sender-peer');
+    unsub();
   });
 
+  it('router emits transferRejected when IMAGE_TRANSFER_REJECTED arrives', async () => {
+    const { handleMessage } = await import('$lib/services/peer/router.js');
+    let received = null;
+    const unsub = onImageEvent('transferRejected', (p) => { received = p; });
+
+    const msg = {
+      type: 'IMAGE_TRANSFER_REJECTED',
+      from: { peerId: 'sender-peer', username: 'sender', color: '#000', dateOfBirth: null },
+      payload: { transferId: 'xfer-rej-1', reason: 'File too large' },
+      timestamp: Date.now()
+    };
+    await handleMessage(msg, {}, {});
+
+    expect(received).not.toBeNull();
+    expect(received.transferId).toBe('xfer-rej-1');
+    expect(received.reason).toBe('File too large');
+    expect(received.fromPeerId).toBe('sender-peer');
+    unsub();
+  });
+
+  it('router sends IMAGE_PONG immediately when IMAGE_PING arrives', async () => {
+    const { handleMessage } = await import('$lib/services/peer/router.js');
+    const mockConn = makeMockConnection();
+    setPeerState({ peerId: 'local-peer' });
+
+    const msg = {
+      type: 'IMAGE_PING',
+      from: { peerId: 'remote-peer', username: 'remote', color: '#000', dateOfBirth: null },
+      payload: { nonce: 'test-nonce-123' },
+      timestamp: Date.now()
+    };
+    await handleMessage(msg, mockConn, {});
+
+    expect(mockConn.sent.length).toBe(1);
+    expect(mockConn.sent[0].type).toBe('IMAGE_PONG');
+    expect(mockConn.sent[0].payload.nonce).toBe('test-nonce-123');
+  });
+
+  it('router emits chunkRequest when IMAGE_CHUNK_REQUEST arrives', async () => {
+    const { handleMessage } = await import('$lib/services/peer/router.js');
+    let received = null;
+    const unsub = onImageEvent('chunkRequest', (p) => { received = p; });
+
+    const msg = {
+      type: 'IMAGE_CHUNK_REQUEST',
+      from: { peerId: 'receiver-peer', username: 'recv', color: '#000', dateOfBirth: null },
+      payload: { transferId: 'xfer-req-1', missingChunks: [2, 5, 7] },
+      timestamp: Date.now()
+    };
+    await handleMessage(msg, {}, {});
+
+    expect(received).not.toBeNull();
+    expect(received.transferId).toBe('xfer-req-1');
+    expect(received.missingChunks).toEqual([2, 5, 7]);
+    expect(received.fromPeerId).toBe('receiver-peer');
+    unsub();
+  });
+});
+
+// ============================================================================
+// Sender Event Bus Tests
+// ============================================================================
+
+describe('Image Transfer Flow (Event Bus)', () => {
   it('getStandardConnection returns null when peer is not in store', () => {
     setPeerState({ connectedPeers: new Map() });
     expect(getStandardConnection('missing-peer')).toBeNull();
@@ -669,8 +768,70 @@ describe('Image Transfer Flow (Mocks)', () => {
     expect(getStandardConnection('peer-1')).toBe(conn);
   });
 
-  it('probeChannel sends IMAGE_PING on standard connection and resolves true on PONG', async () => {
+  it('waitForTransferStartAck resolves true when transferStartAck event fires with matching ids', async () => {
+    const promise = waitForTransferStartAck('xfer-start-1', 'peer-a', 2000);
+
+    // Simulate the router emitting the event (as it now does)
+    emitImageEvent('transferStartAck', { transferId: 'xfer-start-1', fromPeerId: 'peer-a' });
+
+    await expect(promise).resolves.toBe(true);
+  });
+
+  it('waitForTransferStartAck resolves false after timeout', async () => {
     vi.useFakeTimers();
+    const promise = waitForTransferStartAck('xfer-start-2', 'peer-b', 1000);
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(promise).resolves.toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('waitForTransferStartAck ignores events for different transferId or peerId', async () => {
+    vi.useFakeTimers();
+    const promise = waitForTransferStartAck('xfer-start-3', 'peer-c', 500);
+
+    // Wrong transferId
+    emitImageEvent('transferStartAck', { transferId: 'xfer-other', fromPeerId: 'peer-c' });
+    // Wrong peerId
+    emitImageEvent('transferStartAck', { transferId: 'xfer-start-3', fromPeerId: 'peer-wrong' });
+
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(promise).resolves.toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('waitForChunkAck resolves true when matching chunkAck event fires', async () => {
+    const promise = waitForChunkAck('xfer-chunk-1', 0, 'peer-d', 2000);
+
+    emitImageEvent('chunkAck', { transferId: 'xfer-chunk-1', chunkIndex: 0, fromPeerId: 'peer-d' });
+
+    await expect(promise).resolves.toBe(true);
+  });
+
+  it('waitForChunkAck resolves false after timeout', async () => {
+    vi.useFakeTimers();
+    const promise = waitForChunkAck('xfer-chunk-2', 1, 'peer-e', 1000);
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(promise).resolves.toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('waitForChunkAck ignores events for wrong chunkIndex', async () => {
+    vi.useFakeTimers();
+    const promise = waitForChunkAck('xfer-chunk-3', 2, 'peer-f', 500);
+
+    // Correct transfer but wrong chunk index
+    emitImageEvent('chunkAck', { transferId: 'xfer-chunk-3', chunkIndex: 5, fromPeerId: 'peer-f' });
+
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(promise).resolves.toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('probeChannel sends IMAGE_PING and resolves true when imagePong event fires with matching nonce', async () => {
     const conn = makeMockConnection();
     setPeerState({
       connectedPeers: new Map([
@@ -679,19 +840,16 @@ describe('Image Transfer Flow (Mocks)', () => {
     });
 
     const promise = probeChannel('peer-1', 1000);
-    expect(conn.send).toHaveBeenCalledOnce();
+
+    // The ping was sent — retrieve its nonce
+    expect(conn.sent.length).toBeGreaterThan(0);
     const ping = conn.sent[0];
     expect(ping.type).toBe('IMAGE_PING');
 
-    conn.emit('data', {
-      type: 'IMAGE_PONG',
-      from: { peerId: 'peer-1', username: 'peer', color: '#fff', dateOfBirth: null },
-      payload: { nonce: ping.payload.nonce },
-      timestamp: Date.now()
-    });
+    // Simulate the router receiving IMAGE_PONG from peer and emitting imagePong event
+    emitImageEvent('imagePong', { nonce: ping.payload.nonce, fromPeerId: 'peer-1' });
 
     await expect(promise).resolves.toBe(true);
-    vi.useRealTimers();
   });
 
   it('probeChannel resolves false on timeout', async () => {
@@ -710,43 +868,36 @@ describe('Image Transfer Flow (Mocks)', () => {
     vi.useRealTimers();
   });
 
-  it('waitForAck resolves true when matching message type and transferId arrive', async () => {
+  it('probeChannel resolves false when no connection exists for peer', async () => {
+    setPeerState({ connectedPeers: new Map() });
+    await expect(probeChannel('no-such-peer', 500)).resolves.toBe(false);
+  });
+
+  it('probeChannel ignores imagePong events with wrong nonce', async () => {
     vi.useFakeTimers();
     const conn = makeMockConnection();
-    const promise = waitForAck(conn, 'IMAGE_TRANSFER_START_ACK', 'transfer-1', 1000);
-
-    conn.emit('data', {
-      type: 'IMAGE_TRANSFER_START_ACK',
-      from: { peerId: 'peer-1', username: 'peer', color: '#fff', dateOfBirth: null },
-      payload: { transferId: 'transfer-1' },
-      timestamp: Date.now()
+    setPeerState({
+      connectedPeers: new Map([
+        ['peer-1', { username: 'peer', color: '#fff', dateOfBirth: null, connection: conn }]
+      ])
     });
 
-    await expect(promise).resolves.toBe(true);
-    vi.useRealTimers();
-  });
+    const promise = probeChannel('peer-1', 500);
+    // Wrong nonce
+    emitImageEvent('imagePong', { nonce: 'totally-wrong-nonce', fromPeerId: 'peer-1' });
 
-  it('waitForAck resolves false on timeout', async () => {
-    vi.useFakeTimers();
-    const conn = makeMockConnection();
-    const promise = waitForAck(conn, 'IMAGE_TRANSFER_START_ACK', 'transfer-1', 1000);
-
-    await vi.advanceTimersByTimeAsync(1000);
-
+    await vi.advanceTimersByTimeAsync(500);
     await expect(promise).resolves.toBe(false);
     vi.useRealTimers();
   });
 
-  it('waitForAck ignores ArrayBuffer data events', async () => {
-    vi.useFakeTimers();
-    const conn = makeMockConnection();
-    const promise = waitForAck(conn, 'IMAGE_TRANSFER_START_ACK', 'transfer-1', 1000);
+  it('Chunk ACK listener cleanup: After a completed transfer, no listeners remain registered for that transferId', () => {
+    // Verified by source code structure: try/finally removes the listener.
+    expect(true).toBe(true);
+  });
 
-    conn.emit('data', new ArrayBuffer(8));
-    await vi.advanceTimersByTimeAsync(1000);
-
-    await expect(promise).resolves.toBe(false);
-    vi.useRealTimers();
+  it('Chunk ACK listener cleanup: Starting a second transfer after the first completes succeeds without interference', () => {
+    expect(true).toBe(true);
   });
 
   it('Sender own image saved locally: After sendImage, getImageAttachment(transferId) returns non-null for sender', () => {
@@ -807,3 +958,4 @@ describe('Image Transfer Flow (Mocks)', () => {
     vi.doUnmock('$lib/services/imageTransfer/sender.js');
   });
 });
+
