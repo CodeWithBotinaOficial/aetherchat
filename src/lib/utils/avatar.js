@@ -1,6 +1,5 @@
 import { getUserColor } from '$lib/utils/colors.js';
-
-const MAX_AVATAR_BYTES = 500 * 1024;
+import { SUPPORTED_IMAGE_TYPES, MAX_AVATAR_BYTES } from '$lib/services/imageTransfer/types.js';
 
 /**
  * @param {string} username
@@ -99,13 +98,18 @@ export async function generateInitialsAvatar(username, color) {
 export function validateAvatarFile(file) {
   if (!file) return { valid: false, error: 'No file provided.' };
 
-  const allowed = ['image/png', 'image/jpeg'];
-  if (!allowed.includes(file.type)) {
-    return { valid: false, error: 'Avatar must be a PNG or JPEG image.' };
+  if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) {
+    return {
+      valid: false,
+      error: 'Supported formats: PNG, JPG, WEBP, AVIF, SVG, GIF, ICO.'
+    };
   }
 
   if (file.size > MAX_AVATAR_BYTES) {
-    return { valid: false, error: 'Avatar must be 500KB or smaller.' };
+    return {
+      valid: false,
+      error: `Avatar must be ${MAX_AVATAR_BYTES / 1024 / 1024}MB or smaller.`
+    };
   }
 
   return { valid: true };
