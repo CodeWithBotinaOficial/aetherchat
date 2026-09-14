@@ -2,12 +2,13 @@
   import { isOwnPeerId } from '$lib/stores/userStore.js';
   import WallCommentInput from './WallCommentInput.svelte';
   import WallCommentItem from './WallCommentItem.svelte';
+  import { deduplicateById } from '$lib/utils/deduplicateById.js';
 
   export let wall = null;
 
   let expanded = false;
 
-  $: all = Array.isArray(wall?.comments) ? wall.comments : [];
+  $: all = deduplicateById(Array.isArray(wall?.comments) ? wall.comments : []);
   $: visible = expanded ? all.slice(0, 50) : all.slice(0, 10);
   $: canShowMore = !expanded && all.length > 10;
   $: atCap = expanded && all.length >= 50;

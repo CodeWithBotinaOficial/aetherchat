@@ -256,6 +256,9 @@
       avatarBase64: isOwn ? (u?.avatarBase64 ?? null) : theirAvatar,
       text: safeText,
       media: Array.isArray(m?.media) && m.media.length > 0 ? m.media.slice(0, 2) : null,
+      imageTransferIds: Array.isArray(m?.imageTransferIds) && m.imageTransferIds.length > 0
+        ? m.imageTransferIds.slice(0, 4)
+        : null,
       replies: Array.isArray(m?.replies) && m.replies.length > 0 ? m.replies : null,
       timestamp: m.timestamp,
       editedAt: Object.prototype.hasOwnProperty.call(m, 'editedAt') ? (m.editedAt ?? null) : null,

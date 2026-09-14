@@ -34,6 +34,9 @@ export async function loadChatMessages(chatId, sessionId) {
       let editedAt = Object.prototype.hasOwnProperty.call(m, 'editedAt') ? (m.editedAt ?? null) : null;
       /** @type {import('$lib/services/klipy/types.js').MessageMedia[]|null} */
       let media = null;
+      let imageTransferIds = Array.isArray(m?.imageTransferIds) && m.imageTransferIds.length > 0
+        ? m.imageTransferIds.slice(0, 4)
+        : null;
       /** @type {any[]|null} */
       let replies = null;
       if (canDecrypt) {
@@ -43,6 +46,7 @@ export async function loadChatMessages(chatId, sessionId) {
           text = decoded.text;
           editedAt = decoded.editedAt ?? editedAt;
           media = decoded.media ?? null;
+          imageTransferIds = decoded.imageTransferIds ?? m.imageTransferIds ?? null;
         } catch {
           // keep placeholder
         }
@@ -68,6 +72,7 @@ export async function loadChatMessages(chatId, sessionId) {
         delivered: Boolean(m.delivered),
         editedAt,
         deleted: Boolean(m.deleted),
+        imageTransferIds,
         sealed: !canDecrypt && m.direction !== 'sent'
       };
     })
@@ -126,6 +131,7 @@ export async function decryptSealedMessages(chatId, sessionId) {
             ...m,
             text: decoded.text,
             media: decoded.media ?? null,
+            imageTransferIds: decoded.imageTransferIds ?? m.imageTransferIds ?? null,
             editedAt: decoded.editedAt ?? (m.editedAt ?? null),
             replies,
             sealed: false

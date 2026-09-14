@@ -42,8 +42,6 @@ export async function handleTransferStart(meta, senderPeerId, senderConn) {
       return;
     }
 
-    console.warn(`${LOG} START received transferId=${meta.transferId} from=${senderPeerId} chunks=${meta.totalChunks} size=${meta.sizeBytes}`);
-
     // Validate metadata
     if (!SUPPORTED_IMAGE_TYPES.includes(meta.mimeType)) {
       console.warn(`${LOG} Rejecting unsupported MIME type: ${meta.mimeType} (transferId=${meta.transferId})`);
@@ -88,7 +86,6 @@ export async function handleTransferStart(meta, senderPeerId, senderConn) {
 
     // Send ACK — always
     sendTransferStartAck(meta.transferId, senderPeerId, senderConn);
-    console.warn(`${LOG} START_ACK sent transferId=${meta.transferId} to=${senderPeerId}`);
   } catch (err) {
     console.error(`${LOG} handleTransferStart failed`, err);
   }
@@ -153,13 +150,10 @@ export async function handleChunk(transferId, chunkIndex, totalChunks, data, sen
 
     // Always ACK the chunk immediately (idempotent, safe to re-ACK duplicates)
     sendChunkAck(id, chunkIndex, senderPeerId, senderConn);
-    console.warn(`${LOG} CHUNK_ACK sent chunkIndex=${chunkIndex} transferId=${id} to=${senderPeerId} at=${Date.now()}`);
-
     // Store chunk
     const isComplete = receiveChunk(id, chunkIndex, data);
 
     if (isComplete) {
-      console.warn(`${LOG} All chunks received for ${id}, assembling…`);
       try {
         const chunks = getAssembledChunks(id);
         if (!chunks) {
@@ -190,7 +184,6 @@ export async function handleChunk(transferId, chunkIndex, totalChunks, data, sen
 
         await updateImageTransferState(id, 'complete', { completedAt: Date.now() });
 
-        console.warn(`${LOG} Transfer complete and saved: ${id}`);
         emitImageEvent('imageReady', {
           transferId: id,
           messageId: transfer.meta.messageId,

@@ -114,7 +114,6 @@ export async function handleMessage(msg, fromConn, profile) {
 
     case 'IMAGE_TRANSFER_START_ACK':
       // Route to sender via event bus — eliminates conn.on race condition
-      console.warn('[Router] IMAGE_TRANSFER_START_ACK transferId=', msg.payload?.transferId, 'from=', msg.from?.peerId);
       emitImageEvent('transferStartAck', {
         transferId: msg.payload?.transferId,
         fromPeerId: msg.from?.peerId
@@ -139,7 +138,6 @@ export async function handleMessage(msg, fromConn, profile) {
 
     case 'IMAGE_PONG':
       // Route to sender via event bus — eliminates conn.on race condition
-      console.warn('[Router] IMAGE_PONG nonce=', msg.payload?.nonce, 'from=', msg.from?.peerId);
       emitImageEvent('imagePong', {
         nonce: msg.payload?.nonce,
         fromPeerId: msg.from?.peerId
@@ -163,7 +161,6 @@ export async function handleMessage(msg, fromConn, profile) {
 
     case 'IMAGE_CHUNK_ACK':
       // Route to sender via event bus — eliminates conn.on race condition
-      console.warn('[Router] IMAGE_CHUNK_ACK transferId=', msg.payload?.transferId, 'chunkIndex=', msg.payload?.chunkIndex, 'from=', msg.from?.peerId);
       emitImageEvent('chunkAck', {
         transferId: msg.payload?.transferId,
         chunkIndex: msg.payload?.chunkIndex,
@@ -173,7 +170,6 @@ export async function handleMessage(msg, fromConn, profile) {
 
     case 'IMAGE_CHUNK_REQUEST':
       // Route to sender via event bus for retransmission
-      console.warn('[Router] IMAGE_CHUNK_REQUEST transferId=', msg.payload?.transferId, 'missing=', msg.payload?.missingChunks, 'from=', msg.from?.peerId);
       emitImageEvent('chunkRequest', {
         transferId: msg.payload?.transferId,
         missingChunks: msg.payload?.missingChunks ?? [],

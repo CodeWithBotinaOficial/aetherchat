@@ -10,6 +10,7 @@ import { writable } from 'svelte/store';
  * @property {string|null} authorAvatarBase64
  * @property {string} text
  * @property {import('$lib/services/klipy/types.js').MessageMedia[] | null} [media]
+ * @property {string[] | null} [imageTransferIds]
  * @property {number} createdAt
  * @property {number|null} editedAt
  * @property {boolean} deleted
