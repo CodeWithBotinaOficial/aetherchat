@@ -121,7 +121,12 @@
     // New user: start P2P immediately so registry sync can happen.
     initPeer(null).catch((err) => console.error('PeerJS init failed:', err));
     try {
-      await registrySyncReady;
+      // Registry sync is best-effort: if it never resolves, don't leave the app stuck on the
+      // boot screen forever. A short timeout still preserves the gating UX while preventing deadlock.
+      await Promise.race([
+        registrySyncReady,
+        new Promise((resolve) => setTimeout(() => resolve('timeout'), 6000))
+      ]);
     } catch {
       // ignore
     }

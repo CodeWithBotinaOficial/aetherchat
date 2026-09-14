@@ -53,12 +53,7 @@ import {
 } from '$lib/services/imageTransfer/sender.js';
 import {
   handleTransferStart,
-  handleChunk,
-  handleTransferComplete,
-  sendChunkRequest,
-  sendTransferRejected,
-  sendTransferStartAck,
-  sendChunkAck
+  handleChunk
 } from '$lib/services/imageTransfer/receiver.js';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
 
