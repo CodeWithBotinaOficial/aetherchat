@@ -171,6 +171,7 @@ export async function handleIncomingPrivateMessage(msg, profile) {
   let editedAt = null;
   /** @type {import('$lib/services/klipy/types.js').MessageMedia[]|null} */
   let media;
+  let imageTransferIds = null;
   let replies = null;
   const repliesCiphertext = typeof repliesEnc?.ciphertext === 'string' ? repliesEnc.ciphertext : null;
   const repliesIv = typeof repliesEnc?.iv === 'string' ? repliesEnc.iv : null;
@@ -182,6 +183,7 @@ export async function handleIncomingPrivateMessage(msg, profile) {
       text = decoded.text;
       editedAt = decoded.editedAt;
       media = decoded.media ?? null;
+      imageTransferIds = decoded.imageTransferIds ?? null;
       sealed = false;
     } catch (err) {
       text = decryptFailurePlaceholder(err);
@@ -210,6 +212,7 @@ export async function handleIncomingPrivateMessage(msg, profile) {
       delivered: true,
       editedAt,
       media,
+      imageTransferIds,
       deleted: false
     });
   } catch (err) {
@@ -220,6 +223,7 @@ export async function handleIncomingPrivateMessage(msg, profile) {
     id: messageId,
     text,
     media,
+    imageTransferIds,
     replies,
     ciphertext,
     iv,

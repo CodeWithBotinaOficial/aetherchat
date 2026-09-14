@@ -106,12 +106,14 @@ export async function handleWallCommentAddedMessage(msg) {
   if (!isString(p.wallOwnerPeerId) || !isString(p.authorPeerId)) return;
   if (!isString(p.authorUsername) || !isString(p.authorColor)) return;
   if (p.media !== null && typeof p.media !== 'undefined' && !Array.isArray(p.media)) return;
+  if (p.imageTransferIds !== null && typeof p.imageTransferIds !== 'undefined' && !Array.isArray(p.imageTransferIds)) return;
   if (typeof p.text !== 'string') return;
   if (!isFiniteNumber(p.createdAt)) return;
 
   const safeMedia = Array.isArray(p.media) && p.media.length > 0 ? p.media.slice(0, 2) : null;
+  const safeImageTransferIds = Array.isArray(p.imageTransferIds) && p.imageTransferIds.length > 0 ? p.imageTransferIds.slice(0, 4) : null;
   const hasText = p.text.trim().length > 0;
-  if (!hasText && !safeMedia) return;
+  if (!hasText && !safeMedia && !safeImageTransferIds) return;
 
   const record = {
     id: p.id,
@@ -122,6 +124,7 @@ export async function handleWallCommentAddedMessage(msg) {
     authorAvatarBase64: typeof p.authorAvatarBase64 === 'string' ? p.authorAvatarBase64 : null,
     text: p.text,
     media: safeMedia,
+    imageTransferIds: safeImageTransferIds,
     createdAt: p.createdAt,
     editedAt: null,
     deleted: false

@@ -38,9 +38,17 @@ export async function cleanupStaleTransfers() {
     const oldCutoff = Date.now() - OLD_TRANSFER_AGE_MS;
     await db.imageTransfers.where('createdAt').below(oldCutoff).delete();
 
-    // Clean old attachments (older than 30 days)
-    const ATTACHMENT_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-    const deletedCount = await cleanOldImageAttachments(ATTACHMENT_AGE_MS);
+    // Clean old attachments with context-aware thresholds.
+    const thresholds = {
+      global: 24 * 60 * 60 * 1000,
+      private: 30 * 24 * 60 * 60 * 1000,
+      wall: 30 * 24 * 60 * 60 * 1000
+    };
+    let deletedCount = 0;
+    for (const [context, ms] of Object.entries(thresholds)) {
+      const count = await cleanOldImageAttachments(ms, context);
+      deletedCount += count;
+    }
     if (deletedCount > 0) {
       console.warn(`Cleaned ${deletedCount} old image attachments`);
     }

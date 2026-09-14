@@ -133,18 +133,29 @@ export async function deleteImageAttachmentsByMessageId(messageId) {
 
 /**
  * Deletes image attachments older than the given age in milliseconds.
+ * Optionally restrict cleanup to a single context.
  * @param {number} olderThanMs
+ * @param {'global'|'private'|'wall'|null} [context]
  * @returns {Promise<number>} count deleted
  */
-export async function cleanOldImageAttachments(olderThanMs) {
+export async function cleanOldImageAttachments(olderThanMs, context = null) {
   try {
     const ms = Number(olderThanMs);
     if (!Number.isFinite(ms) || ms <= 0) return 0;
     const cutoff = Date.now() - ms;
-    return await db.imageAttachments.where('storedAt').below(cutoff).delete();
+    const rows = await db.imageAttachments.where('storedAt').below(cutoff).toArray();
+    const targetContext = context === null || typeof context === 'undefined' ? null : String(context);
+    const matching = Array.isArray(rows)
+      ? rows.filter((row) => targetContext === null || String(row?.context ?? 'global') === targetContext)
+      : [];
+    if (matching.length === 0) return 0;
+    const ids = matching.map((row) => row.transferId).filter(Boolean);
+    if (ids.length === 0) return 0;
+    await db.imageAttachments.bulkDelete(ids);
+    return ids.length;
   } catch (err) {
     console.error('cleanOldImageAttachments failed', err);
-    throw err;
+    return 0;
   }
 }
 

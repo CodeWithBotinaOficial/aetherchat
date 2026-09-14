@@ -4,6 +4,7 @@
   import MessageBubble from '$lib/components/MessageBubble.svelte';
   import MediaPicker from '$lib/components/mediaPicker/MediaPicker.svelte';
   import EmojiPickerSlot from '$lib/components/emojiPicker/EmojiPickerSlot.svelte';
+  import ImagePicker from '$lib/components/imagePicker/ImagePicker.svelte';
 
   export let chat;
   export let listEl;
@@ -24,6 +25,7 @@
   export let composerMedia = [];
   export let pickerOpen = false;
   export let emojiPickerOpen = false;
+  export let imagePickerOpen = false;
   export let isEditingThisChat;
   export let editLabel;
 
@@ -40,13 +42,13 @@
   export let onSend;
   export let onMediaPick;
   export let onMediaRemove;
-  export let onTogglePicker;
-  export let onToggleEmojiPicker;
   export let onRequestDeleteConversation;
   export let onBack;
 
   /** @type {HTMLTextAreaElement|null} */
   let textareaRef = null;
+  /** @type {File[]} */
+  export let imageFiles = [];
 </script>
 
 <div class="pc h-full flex flex-col bg-[var(--bg-base)]">
@@ -182,6 +184,8 @@
             <MessageBubble
               message={msgToBubble(m, chat)}
               isOwn={m.direction === 'sent'}
+              context="private"
+              targetPeerId={chat.theirPeerId}
               canEdit={m.direction === 'sent' && !m.deleted && !m.queued}
               canDelete={m.direction === 'sent' && !m.deleted && !m.queued}
               on:openWall={onOpenWallFromBubble}
@@ -215,21 +219,53 @@
         on:close={() => (pickerOpen = false)}
       />
     {/if}
+    <ImagePicker
+      bind:open={imagePickerOpen}
+      maxImages={4}
+      on:confirm={(ev) => {
+        const picked = Array.isArray(ev.detail?.files) ? ev.detail.files : [];
+        if (picked.length === 0) return;
+        imageFiles = picked;
+        if (!isEditingThisChat && composerValue.trim().length === 0) {
+          void onSend({ detail: { text: composerValue, media: null, imageFiles: picked, replies: pendingReplies } });
+          composerValue = '';
+          imageFiles = [];
+          imagePickerOpen = false;
+        }
+      }}
+      on:close={() => (imagePickerOpen = false)}
+    />
     <ChatInput
       disabled={inputDisabled}
       bind:value={composerValue}
       bind:textareaRef
       mediaItems={composerMedia}
-      mediaDisabled={composerMedia.length >= 2}
+      imageFiles={imageFiles}
+      mediaDisabled={composerMedia.length >= 2 || imageFiles.length > 0}
       mode={isEditingThisChat ? 'edit' : 'compose'}
       editLabel={editLabel}
       pendingReplies={pendingReplies}
       placeholder={inputPlaceholder}
       on:removePendingReply={(ev) => onRemovePendingReply(ev.detail.messageId)}
       on:jumpToOriginal={(ev) => onJumpToOriginal(ev.detail.messageId)}
-      on:send={(ev) => { emojiPickerOpen = false; onSend?.(ev); }}
-      on:toggleMediaPicker={onTogglePicker}
-      on:toggleEmojiPicker={onToggleEmojiPicker}
+      on:send={(ev) => { emojiPickerOpen = false; imagePickerOpen = false; onSend?.(ev); }}
+      on:toggleMediaPicker={() => {
+        if (composerMedia.length >= 2 || imageFiles.length > 0) return;
+        emojiPickerOpen = false;
+        imagePickerOpen = false;
+        pickerOpen = !pickerOpen;
+      }}
+      on:toggleEmojiPicker={() => {
+        pickerOpen = false;
+        imagePickerOpen = false;
+        emojiPickerOpen = !emojiPickerOpen;
+      }}
+      on:toggleImagePicker={() => {
+        if (composerMedia.length > 0) return;
+        emojiPickerOpen = false;
+        pickerOpen = false;
+        imagePickerOpen = !imagePickerOpen;
+      }}
       on:removeMedia={(ev) => onMediaRemove?.(ev.detail.id)}
       on:cancelEdit={onCancelEdit}
     />

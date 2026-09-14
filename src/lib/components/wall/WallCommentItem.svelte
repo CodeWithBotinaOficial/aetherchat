@@ -7,6 +7,7 @@
   import { createComposer } from '$lib/utils/mediaComposer.js';
   import { formatRelativeTime } from '$lib/utils/time.js';
   import { deleteWallComment, editWallComment } from '$lib/stores/wall/comments.js';
+  import ImageAttachmentView from '$lib/components/imagePicker/ImageAttachmentView.svelte';
 
   export let comment;
   export let canEdit = false;
@@ -161,6 +162,9 @@
         <div class="text">
           {comment.text}
           <MessageMedia media={comment?.media ?? null} username={comment?.authorUsername ?? ''} />
+          {#if Array.isArray(comment?.imageTransferIds) && comment.imageTransferIds.length > 0}
+            <ImageAttachmentView transferIds={comment.imageTransferIds} context="wall" targetPeerId={null} />
+          {/if}
         </div>
       {/if}
     </div>

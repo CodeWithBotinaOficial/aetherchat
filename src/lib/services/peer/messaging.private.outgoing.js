@@ -123,7 +123,7 @@ export async function initiatePrivateChat(theirPeerId, theirUsername, theirColor
   }
 }
 
-export async function sendPrivateMessage(chatId, theirPeerId, plaintext, media = null, replies = null) {
+export async function sendPrivateMessage(chatId, theirPeerId, plaintext, media = null, replies = null, imageTransferIds = null) {
   const state = get(peerStore);
   const myPeerId = state.peerId;
   const profile = userProfileRef ?? cachedProfile;
@@ -134,19 +134,27 @@ export async function sendPrivateMessage(chatId, theirPeerId, plaintext, media =
   const text = String(plaintext ?? '');
   const trimmed = text.trim();
   const safeMedia = Array.isArray(media) && media.length > 0 ? media.slice(0, 2) : null;
-  if (!trimmed && !safeMedia) return;
+  const safeImageTransferIds = Array.isArray(imageTransferIds) && imageTransferIds.length > 0 ? imageTransferIds.slice(0, 4) : null;
+  if (!trimmed && !safeMedia && !safeImageTransferIds) return;
 
   const safeReplies = Array.isArray(replies) && replies.length > 0 ? replies : null;
   const messageId = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `pm-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const timestamp = Date.now();
 
-  addOutgoingMessage(cid, { id: messageId, text: trimmed, media: safeMedia, timestamp, replies: safeReplies });
+  addOutgoingMessage(cid, {
+    id: messageId,
+    text: trimmed,
+    media: safeMedia,
+    imageTransferIds: safeImageTransferIds,
+    timestamp,
+    replies: safeReplies
+  });
 
   const sessionActive = isSessionActive(cid);
   const peerOnline = state.connectedPeers.get(theirPeerId)?.connection?.open === true;
 
   if (sessionActive && peerOnline && isPrivateSessionConfirmed(cid)) {
-    const body = encodePrivateBody(trimmed, safeMedia, null);
+    const body = encodePrivateBody(trimmed, safeMedia, null, safeImageTransferIds);
     const { ciphertext, iv } = await encryptForSession(cid, body);
     let repliesEnc = null;
     if (safeReplies) {
@@ -168,7 +176,8 @@ export async function sendPrivateMessage(chatId, theirPeerId, plaintext, media =
       iv,
       replies: repliesEnc,
       timestamp,
-      delivered: false
+      delivered: false,
+      imageTransferIds: safeImageTransferIds
     });
     await saveSentMessagePlaintext({ id: messageId, chatId: cid, plaintext: body, timestamp });
 
@@ -185,7 +194,7 @@ export async function sendPrivateMessage(chatId, theirPeerId, plaintext, media =
       id: messageId,
       chatId: cid,
       theirPeerId,
-      plaintext: encodePrivateBody(trimmed, safeMedia, null),
+      plaintext: encodePrivateBody(trimmed, safeMedia, null, safeImageTransferIds),
       repliesJson: safeReplies ? JSON.stringify(safeReplies) : null,
       timestamp
     });

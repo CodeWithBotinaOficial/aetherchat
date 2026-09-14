@@ -30,6 +30,9 @@
   import { followingPeerIds } from '$lib/stores/wall/followState.js';
   import { createComposer } from '$lib/utils/mediaComposer.js';
   import { addRecentItem } from '$lib/stores/klipyRecents.js';
+  import { sendImage } from '$lib/services/imageTransfer/index.js';
+  import { saveImageAttachment } from '$lib/services/db/imageAttachments.db.js';
+  import { fileToArrayBuffer, getImageDimensions } from '$lib/utils/imageValidator.js';
 
   /** @type {HTMLDivElement|null} */
   let listEl = null;
@@ -148,39 +151,73 @@
 	    const chat = $activeChat;
 	    if (!chat) return;
 
-      const rawPending = Array.isArray(e?.detail?.replies) ? e.detail.replies : [];
-      const byId = new Map((chat.messages ?? []).map((m) => [m?.id, m]));
-      const replies = rawPending.map((r) => {
-        const original = byId.get(r.messageId) ?? null;
+	    const rawPending = Array.isArray(e?.detail?.replies) ? e.detail.replies : [];
+	    const byId = new Map((chat.messages ?? []).map((m) => [m?.id, m]));
+	    const replies = rawPending.map((r) => {
+	      const original = byId.get(r.messageId) ?? null;
       return {
-          messageId: r.messageId,
-          authorUsername: r.authorUsername,
-          authorColor: r.authorColor,
-          textSnapshot: r.textSnapshot,
-          timestamp: typeof original?.timestamp === 'number' ? original.timestamp : (typeof r?.timestamp === 'number' ? r.timestamp : 0),
-          deleted: Boolean(r?.deleted)
-        };
-      });
-      const safeReplies = replies.length > 0 ? replies : null;
-      const media = Array.isArray(e?.detail?.media) && e.detail.media.length > 0 ? e.detail.media.slice(0, 2) : null;
+	        messageId: r.messageId,
+	        authorUsername: r.authorUsername,
+	        authorColor: r.authorColor,
+	        textSnapshot: r.textSnapshot,
+	        timestamp: typeof original?.timestamp === 'number' ? original.timestamp : (typeof r?.timestamp === 'number' ? r.timestamp : 0),
+	        deleted: Boolean(r?.deleted)
+	      };
+	    });
+	    const safeReplies = replies.length > 0 ? replies : null;
+	    const media = Array.isArray(e?.detail?.media) && e.detail.media.length > 0 ? e.detail.media.slice(0, 2) : null;
+	    const selectedImageFiles = Array.isArray(e?.detail?.imageFiles) ? e.detail.imageFiles.slice(0, 4) : [];
 
-      if (isEditingThisChat) {
-        await editPrivateMessage(chat.id, chat.theirPeerId, $editingMessageId, e.detail.text, media, safeReplies);
-        editingMessageId.set(null);
-        editingChatId.set(null);
-        composerValue = '';
-        composerMedia = [];
-        pickerOpen = false;
-        clearPendingReplies(chat.id);
-        return;
-      }
+	    if (isEditingThisChat) {
+	      await editPrivateMessage(chat.id, chat.theirPeerId, $editingMessageId, e.detail.text, media, safeReplies);
+	      editingMessageId.set(null);
+	      editingChatId.set(null);
+	      composerValue = '';
+	      composerMedia = [];
+	      pickerOpen = false;
+	      clearPendingReplies(chat.id);
+	      return;
+	    }
 
-	    await sendPrivateMessage(chat.id, chat.theirPeerId, e.detail.text, media, safeReplies);
-      composerValue = '';
-      composerMedia = [];
-      // Keep picker open when sending text+media; close only for solo media.
-      if (String(e?.detail?.text ?? '').trim().length === 0) pickerOpen = false;
-      clearPendingReplies(chat.id);
+	    let imageTransferIds = null;
+	    if (selectedImageFiles.length > 0) {
+	      const baseId = globalThis.crypto?.randomUUID?.() ?? `private-image-${Date.now()}`;
+	      const results = await Promise.all(
+	        selectedImageFiles.map(async (file) => {
+	          try {
+	            const result = await sendImage(file, [chat.theirPeerId], baseId, 'private');
+	            const transferId = result?.transferId ?? null;
+	            if (!transferId) return null;
+	            const buffer = await fileToArrayBuffer(file);
+	            const { width, height } = await getImageDimensions(file);
+	            await saveImageAttachment({
+	              transferId,
+	              messageId: baseId,
+	              context: 'private',
+	              blob: new Blob([buffer], { type: file.type }),
+	              mimeType: file.type,
+	              filename: file.name,
+	              sizeBytes: file.size,
+	              width,
+	              height,
+	              storedAt: Date.now()
+	            });
+	            return transferId;
+	          } catch (err) {
+	            console.error('Failed to send private image', err);
+	            return null;
+	          }
+	        })
+	      );
+	      imageTransferIds = results.filter(Boolean);
+	      if (imageTransferIds.length === 0) imageTransferIds = null;
+	    }
+
+	    await sendPrivateMessage(chat.id, chat.theirPeerId, e.detail.text, media, safeReplies, imageTransferIds);
+	    composerValue = '';
+	    composerMedia = [];
+	    if (String(e?.detail?.text ?? '').trim().length === 0 && !imageTransferIds) pickerOpen = false;
+	    clearPendingReplies(chat.id);
 	  }
 
   async function loadOlder() {
@@ -432,11 +469,6 @@
         }
       }}
       onMediaRemove={(id) => { composer.removeItem(id); composerMedia = composer.toPayload().media ?? []; }}
-      onTogglePicker={() => { if (composerMedia.length >= 2) return; emojiPickerOpen = false; pickerOpen = !pickerOpen; }}
-      onToggleEmojiPicker={() => {
-        pickerOpen = false;
-        emojiPickerOpen = !emojiPickerOpen;
-      }}
       onRequestDeleteConversation={requestDeleteConversation}
       onBack={closeChat}
     />

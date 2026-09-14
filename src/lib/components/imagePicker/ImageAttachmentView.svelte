@@ -4,10 +4,13 @@
   import { get } from 'svelte/store';
   import { peer as peerStore } from '$lib/stores/peerStore.js';
   import { broadcastToAll, buildMessage, cachedProfile, userProfileRef, getConnectedPeerIds } from '$lib/services/peer/shared.js';
+  import { sendProtocolEnvelopeToPeer } from '$lib/services/peer/net.js';
   import { onImageEvent } from '$lib/services/imageTransfer/events.js';
 
   /** @type {string[]} */
   export let transferIds = [];
+  export let context = 'global';
+  export let targetPeerId = null;
 
   const dispatch = createEventDispatcher();
   
@@ -76,10 +79,14 @@
     statusMessage = 'Requesting from peers...';
     const profile = userProfileRef || cachedProfile || { username: 'system', color: '#000', dateOfBirth: null };
 
-    // Broadcast request for each missing image
     for (const id of transferIds) {
-      const msg = buildMessage('IMAGE_REQUEST', state.peerId, profile, { transferId: id });
-      broadcastToAll(msg);
+      const payload = { transferId: id, context: context === 'private' ? 'private' : 'global' };
+      const msg = buildMessage('IMAGE_REQUEST', state.peerId, profile, payload);
+      if (context === 'private' && targetPeerId) {
+        sendProtocolEnvelopeToPeer(targetPeerId, msg);
+      } else {
+        broadcastToAll(msg);
+      }
     }
 
     timeoutId = setTimeout(() => {
