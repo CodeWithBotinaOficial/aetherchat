@@ -5,6 +5,7 @@
   import MediaPicker from '$lib/components/mediaPicker/MediaPicker.svelte';
   import EmojiPickerSlot from '$lib/components/emojiPicker/EmojiPickerSlot.svelte';
   import ImagePicker from '$lib/components/imagePicker/ImagePicker.svelte';
+  import { deduplicateById } from '$lib/utils/deduplicateById.js';
 
   export let chat;
   export let listEl;
@@ -49,6 +50,7 @@
   let textareaRef = null;
   /** @type {File[]} */
   export let imageFiles = [];
+  $: displayedMessages = deduplicateById(Array.isArray(chat?.messages) ? chat.messages : []);
 </script>
 
 <div class="pc h-full flex flex-col bg-[var(--bg-base)]">
@@ -166,7 +168,7 @@
         </div>
       {/if}
 
-      {#if chat.messages.length === 0 && chat.keyExchangeState === 'active'}
+      {#if displayedMessages.length === 0 && chat.keyExchangeState === 'active'}
         <div class="h-full grid place-items-center px-[var(--space-lg)]">
           <div class="text-center">
             <div class="mx-auto mb-[var(--space-md)] h-[44px] w-[44px] rounded-[var(--radius-full)] grid place-items-center border border-[var(--border)] bg-[var(--bg-elevated)]">
@@ -179,7 +181,7 @@
           </div>
         </div>
       {:else}
-        {#each chat.messages as m (m.id)}
+        {#each displayedMessages as m (m.id)}
           <div class={`pc-msg ${m.direction === 'sent' ? 'pc-msg-own' : 'pc-msg-their'}`}>
             <MessageBubble
               message={msgToBubble(m, chat)}

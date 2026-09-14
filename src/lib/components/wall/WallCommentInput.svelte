@@ -51,34 +51,39 @@
         return;
       }
 
-      const transferring = [];
-      for (const file of imageIds) {
+      const results = await Promise.all(imageIds.map(async (file) => {
         try {
-          const result = await sendImage(file, getConnectedPeerIds(), globalThis.crypto?.randomUUID?.() ?? `wall-${Date.now()}`, 'wall');
+          const result = await sendImage(
+            file,
+            getConnectedPeerIds(),
+            globalThis.crypto?.randomUUID?.() ?? `wall-${Date.now()}`,
+            'wall'
+          );
           const transferId = result?.transferId ?? null;
-          if (transferId) {
-            const buffer = await fileToArrayBuffer(file);
-            const { width, height } = await getImageDimensions(file);
-            await saveImageAttachment({
-              transferId,
-              messageId: transferId,
-              context: 'wall',
-              blob: new Blob([buffer], { type: file.type }),
-              mimeType: file.type,
-              filename: file.name,
-              sizeBytes: file.size,
-              width,
-              height,
-              storedAt: Date.now()
-            });
-            transferring.push(transferId);
-          }
+          if (!transferId) return null;
+          const buffer = await fileToArrayBuffer(file);
+          const { width, height } = await getImageDimensions(file);
+          await saveImageAttachment({
+            transferId,
+            messageId: transferId,
+            context: 'wall',
+            blob: new Blob([buffer], { type: file.type }),
+            mimeType: file.type,
+            filename: file.name,
+            sizeBytes: file.size,
+            width,
+            height,
+            storedAt: Date.now()
+          });
+          return transferId;
         } catch (err) {
           console.error('Failed to prepare wall image', err);
+          return null;
         }
-      }
+      }));
 
-      await postWallComment(body, media, transferring.length > 0 ? transferring : null);
+      const transferIds = results.filter(Boolean);
+      await postWallComment(body, media, transferIds.length > 0 ? transferIds : null);
     } catch (err) {
       console.error('postWallComment failed', err);
       text = prevText;

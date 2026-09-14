@@ -21,6 +21,7 @@ function isWallCommentRecord(c) {
   if (typeof c.authorColor !== 'string') return false;
   if (typeof c.text !== 'string') return false;
   if (c.media !== null && !Array.isArray(c.media)) return false;
+  if (c.imageTransferIds !== null && typeof c.imageTransferIds !== 'undefined' && !Array.isArray(c.imageTransferIds)) return false;
   if (typeof c.createdAt !== 'number') return false;
   if (typeof c.editedAt !== 'number' && c.editedAt !== null) return false;
   if (typeof c.deleted !== 'boolean') return false;

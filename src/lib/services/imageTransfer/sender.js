@@ -117,12 +117,9 @@ export async function probeChannel(peerId, timeoutMs = 4000) {
   if (!conn || !conn.open) return false;
 
   const nonce = globalThis.crypto?.randomUUID?.() || String(Date.now());
-  console.warn(`${LOG} probeChannel peerId=${peerId} nonce=${nonce} timeout=${timeoutMs}ms`);
-
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       unsubscribe();
-      console.warn(`${LOG} probeChannel TIMEOUT for peerId=${peerId}`);
       resolve(false);
     }, timeoutMs);
 
@@ -131,7 +128,6 @@ export async function probeChannel(peerId, timeoutMs = 4000) {
       if (payload.nonce === nonce && payload.fromPeerId === peerId) {
         clearTimeout(timer);
         unsubscribe();
-        console.warn(`${LOG} probeChannel PONG received peerId=${peerId}`);
         resolve(true);
       }
     });
@@ -277,14 +273,8 @@ export async function sendImage(file, targetPeerIds, messageId, context, overrid
         // 1. Register listener first
         const ackPromise = waitForTransferStartAck(transferId, tc.peerId, CHUNK_TIMEOUT_MS);
         // 2. Then send the start message
-        console.warn(`${LOG} Sending IMAGE_TRANSFER_START transferId=${transferId} to=${tc.peerId}`);
         safeSend(tc.conn, startMsg);
         const acked = await ackPromise;
-        if (acked) {
-          console.warn(`${LOG} START_ACK received transferId=${transferId} from=${tc.peerId}`);
-        } else {
-          console.warn(`${LOG} START_ACK TIMEOUT transferId=${transferId} from=${tc.peerId}`);
-        }
         return { ...tc, acked };
       })
     );
@@ -388,7 +378,6 @@ async function sendSingleChunk(chunks, transferId, chunkIndex, totalChunks, peer
     }
 
     try {
-      console.warn(`${LOG} Sending chunk ${chunkIndex}/${totalChunks - 1} transferId=${transferId} peerId=${peerId} attempt=${retries + 1}`);
       const framedChunk = frameChunk(transferId, chunkIndex, totalChunks, chunks[chunkIndex]);
       await sendChunkToConn(freshConn, framedChunk);
 
@@ -396,11 +385,9 @@ async function sendSingleChunk(chunks, transferId, chunkIndex, totalChunks, peer
       const ackReceived = await waitForChunkAck(transferId, chunkIndex, peerId, CHUNK_TIMEOUT_MS);
 
       if (ackReceived) {
-        console.warn(`${LOG} Chunk ACK received chunkIndex=${chunkIndex} transferId=${transferId} peerId=${peerId}`);
         return; // success
       }
 
-      console.warn(`${LOG} Chunk ACK TIMEOUT chunkIndex=${chunkIndex} transferId=${transferId} peerId=${peerId} attempt=${retries + 1}`);
       retries++;
       if (retries < MAX_CHUNK_RETRIES) {
         const delay = 500 * Math.pow(2, Math.max(0, retries - 1));
@@ -438,8 +425,6 @@ async function sendChunksToPeer(transferId, meta, buffer, peerId, _conn, _profil
     console.error(`${LOG} probeChannel FAILED for peerId=${peerId} transferId=${transferId}`);
     throw new Error(`Connection probe failed for peer ${peerId}`);
   }
-  console.warn(`${LOG} Channel alive, starting chunk loop transferId=${transferId} peerId=${peerId} totalChunks=${meta.totalChunks}`);
-
   // Pre-slice all chunks
   const chunks = [];
   for (let i = 0; i < meta.totalChunks; i++) {
@@ -451,7 +436,6 @@ async function sendChunksToPeer(transferId, meta, buffer, peerId, _conn, _profil
   // Subscribe to chunkRequest events for this transfer so we can retransmit missing chunks
   const unsubscribeChunkRequest = onImageEvent('chunkRequest', async (payload) => {
     if (payload.transferId !== transferId || payload.fromPeerId !== peerId) return;
-    console.warn(`${LOG} chunkRequest received for ${payload.missingChunks.length} chunks transferId=${transferId} from=${peerId}`);
     for (const idx of payload.missingChunks) {
       if (idx >= 0 && idx < chunks.length) {
         try {
@@ -467,7 +451,6 @@ async function sendChunksToPeer(transferId, meta, buffer, peerId, _conn, _profil
     for (let chunkIndex = 0; chunkIndex < meta.totalChunks; chunkIndex++) {
       await sendSingleChunk(chunks, transferId, chunkIndex, meta.totalChunks, peerId);
     }
-    console.warn(`${LOG} All chunks sent transferId=${transferId} peerId=${peerId}`);
   } catch (err) {
     console.error(`${LOG} sendChunksToPeer failed peerId=${peerId} transferId=${transferId}`, err);
     throw err;
