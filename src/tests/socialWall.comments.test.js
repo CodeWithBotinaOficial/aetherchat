@@ -40,6 +40,93 @@ it('Posting a comment saves to DB and broadcasts WALL_COMMENT_ADDED', async () =
   expect(spy.mock.calls[0][0].type).toBe('WALL_COMMENT_ADDED');
 });
 
+it('Wall comments persist imageTransferIds and broadcast them with WALL_COMMENT_ADDED', async () => {
+  await openWall({ peerId: 'bobPid', username: 'bob', dateOfBirth: '1996-01-01', color: 'x', avatarBase64: null, bio: '' });
+
+  const spy = vi.spyOn(peerSvc, 'broadcastProtocolEnvelope');
+  const transferIds = ['t-1', 't-2'];
+
+  await postWallComment('hello', null, transferIds);
+
+  const rows = await db.wallComments.toArray();
+  expect(rows).toHaveLength(1);
+  expect(rows[0].imageTransferIds).toEqual(transferIds);
+  expect(spy.mock.calls[0][0].payload.imageTransferIds).toEqual(transferIds);
+});
+
+it('Receiving WALL_COMMENT_ADDED saves imageTransferIds in the local DB row', async () => {
+  await db.wallComments.put({
+    id: 'incoming-1',
+    wallOwnerPeerId: 'bobPid',
+    authorPeerId: 'remote',
+    authorUsername: 'remote-user',
+    authorColor: 'x',
+    authorAvatarBase64: null,
+    text: 'incoming image',
+    media: null,
+    imageTransferIds: ['remote-image-1'],
+    createdAt: Date.now(),
+    editedAt: null,
+    deleted: false
+  });
+
+  await social.handleWallCommentAddedMessage({
+    type: 'WALL_COMMENT_ADDED',
+    from: { peerId: 'remote', username: 'remote-user', color: 'x', dateOfBirth: '2000-01-01' },
+    payload: {
+      id: 'incoming-2',
+      wallOwnerPeerId: 'bobPid',
+      authorPeerId: 'remote',
+      authorUsername: 'remote-user',
+      authorColor: 'x',
+      authorAvatarBase64: null,
+      text: 'incoming image',
+      media: null,
+      imageTransferIds: ['remote-image-2'],
+      createdAt: Date.now()
+    },
+    timestamp: Date.now()
+  });
+
+  const saved = await db.wallComments.get('incoming-2');
+  expect(saved.imageTransferIds).toEqual(['remote-image-2']);
+});
+
+it('WallCommentItem renders ImageAttachmentView when imageTransferIds is set', async () => {
+  render(WallComments, {
+    wall: {
+      ownerPeerId: 'bobPid',
+      ownerUsername: 'bob',
+      ownerColor: 'x',
+      ownerDateOfBirth: '1996-01-01',
+      ownerAvatarBase64: null,
+      ownerBio: '',
+      comments: [{
+        id: 'c-1',
+        wallOwnerPeerId: 'bobPid',
+        authorPeerId: 'me',
+        authorUsername: 'alice',
+        authorColor: 'x',
+        authorAvatarBase64: null,
+        text: 'see image',
+        imageTransferIds: ['img-1'],
+        media: null,
+        createdAt: Date.now(),
+        editedAt: null,
+        deleted: false
+      }],
+      followerCount: 0,
+      followingCount: 0,
+      isFollowing: false,
+      isLoading: false,
+      isOffline: false,
+      isOwner: false
+    }
+  });
+
+  expect(screen.getByText('see image')).toBeInTheDocument();
+});
+
 it('Own comment edit/delete permissions use stablePeerId (not live peerStore.peerId)', async () => {
   stablePeerId.set('me');
   peer.update((s) => ({ ...s, peerId: null }));

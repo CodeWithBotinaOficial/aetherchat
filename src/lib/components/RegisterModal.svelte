@@ -332,7 +332,7 @@
             on:dragover|preventDefault
             on:drop={onDrop}
           >
-            Drag and drop a PNG/JPG (max 500KB), or use Upload.
+            Drag and drop a PNG, JPG, WEBP, AVIF, SVG, GIF or ICO (max 2MB), or use Upload.
             {#if avatarError}
               <div class="mt-[var(--space-xs)] text-[var(--font-size-xs)] text-[var(--danger)]">
                 {avatarError}

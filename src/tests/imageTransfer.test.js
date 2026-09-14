@@ -16,6 +16,7 @@ import {
   validateImageFile,
   assembleChunks
 } from '$lib/utils/imageValidator.js';
+import { validateAvatarFile } from '$lib/utils/avatar.js';
 import {
   frameChunk,
   unframeChunk
@@ -114,6 +115,41 @@ beforeEach(async () => {
 // ============================================================================
 // Validation Tests
 // ============================================================================
+
+describe('validateAvatarFile', () => {
+  it('accepts PNG under 2MB', () => {
+    const file = new File([new Uint8Array(1024)], 'ok.png', { type: 'image/png' });
+    expect(validateAvatarFile(file)).toMatchObject({ valid: true });
+  });
+
+  it('accepts WEBP under 2MB', () => {
+    const file = new File([new Uint8Array(1024)], 'ok.webp', { type: 'image/webp' });
+    expect(validateAvatarFile(file)).toMatchObject({ valid: true });
+  });
+
+  it('accepts AVIF under 2MB', () => {
+    const file = new File([new Uint8Array(1024)], 'ok.avif', { type: 'image/avif' });
+    expect(validateAvatarFile(file)).toMatchObject({ valid: true });
+  });
+
+  it('rejects BMP files', () => {
+    const file = new File([new Uint8Array(1024)], 'bad.bmp', { type: 'image/bmp' });
+    expect(validateAvatarFile(file).valid).toBe(false);
+  });
+
+  it('rejects files over 2MB', () => {
+    const file = new File([new Uint8Array(2 * 1024 * 1024 + 1)], 'too-big.png', { type: 'image/png' });
+    const result = validateAvatarFile(file);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('2MB');
+  });
+
+  it('rejects a 500KB file that was previously accepted', () => {
+    const file = new File([new Uint8Array(500 * 1024)], 'old-limit.png', { type: 'image/png' });
+    const result = validateAvatarFile(file);
+    expect(result.valid).toBe(true);
+  });
+});
 
 describe('validateImageFile', () => {
   it('rejects unsupported MIME types', () => {
