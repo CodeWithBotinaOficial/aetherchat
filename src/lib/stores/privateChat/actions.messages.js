@@ -171,10 +171,11 @@ export async function decryptSealedMessages(chatId, sessionId) {
   });
 }
 
-export function addOutgoingMessage(chatId, { id, text, media = null, timestamp, replies = null }) {
+export function addOutgoingMessage(chatId, { id, text, media = null, timestamp, replies = null, imageTransferIds = null }) {
   withChat((chats) => {
     const chat = chats.get(chatId);
     if (!chat) return;
+    const safeImageTransferIds = Array.isArray(imageTransferIds) && imageTransferIds.length > 0 ? imageTransferIds.slice(0, 4) : null;
     const messages = [
       ...chat.messages,
       {
@@ -182,6 +183,7 @@ export function addOutgoingMessage(chatId, { id, text, media = null, timestamp, 
         direction: 'sent',
         text,
         media: Array.isArray(media) && media.length > 0 ? media.slice(0, 2) : null,
+        imageTransferIds: safeImageTransferIds,
         replies,
         timestamp,
         delivered: false,
@@ -201,6 +203,7 @@ export function addIncomingMessage(
     id,
     text,
     media = null,
+    imageTransferIds = null,
     timestamp,
     replies = null,
     ciphertext = null,
@@ -224,6 +227,7 @@ export function addIncomingMessage(
         direction: 'received',
         text,
         media,
+        imageTransferIds: Array.isArray(imageTransferIds) && imageTransferIds.length > 0 ? imageTransferIds.slice(0, 4) : null,
         replies,
         ciphertext,
         iv,

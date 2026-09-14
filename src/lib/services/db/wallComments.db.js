@@ -35,6 +35,7 @@ function isWallCommentRecord(c) {
  */
 export async function addLocalWallComment(input) {
   const id = typeof input?.id === 'string' && input.id ? input.id : createWallCommentId();
+  const imageTransferIds = Array.isArray(input?.imageTransferIds) && input.imageTransferIds.length > 0 ? input.imageTransferIds.slice(0, 4) : null;
   const record = {
     id,
     wallOwnerPeerId: String(input.wallOwnerPeerId ?? ''),
@@ -44,6 +45,7 @@ export async function addLocalWallComment(input) {
     authorAvatarBase64: input.authorAvatarBase64 ?? null,
     text: String(input.text ?? ''),
     media: Array.isArray(input?.media) && input.media.length > 0 ? input.media.slice(0, 2) : null,
+    imageTransferIds,
     createdAt: Number(input.createdAt ?? Date.now()),
     editedAt: null,
     deleted: false

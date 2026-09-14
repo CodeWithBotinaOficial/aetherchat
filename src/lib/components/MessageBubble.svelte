@@ -16,6 +16,8 @@
 	  export let tooltipId = '';
 	  export let canEdit = false;
 	  export let canDelete = false;
+  export let context = 'global';
+  export let targetPeerId = null;
 
   const dispatch = createEventDispatcher();
 
@@ -356,8 +358,10 @@
                 </div>
 
                 {#if Array.isArray(message.imageTransferIds) && message.imageTransferIds.length > 0}
-                  <ImageAttachmentView 
+                  <ImageAttachmentView
                     transferIds={message.imageTransferIds}
+                    context={context}
+                    targetPeerId={context === 'private' ? targetPeerId : null}
                     on:openLightbox={handleOpenLightbox}
                   />
                 {/if}

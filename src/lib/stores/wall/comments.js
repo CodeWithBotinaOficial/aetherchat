@@ -29,14 +29,15 @@ function clampText(raw) {
   return t;
 }
 
-export async function postWallComment(text, media = null) {
+export async function postWallComment(text, media = null, imageTransferIds = null) {
   const w = get(currentWall);
   const u = get(user);
   const me = myPeerId();
   const body = clampText(text).trim();
   const safeMedia = Array.isArray(media) && media.length > 0 ? media.slice(0, 2) : null;
+  const safeImageTransferIds = Array.isArray(imageTransferIds) && imageTransferIds.length > 0 ? imageTransferIds.slice(0, 4) : null;
   if (!w || !u || !me) return;
-  if (!body && !safeMedia) return;
+  if (!body && !safeMedia && !safeImageTransferIds) return;
 
   // Auto-follow on first comment.
   if (!w.isOwner) await ensureFollowingWallOwner();
@@ -50,6 +51,7 @@ export async function postWallComment(text, media = null) {
     authorAvatarBase64: u.avatarBase64 ?? null,
     text: body,
     media: safeMedia,
+    imageTransferIds: safeImageTransferIds,
     createdAt
   });
 
@@ -70,6 +72,7 @@ export async function postWallComment(text, media = null) {
       authorAvatarBase64: comment.authorAvatarBase64,
       text: comment.text,
       media: comment.media ?? null,
+      imageTransferIds: comment.imageTransferIds ?? null,
       createdAt: comment.createdAt
     },
     timestamp: Date.now()

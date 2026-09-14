@@ -466,11 +466,46 @@ export class AetherChatDB extends Dexie {
       .upgrade(async (tx) => {
         const globals = tx.table('globalMessages');
         const privates = tx.table('privateMessages');
+        const walls = tx.table('wallComments');
         await globals.toCollection().modify((m) => {
           if (!Object.prototype.hasOwnProperty.call(m, 'imageTransferIds')) m.imageTransferIds = null;
         });
         await privates.toCollection().modify((m) => {
           if (!Object.prototype.hasOwnProperty.call(m, 'imageTransferIds')) m.imageTransferIds = null;
+        });
+        await walls.toCollection().modify((c) => {
+          if (!Object.prototype.hasOwnProperty.call(c, 'imageTransferIds')) c.imageTransferIds = null;
+        });
+      });
+
+    // Phase 21: keep image metadata on wall comments and private messages aligned with current schema.
+    this.version(21)
+      .stores({
+        users: 'id, username, createdAt',
+        globalMessages: 'id, timestamp, peerId, username',
+        privateChats: 'id, myPeerId, myUsername, theirPeerId, theirUsername, createdAt, lastActivity',
+        privateMessages: 'id, chatId, direction, ciphertext, iv, timestamp, delivered',
+        knownPeers: '++id, peerId, lastSeen, username',
+        usernameRegistry: '++id, username, peerId, registeredAt, lastSeenAt',
+        peerIds: 'username, peerId',
+        queuedMessages: 'id, chatId, theirPeerId, timestamp',
+        queuedActions: 'id, chatId, theirPeerId, timestamp, kind',
+        sentMessagesPlaintext: 'id, chatId, timestamp',
+        sessionKeys: 'id, updatedAt',
+        cooldown: 'id',
+        follows: '++id, followerPeerId, targetPeerId, [followerPeerId+targetPeerId]',
+        wallComments: 'id, wallOwnerPeerId, authorPeerId, createdAt, [wallOwnerPeerId+authorPeerId], [wallOwnerPeerId+createdAt]',
+        imageAttachments: 'transferId, messageId, context, storedAt',
+        imageTransfers: 'transferId, messageId, senderPeerId, state, createdAt'
+      })
+      .upgrade(async (tx) => {
+        const privates = tx.table('privateMessages');
+        const walls = tx.table('wallComments');
+        await privates.toCollection().modify((m) => {
+          if (!Object.prototype.hasOwnProperty.call(m, 'imageTransferIds')) m.imageTransferIds = null;
+        });
+        await walls.toCollection().modify((c) => {
+          if (!Object.prototype.hasOwnProperty.call(c, 'imageTransferIds')) c.imageTransferIds = null;
         });
       });
   }

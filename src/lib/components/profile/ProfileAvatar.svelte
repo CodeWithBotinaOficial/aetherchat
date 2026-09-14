@@ -1,90 +1,68 @@
 <script>
   import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
+  import ImagePicker from '$lib/components/imagePicker/ImagePicker.svelte';
   import { showToast } from '$lib/stores/toastStore.js';
   import { removeAvatar, uploadAvatar } from '$lib/services/profile/actions.js';
-  import { validateAvatarFile } from '$lib/utils/avatar.js';
+  import { validateImageFile, fileToBase64 } from '$lib/utils/imageValidator.js';
+  import { MAX_AVATAR_BYTES } from '$lib/services/imageTransfer/types.js';
 
   export let user = null;
 
-  /** @type {File|null} */
-  let file = null;
-  /** @type {string|null} */
   let preview = null;
-  /** @type {'idle'|'upload'|'remove'} */
-  let mode = 'idle';
+  let file = null;
   let error = '';
   let saving = false;
+  let imagePickerOpen = false;
 
-  $: currentAvatar = preview !== null || mode === 'remove' ? preview : (user?.avatarBase64 ?? null);
-  $: canSave = !saving && mode !== 'idle';
+  $: currentAvatar = preview ?? (user?.avatarBase64 ?? null);
+  $: canSave = !saving && !!file;
+
+  function initialsFallback() {
+    const name = String(user?.username ?? '').trim();
+    if (!name) return '?';
+    const parts = name.split(/\s+|[_-]+/).filter(Boolean);
+    const first = parts[0]?.[0] ?? name[0];
+    const second = parts[1]?.[0] ?? name[1] ?? '';
+    return `${first}${second}`.toUpperCase().slice(0, 2) || '?';
+  }
 
   async function setPreviewFromFile(f) {
-    error = '';
-    file = null;
-    preview = null;
-    mode = 'idle';
-
-    const res = validateAvatarFile(f);
-    if (!res.valid) {
-      error = res.error ?? 'Invalid avatar file.';
+    if (!f) return;
+    const validation = validateImageFile(f, MAX_AVATAR_BYTES);
+    if (!validation.valid) {
+      error = validation.error ?? 'Invalid avatar file.';
       return;
     }
 
     file = f;
-    mode = 'upload';
-    try {
-      preview = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'));
-        reader.onload = () => resolve(String(reader.result));
-        reader.readAsDataURL(f);
-      });
-    } catch (err) {
-      console.error('Avatar preview read failed', err);
-      error = 'Could not read the file.';
-      file = null;
-      preview = null;
-      mode = 'idle';
-    }
-  }
-
-  function onPickFile(e) {
-    const f = e.currentTarget?.files?.[0] ?? null;
-    if (!f) return;
-    void setPreviewFromFile(f);
+    preview = await fileToBase64(f);
+    error = '';
   }
 
   function onRemove() {
-    error = '';
     file = null;
     preview = null;
-    mode = 'remove';
+    error = '';
+    imagePickerOpen = false;
+    void removeAvatar().then((res) => {
+      if (!res.ok) error = res.error ?? 'Could not remove avatar.';
+      else showToast('Avatar removed.');
+    });
   }
 
   async function onSave() {
-    if (!canSave) return;
+    if (!file) return;
     saving = true;
     error = '';
     try {
-      if (mode === 'upload') {
-        const res = await uploadAvatar(file);
-        if (!res.ok) {
-          error = res.error;
-          return;
-        }
-        showToast('Avatar updated.');
-      } else if (mode === 'remove') {
-        const res = await removeAvatar();
-        if (!res.ok) {
-          error = res.error;
-          return;
-        }
-        showToast('Avatar removed.');
+      const res = await uploadAvatar(file);
+      if (!res.ok) {
+        error = res.error ?? 'Could not save avatar.';
+        return;
       }
-
+      showToast('Avatar updated.');
       file = null;
       preview = null;
-      mode = 'idle';
     } catch (err) {
       console.error('Avatar save failed', err);
       error = 'Could not save avatar.';
@@ -98,24 +76,25 @@
   <div class="row">
     <div class="left">
       <div class="title">Avatar</div>
-      <div class="hint">PNG/JPG, up to 500KB.</div>
+      <div class="hint">PNG, JPG, WEBP, AVIF, SVG, GIF, ICO • up to 2MB</div>
     </div>
     <div class="right">
-      <AvatarDisplay username={user?.username ?? ''} avatarBase64={currentAvatar} size={64} showRing={true} />
+      {#if currentAvatar}
+        <AvatarDisplay username={user?.username ?? ''} avatarBase64={currentAvatar} size={120} showRing={true} />
+      {:else}
+        <div class="fallback" aria-label="Initials avatar">{initialsFallback()}</div>
+      {/if}
     </div>
   </div>
 
   <div class="actions">
-    <label class="btn" title="Upload a new avatar">
-      Upload
-      <input type="file" accept="image/png,image/jpeg" on:change={onPickFile} />
-    </label>
-
-    <button type="button" class="btn btn-ghost" on:click={onRemove} disabled={saving}>
-      Remove
+    <button type="button" class="btn btn-primary" on:click={() => (imagePickerOpen = !imagePickerOpen)}>
+      Choose Photo
     </button>
-
-    <button type="button" class="btn btn-primary" on:click={onSave} disabled={!canSave}>
+    <button type="button" class="btn btn-ghost" on:click={onRemove}>
+      Remove Photo
+    </button>
+    <button type="button" class="btn btn-primary" on:click={onSave} disabled={!canSave || saving}>
       {saving ? 'Saving...' : 'Save'}
     </button>
   </div>
@@ -123,6 +102,8 @@
   {#if error}
     <div class="error">{error}</div>
   {/if}
+
+  <ImagePicker bind:open={imagePickerOpen} maxImages={1} on:confirm={(ev) => { const [filePicked] = ev.detail.files ?? []; if (!filePicked) return; void setPreviewFromFile(filePicked); imagePickerOpen = false; }} on:close={() => (imagePickerOpen = false)} />
 </section>
 
 <style>
@@ -134,84 +115,59 @@
     display: grid;
     gap: var(--space-md);
   }
-
   .row {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-md);
   }
-
+  .left {
+    min-width: 0;
+  }
   .title {
     font-weight: 900;
     letter-spacing: -0.01em;
   }
-
   .hint {
     margin-top: 2px;
     font-size: var(--font-size-xs);
     color: var(--text-muted);
     font-family: var(--font-mono);
   }
-
+  .right {
+    display: grid;
+    place-items: center;
+  }
+  .fallback {
+    width: 120px;
+    height: 120px;
+    border-radius: 9999px;
+    background: linear-gradient(135deg, var(--accent), var(--bg-overlay));
+    display: grid;
+    place-items: center;
+    color: var(--text-primary);
+    font-size: 2rem;
+    font-weight: 900;
+  }
   .actions {
     display: flex;
     gap: 10px;
     flex-wrap: wrap;
     align-items: center;
   }
-
   .btn {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 10px 12px;
+    min-height: 44px;
     border-radius: var(--radius-md);
     border: 1px solid var(--border);
     background: var(--bg-elevated);
     color: var(--text-primary);
-    font-size: var(--font-size-sm);
     font-weight: 700;
-    font-family: var(--font-sans);
+    padding: 0 16px;
     cursor: pointer;
   }
-
-  .btn input[type='file'] {
-    position: absolute;
-    inset: 0;
-    opacity: 0;
-    cursor: pointer;
-  }
-
-  .btn:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
-
-  .btn-ghost {
-    background: transparent;
-    color: var(--text-secondary);
-  }
-
-  .btn-primary {
-    background: var(--accent);
-    border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  }
-
-  .error {
-    color: var(--danger);
-    font-size: var(--font-size-xs);
-  }
-
-  @media (hover: hover) {
-    .btn:hover:not(:disabled) {
-      background: var(--bg-overlay);
-    }
-    .btn-primary:hover:not(:disabled) {
-      background: var(--accent-hover);
-    }
-  }
+  .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); }
+  .btn-ghost { background: transparent; color: var(--text-secondary); }
+  .error { color: var(--danger); font-size: var(--font-size-xs); }
 </style>
 

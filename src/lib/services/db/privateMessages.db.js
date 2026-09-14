@@ -16,6 +16,7 @@ export async function savePrivateMessage(msg) {
     await db.privateMessages.put({
       editedAt: Object.prototype.hasOwnProperty.call(msg, 'editedAt') ? (msg.editedAt ?? null) : null,
       deleted: Object.prototype.hasOwnProperty.call(msg, 'deleted') ? Boolean(msg.deleted) : false,
+      imageTransferIds: Array.isArray(msg?.imageTransferIds) && msg.imageTransferIds.length > 0 ? msg.imageTransferIds.slice(0, 4) : null,
       ...msg,
       // Private message media is part of the encrypted payload; never store it in plaintext here.
       media: null
@@ -52,6 +53,12 @@ export async function getPrivateMessages(chatId, limit = 100) {
   try {
     const list = await db.privateMessages.where('chatId').equals(chatId).toArray();
     list.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+    for (const item of list) {
+      if (!Object.prototype.hasOwnProperty.call(item, 'imageTransferIds')) item.imageTransferIds = null;
+      if (Array.isArray(item.imageTransferIds) && item.imageTransferIds.length > 0) {
+        item.imageTransferIds = item.imageTransferIds.slice(0, 4);
+      }
+    }
     if (list.length <= limit) return list;
     return list.slice(list.length - limit);
   } catch (err) {

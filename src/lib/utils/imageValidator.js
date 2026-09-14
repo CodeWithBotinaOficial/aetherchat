@@ -2,10 +2,11 @@ import { SUPPORTED_IMAGE_TYPES, MAX_IMAGE_BYTES } from '$lib/services/imageTrans
 
 /**
  * Validates a File object before initiating a transfer.
- * @param {File} file
+ * @param {File|null|undefined} file
+ * @param {number} [maxBytes=MAX_IMAGE_BYTES]
  * @returns {{ valid: boolean, error?: string }}
  */
-export function validateImageFile(file) {
+export function validateImageFile(file, maxBytes = MAX_IMAGE_BYTES) {
   if (!file || !(file instanceof File)) {
     return { valid: false, error: 'File is required' };
   }
@@ -22,8 +23,8 @@ export function validateImageFile(file) {
     return { valid: false, error: 'File is empty' };
   }
 
-  if (file.size > MAX_IMAGE_BYTES) {
-    const maxMB = Math.round(MAX_IMAGE_BYTES / 1024 / 1024);
+  if (file.size > maxBytes) {
+    const maxMB = (maxBytes / (1024 * 1024)).toFixed(1).replace(/\.0$/, '');
     return { valid: false, error: `File exceeds ${maxMB}MB limit` };
   }
 
@@ -73,6 +74,25 @@ export async function fileToArrayBuffer(file) {
     throw new Error('File is required');
   }
   return await file.arrayBuffer();
+}
+
+/**
+ * Converts a File to a base64 data URL string.
+ * Used for profile avatars, which must remain base64 in the user record.
+ * @param {File} file
+ * @returns {Promise<string>}
+ */
+export async function fileToBase64(file) {
+  if (!file || !(file instanceof File)) {
+    throw new Error('File is required');
+  }
+
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
 }
 
 /**
