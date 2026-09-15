@@ -20,6 +20,7 @@
  * @property {string} color
  * @property {string} text
  * @property {import('$lib/services/klipy/types.js').MessageMedia[] | null} [media]
+ * @property {string[] | null} [imageTransferIds]
  * @property {{ messageId: string, authorUsername: string, authorColor: string, textSnapshot: string, timestamp: number, deleted?: boolean }[] | null} [replies]
  * @property {number} timestamp
  * @property {number|null} [editedAt]

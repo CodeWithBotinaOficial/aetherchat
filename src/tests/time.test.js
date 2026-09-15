@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { calculateAge, isBirthday } from '$lib/utils/time.js';
+import { calculateAge, isAgeValid, isBirthday } from '$lib/utils/time.js';
 
 it('calculateAge("2000-01-01") returns correct age for the current date', () => {
   vi.useFakeTimers();
@@ -43,5 +43,20 @@ it('isBirthday returns false when today does not match month and day', () => {
   } finally {
     vi.useRealTimers();
   }
+});
+
+it('isAgeValid accepts ages from 17 through 80 inclusive', () => {
+  const today = new Date('2026-05-07T12:00:00.000Z');
+  expect(isAgeValid('2009-05-07', today)).toBe(true);
+  expect(isAgeValid('1946-05-07', today)).toBe(true);
+});
+
+it('isAgeValid rejects ages outside the allowed range and missing dates', () => {
+  const today = new Date('2026-05-07T12:00:00.000Z');
+  expect(isAgeValid('2009-05-08', today)).toBe(false);
+  expect(isAgeValid('1945-05-06', today)).toBe(false);
+  expect(isAgeValid('')).toBe(false);
+  expect(isAgeValid(null)).toBe(false);
+  expect(isAgeValid(undefined)).toBe(false);
 });
 

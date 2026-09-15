@@ -2,7 +2,7 @@
 		  import { createEventDispatcher, onDestroy, onMount } from 'svelte';
       import { user as userStore } from '$lib/stores/userStore.js';
 	  import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
-	  import { calculateAge, formatMessageTime } from '$lib/utils/time.js';
+    import { calculateAge, formatMessageTime, isAgeValid } from '$lib/utils/time.js';
     import { previewText } from '$lib/utils/replies.js';
     import { createSwipeToReply, SWIPE_THRESHOLD_PX } from '$lib/components/messageBubble/swipe.js';
     import MessageMedia from '$lib/components/mediaPicker/MessageMedia.svelte';
@@ -189,6 +189,8 @@
     $: displayAge = calculateAge(
       isOwn ? ($userStore?.dateOfBirth ?? message.dateOfBirth ?? '') : (message.dateOfBirth ?? '')
     );
+    $: displayDateOfBirth = isOwn ? ($userStore?.dateOfBirth ?? message.dateOfBirth ?? '') : (message.dateOfBirth ?? '');
+    $: ageIsValid = isAgeValid(displayDateOfBirth);
     $: displayAvatar = isOwn ? ($userStore?.avatarBase64 ?? (message.avatarBase64 ?? null)) : (message.avatarBase64 ?? null);
 		</script>
 
@@ -295,7 +297,7 @@
                 >
                   {displayUsername}
                 </button>
-                <div class="age-badge" aria-label="User age">{displayAge}</div>
+                <div class="age-badge" aria-label={ageIsValid ? 'User age' : 'Invalid age'}>{ageIsValid ? displayAge : 'Invalid age'}</div>
               </div>
             </div>
           </div>

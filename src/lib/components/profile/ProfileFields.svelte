@@ -9,7 +9,7 @@
     formatCooldownHoursMinutes,
     getUsernameCooldown
   } from '$lib/services/profile/actions.js';
-  import { calculateAge } from '$lib/utils/time.js';
+  import { calculateAge, isAgeValid, MAX_AGE, MIN_AGE } from '$lib/utils/time.js';
   import EmojiPicker from '$lib/components/emojiPicker/EmojiPicker.svelte';
   import { addRecentEmoji } from '$lib/stores/emojiRecents.js';
   import { insertEmojiAtCursor } from '$lib/utils/emojiInserter.js';
@@ -111,8 +111,8 @@
       dobError = 'Date of birth cannot be in the future.';
       return;
     }
-    if (calculateAge(dob) < 16) {
-      dobError = 'You must be at least 16 years old to use AetherChat.';
+    if (!isAgeValid(dob)) {
+      dobError = `Age must be between ${MIN_AGE} and ${MAX_AGE} years.`;
       return;
     }
 
@@ -238,6 +238,10 @@
     <div class="warning">
       You can only change your date of birth once. After saving, this field will be permanently locked.
     </div>
+
+    {#if !dobLocked && dobCurrent && !isAgeValid(dobCurrent)}
+      <div class="invalid-age-warning">⚠️ Your current date of birth results in an invalid age.<br />Please update it to a valid date (age {MIN_AGE}–{MAX_AGE}).</div>
+    {/if}
 
     <input
       class="input"

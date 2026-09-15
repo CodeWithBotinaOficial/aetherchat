@@ -54,6 +54,16 @@ it('Wall comments persist imageTransferIds and broadcast them with WALL_COMMENT_
   expect(spy.mock.calls[0][0].payload.imageTransferIds).toEqual(transferIds);
 });
 
+it('Wall comments allow image-only content and reject empty content without images', async () => {
+  await openWall({ peerId: 'bobPid', username: 'bob', dateOfBirth: '1996-01-01', color: 'x', avatarBase64: null, bio: '' });
+
+  await postWallComment('', null, ['image-only-1']);
+  expect(await db.wallComments.count()).toBe(1);
+
+  await postWallComment('', null, null);
+  expect(await db.wallComments.count()).toBe(1);
+});
+
 it('Receiving WALL_COMMENT_ADDED saves imageTransferIds in the local DB row', async () => {
   await db.wallComments.put({
     id: 'incoming-1',
@@ -90,6 +100,33 @@ it('Receiving WALL_COMMENT_ADDED saves imageTransferIds in the local DB row', as
 
   const saved = await db.wallComments.get('incoming-2');
   expect(saved.imageTransferIds).toEqual(['remote-image-2']);
+});
+
+it('Receiving a wall snapshot preserves imageTransferIds', async () => {
+  await openWall({ peerId: 'bobPid', username: 'bob', dateOfBirth: '1996-01-01', color: 'x', avatarBase64: null, bio: '' });
+  await social.handleWallDataResponseMessage({
+    from: { peerId: 'bobPid' },
+    payload: {
+      comments: [{
+        id: 'snapshot-image',
+        wallOwnerPeerId: 'bobPid',
+        authorPeerId: 'remote',
+        authorUsername: 'remote-user',
+        authorColor: 'x',
+        authorAvatarBase64: null,
+        text: '',
+        media: null,
+        imageTransferIds: ['snapshot-image-1'],
+        createdAt: Date.now(),
+        editedAt: null,
+        deleted: false
+      }],
+      followerCount: 0,
+      followingCount: 0
+    }
+  });
+
+  expect((await db.wallComments.get('snapshot-image')).imageTransferIds).toEqual(['snapshot-image-1']);
 });
 
 it('WallCommentItem renders ImageAttachmentView when imageTransferIds is set', async () => {

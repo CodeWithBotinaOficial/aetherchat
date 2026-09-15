@@ -98,15 +98,15 @@
       <hr class="rule" />
 
       <h2 class="h2">3. ELIGIBILITY</h2>
-      <p><strong>3.1</strong> You must be at least 16 years of age to use this Service.</p>
+      <p><strong>3.1</strong> Users must be between 17 and 80 years of age to use this Service.</p>
       <p>
-        <strong>3.2</strong> By registering, you confirm that you meet the minimum age requirement. The Platform uses your date of birth to implement a
+        <strong>3.2</strong> By registering, you confirm that you meet the age requirement. The Platform enforces a minimum age of 17 and a maximum age of 80.
+        Users with dates of birth resulting in ages outside this range will have their age displayed as invalid and may be restricted from certain features. The Platform uses your date of birth to implement a
         technical age gate; however, we cannot independently verify user ages. Your date of birth is stored locally in your browser. Other users may
         see your calculated age (and birthday banner status) via peer-to-peer profile sharing.
       </p>
       <p>
-        <strong>3.3</strong> If you are between 16 and 18 years of age, you represent that your parent or legal guardian has reviewed and agreed to these
-        Terms on your behalf.
+        <strong>3.3</strong> You represent that the date of birth provided during registration is accurate.
       </p>
 
       <hr class="rule" />
@@ -297,7 +297,10 @@
         <li>Private messages: 30 days from last activity</li>
         <li>User profiles: 1 year from creation</li>
         <li>Username registry: 1 year</li>
+        <li>Images shared in public chat: 24 hours</li>
+        <li>Images shared in private chats and wall comments: 30 days</li>
       </ul>
+      <p>All image data is stored in your browser's IndexedDB and never uploaded to any server. Profile avatars accept PNG, JPG, WEBP, AVIF, SVG, GIF, and ICO up to 2 MB. Images shared in chats and wall comments accept the same formats, up to 5 MB per image.</p>
       <p>
         <strong>7.7 YOUR RIGHTS:</strong> You may delete all locally stored data at any time by clearing your browser's site data for this domain. This
         action is irreversible.

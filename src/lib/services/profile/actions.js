@@ -25,7 +25,7 @@ import {
   setLocalUserProfile
 } from '$lib/services/peer.js';
 import { generateInitialsAvatar, validateAvatarFile } from '$lib/utils/avatar.js';
-import { calculateAge } from '$lib/utils/time.js';
+import { calculateAge, MAX_AGE, MIN_AGE } from '$lib/utils/time.js';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const FORTY_EIGHT_HOURS_MS = 48 * 60 * 60 * 1000;
@@ -144,7 +144,8 @@ export async function changeDateOfBirth(nextDateOfBirth) {
   if (dob > todayIso) return { ok: false, error: 'Date of birth cannot be in the future.' };
 
   const age = calculateAge(dob);
-  if (age < 16) return { ok: false, error: 'You must be at least 16 years old to use AetherChat.' };
+  if (age < MIN_AGE) return { ok: false, error: `You must be at least ${MIN_AGE} years old.` };
+  if (age > MAX_AGE) return { ok: false, error: `Age must be ${MAX_AGE} or younger.` };
 
   const updated = { ...u, dateOfBirth: dob, ageChangedOnce: true };
   await saveUser(updated);

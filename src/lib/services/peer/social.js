@@ -232,9 +232,11 @@ export async function handleWallDataResponseMessage(msg) {
         authorColor: String(c.authorColor ?? ''),
         authorAvatarBase64: typeof c.authorAvatarBase64 === 'string' ? c.authorAvatarBase64 : null,
         text: String(c.text ?? ''),
+        media: Array.isArray(c.media) && c.media.length > 0 ? c.media.slice(0, 2) : null,
         createdAt: Number(c.createdAt ?? 0),
         editedAt: typeof c.editedAt === 'number' ? c.editedAt : null,
-        deleted: Boolean(c.deleted)
+        deleted: Boolean(c.deleted),
+        imageTransferIds: Array.isArray(c.imageTransferIds) && c.imageTransferIds.length > 0 ? c.imageTransferIds.slice(0, 4) : null
       };
       if (!isWallCommentShaped(rec)) return null;
       return rec;
@@ -266,6 +268,7 @@ function isWallCommentShaped(c) {
     isFiniteNumber(c.createdAt) &&
     (c.editedAt === null || isFiniteNumber(c.editedAt)) &&
     typeof c.deleted === 'boolean' &&
+    (c.imageTransferIds === null || Array.isArray(c.imageTransferIds)) &&
     (typeof c.authorAvatarBase64 === 'string' || c.authorAvatarBase64 === null)
   );
 }

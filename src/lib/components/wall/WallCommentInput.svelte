@@ -40,6 +40,7 @@
     const prevText = text;
     const prevMedia = mediaItems;
     const prevImageFiles = imageFiles;
+    const messageId = globalThis.crypto?.randomUUID?.() ?? `wall-${Date.now()}`;
     text = '';
     mediaItems = [];
     imageFiles = [];
@@ -51,12 +52,12 @@
         return;
       }
 
-      const results = await Promise.all(imageIds.map(async (file) => {
+      const results = await Promise.allSettled(imageIds.map(async (file) => {
         try {
           const result = await sendImage(
             file,
             getConnectedPeerIds(),
-            globalThis.crypto?.randomUUID?.() ?? `wall-${Date.now()}`,
+            messageId,
             'wall'
           );
           const transferId = result?.transferId ?? null;
@@ -78,11 +79,14 @@
           return transferId;
         } catch (err) {
           console.error('Failed to prepare wall image', err);
-          return null;
+          throw err;
         }
       }));
 
-      const transferIds = results.filter(Boolean);
+      const transferIds = results
+        .filter((result) => result.status === 'fulfilled')
+        .map((result) => result.value)
+        .filter(Boolean);
       await postWallComment(body, media, transferIds.length > 0 ? transferIds : null);
     } catch (err) {
       console.error('postWallComment failed', err);

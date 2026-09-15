@@ -5,7 +5,7 @@
   import { truncateWithEllipsis } from '$lib/utils/replies.js';
   import { initiatePrivateChat } from '$lib/services/peer.js';
   import { peer } from '$lib/stores/peerStore.js';
-  import { calculateAge } from '$lib/utils/time.js';
+  import { calculateAge, isAgeValid } from '$lib/utils/time.js';
   import { followPeer } from '$lib/stores/wall/actions.js';
   import { followingPeerIds } from '$lib/stores/wall/followState.js';
 
@@ -84,6 +84,7 @@
   $: bioRaw = typeof user?.bio === 'string' ? user.bio.trim() : '';
   $: bioText = bioRaw ? truncateWithEllipsis(bioRaw, 120) : '';
   $: displayAge = user?.dateOfBirth ? calculateAge(user.dateOfBirth) : 0;
+  $: ageIsValid = isAgeValid(user?.dateOfBirth);
 
   function handleTooltipMouseEnter() {
     cancelHide?.();
@@ -129,7 +130,7 @@
           <div
             class="rounded-[var(--radius-full)] border border-[var(--border)] bg-[var(--bg-elevated)] px-[var(--space-sm)] py-[2px] text-[var(--font-size-xs)] text-[var(--text-secondary)]"
           >
-            {displayAge}
+            {ageIsValid ? displayAge : 'Invalid age'}
           </div>
         </div>
         {#if bioText}

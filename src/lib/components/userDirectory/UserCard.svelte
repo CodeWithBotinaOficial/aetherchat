@@ -3,7 +3,7 @@
   import { avatarCache } from '$lib/services/peer.js';
   import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
   import { openWall } from '$lib/stores/wall/actions.js';
-  import { calculateAge } from '$lib/utils/time.js';
+  import { calculateAge, isAgeValid } from '$lib/utils/time.js';
 
   export let user;
 
@@ -19,6 +19,7 @@
   $: displayBio = String(user?.bio ?? '').trim() || String(live?.bio ?? '').trim() || '';
   $: displayDob = typeof live?.dateOfBirth === 'string' ? live.dateOfBirth : (user?.dateOfBirth ?? null);
   $: displayAge = displayDob ? calculateAge(displayDob) : null;
+  $: ageIsValid = isAgeValid(displayDob);
 </script>
 
 <button
@@ -57,7 +58,7 @@
   {/if}
 
   <div class="age">
-    Age: {displayDob ? (displayAge ?? '—') : '—'}
+    Age: {displayDob ? (ageIsValid ? displayAge : 'Invalid age') : '—'}
   </div>
 
   {#if displayBio.length > 0}
