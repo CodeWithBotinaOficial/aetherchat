@@ -54,6 +54,21 @@ export function calculateAge(dateOfBirth, today = new Date()) {
   return Math.max(0, age);
 }
 
+export const MIN_AGE = 17;
+export const MAX_AGE = 80;
+
+/**
+ * Returns whether a date of birth produces an age allowed by the platform.
+ * @param {string} dateOfBirth
+ * @param {Date} [today=new Date()]
+ * @returns {boolean}
+ */
+export function isAgeValid(dateOfBirth, today = new Date()) {
+  if (!dateOfBirth) return false;
+  const age = calculateAge(dateOfBirth, today);
+  return age >= MIN_AGE && age <= MAX_AGE;
+}
+
 /**
  * Returns true if today is the user's birthday (same month + day).
  * @param {string} dateOfBirth

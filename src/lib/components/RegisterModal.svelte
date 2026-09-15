@@ -7,7 +7,7 @@
   import { getUserColor } from '$lib/utils/colors.js';
   import { registerUser } from '$lib/stores/userStore.js';
   import { broadcastUsernameRegistered, checkUsernameAvailability } from '$lib/services/peer.js';
-  import { calculateAge } from '$lib/utils/time.js';
+  import { calculateAge, isAgeValid, MAX_AGE, MIN_AGE } from '$lib/utils/time.js';
 
   const dispatch = createEventDispatcher();
 
@@ -93,7 +93,7 @@
 
   const todayIso = new Date().toISOString().slice(0, 10);
   $: computedAge = dateOfBirth ? calculateAge(dateOfBirth) : 0;
-  $: isTooYoung = Boolean(dateOfBirth) && computedAge < 16;
+  $: isInvalidAge = Boolean(dateOfBirth) && !isAgeValid(dateOfBirth);
   $: isTaken = availabilityState === 'taken_local' || availabilityState === 'taken_network';
   $: isDobEmpty = !dateOfBirth || String(dateOfBirth).trim().length === 0;
   $: isDobFuture = Boolean(dateOfBirth) && String(dateOfBirth) > todayIso;
@@ -102,8 +102,8 @@
       ? 'Date of birth is required.'
       : isDobFuture
         ? 'Date of birth cannot be in the future.'
-        : isTooYoung
-          ? 'You must be at least 16 years old to use AetherChat.'
+        : isInvalidAge
+          ? `Age must be between ${MIN_AGE} and ${MAX_AGE} years.`
           : '';
   $: canSubmit =
     !isSubmitting &&

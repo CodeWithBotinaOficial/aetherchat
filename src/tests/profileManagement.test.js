@@ -135,6 +135,32 @@ it('Date of birth change sets ageChangedOnce and then locks', async () => {
   expect(row?.ageChangedOnce).toBe(true);
 });
 
+it('Date of birth change enforces the 17-80 age range', async () => {
+  const initial = {
+    username: 'alice',
+    dateOfBirth: '2004-01-01',
+    color: 'hsl(1, 65%, 65%)',
+    avatarBase64: null,
+    bio: '',
+    usernameLastChangedAt: null,
+    ageChangedOnce: false,
+    createdAt: 10
+  };
+  await saveUser(initial);
+  userStore.set({ ...initial, id: 1 });
+
+  const today = new Date();
+  const isoDate = (year) => `${year}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  expect((await changeDateOfBirth(isoDate(today.getFullYear() - 81))).ok).toBe(false);
+  expect((await changeDateOfBirth(isoDate(today.getFullYear() - 16))).ok).toBe(false);
+
+  userStore.set({ ...initial, id: 1 });
+  expect((await changeDateOfBirth(isoDate(today.getFullYear() - 17))).ok).toBe(true);
+
+  userStore.set({ ...initial, id: 1 });
+  expect((await changeDateOfBirth(isoDate(today.getFullYear() - 80))).ok).toBe(true);
+});
+
 it('Bio clamps to 120 characters and broadcasts PROFILE_UPDATED', async () => {
   const initial = {
     username: 'alice',

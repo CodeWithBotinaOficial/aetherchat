@@ -60,6 +60,28 @@ AetherChat connects people across the globe using WebRTC (via PeerJS) so message
 | Styles | UnoCSS + Uno preset |
 | Hosting | Cloudflare Pages |
 
+## Image Sharing
+
+AetherChat supports sending images via peer-to-peer transfer in Global Chat, Private Chat, Wall Comments, and Profile Avatars.
+
+| Context | Max file size | Formats supported |
+|---|---:|---|
+| Global Chat | 5 MB | PNG, JPG, JPEG, WEBP, AVIF, SVG, GIF, ICO |
+| Private Chat | 5 MB | PNG, JPG, JPEG, WEBP, AVIF, SVG, GIF, ICO |
+| Wall Comments | 5 MB | PNG, JPG, JPEG, WEBP, AVIF, SVG, GIF, ICO |
+| Profile Avatar | 2 MB | PNG, JPG, JPEG, WEBP, AVIF, SVG, GIF, ICO |
+
+Images are transferred directly between browsers using WebRTC DataChannels. No image data passes through any server. Images are stored locally in IndexedDB for up to 30 days (private/wall) or 24 hours (global chat). Up to 4 images can be attached per message. Images can be viewed in a full-screen lightbox and downloaded locally.
+
+## User Profiles & Age Policy
+
+Users must be between **17 and 80 years old** to register and use AetherChat. Age is calculated dynamically from the user's date of birth.
+
+- Date of birth is stored locally and never transmitted to any server.
+- Only the calculated age (a number) is shared with other peers.
+- Date of birth can be updated once after registration.
+- Users with dates of birth resulting in ages outside 17–80 will see an "Invalid age" label displayed next to their username.
+
 ---
 
 ## 🔧 How It Works (High Level)

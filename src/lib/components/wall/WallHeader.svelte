@@ -6,7 +6,7 @@
   import { initiatePrivateChat } from '$lib/services/peer.js';
   import { closeWall, toggleFollowWallOwner } from '$lib/stores/wall/actions.js';
   import { followingPeerIds } from '$lib/stores/wall/followState.js';
-  import { calculateAge, isBirthday } from '$lib/utils/time.js';
+  import { calculateAge, isAgeValid, isBirthday } from '$lib/utils/time.js';
 
   export let wall = null;
 
@@ -14,6 +14,7 @@
   $: isOwner = Boolean(wall && myPeerId && wall.ownerPeerId === myPeerId);
   $: isFollowingOwner = Boolean(wall?.ownerPeerId && $followingPeerIds?.has?.(wall.ownerPeerId));
   $: displayAge = wall?.ownerDateOfBirth ? calculateAge(wall.ownerDateOfBirth) : 0;
+  $: validAge = wall?.ownerDateOfBirth && isAgeValid(wall.ownerDateOfBirth) ? displayAge : null;
   $: showBirthday = wall?.ownerDateOfBirth ? isBirthday(wall.ownerDateOfBirth) : false;
 </script>
 
@@ -30,8 +31,10 @@
       <div class="meta">
         <div class="name-row">
           <div class="name">{wall.ownerUsername}</div>
-          {#if wall.ownerDateOfBirth}
-            <div class="age-badge" aria-label="Age">{displayAge}</div>
+          {#if validAge !== null}
+            <div class="age-badge" aria-label="Age">{validAge}</div>
+          {:else if wall.ownerDateOfBirth}
+            <div class="invalid-age-badge" aria-label="Invalid age">Invalid age</div>
           {/if}
         </div>
         {#if wall.ownerBio?.trim?.()}
@@ -138,6 +141,13 @@
     font-weight: 800;
     display: inline-flex;
     align-items: center;
+  }
+
+  .invalid-age-badge {
+    color: var(--warning);
+    opacity: 0.8;
+    font-size: var(--font-size-xs);
+    font-weight: 800;
   }
 
   .bio {
