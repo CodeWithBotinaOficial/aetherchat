@@ -1,4 +1,5 @@
 <script>
+  import { tick } from 'svelte';
   import AvatarDisplay from '$lib/components/AvatarDisplay.svelte';
   import MessageMedia from '$lib/components/mediaPicker/MessageMedia.svelte';
   import MediaPicker from '$lib/components/mediaPicker/MediaPicker.svelte';
@@ -19,6 +20,7 @@
   let draftMedia = [];
   let pickerOpen = false;
   let saving = false;
+  let editTextarea;
   const composer = createComposer();
   $: composer.setText(draft);
   $: composer.setMedia(draftMedia);
@@ -34,6 +36,24 @@
     draft = String(comment?.text ?? '');
     draftMedia = Array.isArray(comment?.media) ? comment.media.slice(0, 2) : [];
     pickerOpen = false;
+    focusEditTextarea();
+  }
+
+  async function focusEditTextarea() {
+    await tick();
+    editTextarea?.focus();
+  }
+
+  function handleEditKeydown(event) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancel();
+      return;
+    }
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      save();
+    }
   }
 
   function cancel() {
@@ -52,7 +72,7 @@
     saving = true;
     try {
       await editWallComment(comment.id, text, media);
-      editing = false;
+      cancel();
     } catch (err) {
       console.error('editWallComment failed', err);
     } finally {
@@ -73,19 +93,6 @@
 
 {#if comment}
   <div class="item" aria-label={`Comment by ${comment.authorUsername}`}>
-    <MediaPicker
-      bind:open={pickerOpen}
-      maxItems={2}
-      selectedItems={draftMedia}
-      on:select={(ev) => {
-        const item = ev?.detail?.item;
-        if (!item) return;
-        addRecentItem(item);
-        composer.addItem(item);
-        draftMedia = composer.toPayload().media ?? [];
-      }}
-      on:close={() => (pickerOpen = false)}
-    />
     <AvatarDisplay
       username={comment.authorUsername}
       avatarBase64={comment.authorAvatarBase64 ?? null}
@@ -95,7 +102,7 @@
 
     <div class="main">
       {#if !isDeleted}
-        <div class="head">
+        <div class="head" class:hidden={editing}>
           <div class="who">
             <span class="name" style={`color:${comment.authorColor};`}>{comment.authorUsername}</span>
             <span class="time" title={new Date(comment.createdAt).toLocaleString()}>{tsText}</span>
@@ -124,13 +131,39 @@
           [ This comment was deleted ]
         </div>
       {:else if editing}
-        <div class="edit">
+        <div class="edit-container">
+          <div class="edit-label">Editing comment</div>
+          {#if pickerOpen}
+            <div class="edit-media">
+              <MediaPicker
+                bind:open={pickerOpen}
+                maxItems={2}
+                selectedItems={draftMedia}
+                on:select={(ev) => {
+                  const item = ev?.detail?.item;
+                  if (!item) return;
+                  addRecentItem(item);
+                  composer.addItem(item);
+                  draftMedia = composer.toPayload().media ?? [];
+                }}
+                on:close={() => (pickerOpen = false)}
+              />
+            </div>
+          {/if}
           <MediaPreviewStrip
             items={draftMedia}
             disabled={saving}
             on:remove={(ev) => { composer.removeItem(ev.detail.id); draftMedia = composer.toPayload().media ?? []; }}
           />
-          <textarea class="ta" bind:value={draft} rows="3" maxlength="500" aria-label="Edit comment text"></textarea>
+          <textarea
+            class="edit-textarea"
+            bind:this={editTextarea}
+            bind:value={draft}
+            rows="3"
+            maxlength="500"
+            aria-label="Edit comment text"
+            on:keydown={handleEditKeydown}
+          ></textarea>
           <div class="edit-actions">
             <button
               type="button"
@@ -145,12 +178,12 @@
             >
               Media
             </button>
-            <button type="button" class="btn btn-ghost" on:click={cancel} disabled={saving}>
+            <button type="button" class="btn btn-cancel" on:click={cancel} disabled={saving}>
               Cancel
             </button>
             <button
               type="button"
-              class="btn btn-primary"
+              class="btn btn-save"
               on:click={save}
               disabled={saving || (draft.trim().length === 0 && draftMedia.length === 0)}
             >
@@ -250,32 +283,57 @@
     color: var(--text-primary);
   }
 
-  .edit {
-    display: grid;
-    gap: 10px;
+  .hidden {
+    display: none;
   }
 
-  .ta {
-    width: 100%;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
+  .edit-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
     background: var(--bg-elevated);
-    color: var(--text-primary);
-    padding: 10px 12px;
-    outline: none;
-    resize: vertical;
-    max-height: 200px;
+    border: 1px solid var(--border-focus);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+    width: 100%;
+    box-sizing: border-box;
   }
 
-  .ta:focus {
+  .edit-label {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-weight: 700;
+  }
+
+  .edit-media {
+    order: 1;
+  }
+
+  .edit-textarea {
+    order: 2;
+    width: 100%;
+    min-height: 80px;
+    resize: vertical;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm);
+    font-size: var(--font-size-base);
+    font-family: var(--font-sans);
+    box-sizing: border-box;
+  }
+
+  .edit-textarea:focus {
+    outline: none;
     border-color: var(--border-focus);
   }
 
   .edit-actions {
-    display: inline-flex;
+    order: 3;
+    display: flex;
     justify-content: flex-end;
-    gap: 10px; /* >= 8px separation */
-    flex-wrap: wrap;
+    gap: var(--space-sm);
   }
 
   .btn {
@@ -292,9 +350,27 @@
     color: var(--text-secondary);
   }
 
-  .btn-primary {
+  .btn-cancel {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 6px 16px;
+    cursor: pointer;
+    font-family: var(--font-sans);
+    font-size: var(--font-size-sm);
+  }
+
+  .btn-save {
     background: var(--accent);
-    color: var(--text-primary);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 6px 16px;
+    cursor: pointer;
+    font-family: var(--font-sans);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
   }
 
   @media (hover: hover) {
@@ -305,7 +381,7 @@
       background: var(--bg-overlay);
       color: var(--text-primary);
     }
-    .btn-primary:hover:not(:disabled) {
+    .btn-save:hover:not(:disabled) {
       background: var(--accent-hover);
     }
   }
