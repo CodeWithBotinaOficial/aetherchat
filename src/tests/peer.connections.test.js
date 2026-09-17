@@ -3,6 +3,7 @@ import { get } from 'svelte/store';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
 
 import { LOBBY_PEER_ID, __test as peerTest, disconnectPeer, handleIncomingConnection, handleMessage, initPeer } from '$lib/services/peer.js';
+import { handleHeartbeatMessage, lastHeartbeatFrom, pruneDeadPeers } from '$lib/services/peer/presence.js';
 
 const me = { username: 'alice', color: 'hsl(1, 65%, 65%)', dateOfBirth: '2004-01-01', avatarBase64: 'data:image/png;base64,AAAA' };
 
@@ -43,13 +44,64 @@ beforeEach(async () => {
     lastSyncAt: null,
     connectedPeers: new Map()
   });
+  lastHeartbeatFrom.clear();
 });
 
 afterEach(() => {
   disconnectPeer();
+  lastHeartbeatFrom.clear();
   vi.useRealTimers();
   // @ts-ignore
   delete globalThis._PeerJS;
+});
+
+describe('heartbeat peer pruning', () => {
+  function setConnectedPeer(peerId, connection = { open: true, close: vi.fn() }) {
+    peerStore.update((state) => ({
+      ...state,
+      connectedPeers: new Map([
+        [peerId, { username: 'bob', color: '#fff', dateOfBirth: null, connection }]
+      ])
+    }));
+    return connection;
+  }
+
+  it('pruneDeadPeers removes a peer whose heartbeat is older than 75 seconds', () => {
+    const connection = setConnectedPeer('p2');
+    lastHeartbeatFrom.set('p2', Date.now() - 75_001);
+
+    pruneDeadPeers();
+
+    expect(connection.close).toHaveBeenCalled();
+    expect(get(peerStore).connectedPeers.has('p2')).toBe(false);
+  });
+
+  it('pruneDeadPeers keeps a peer whose heartbeat is recent', () => {
+    setConnectedPeer('p2');
+    lastHeartbeatFrom.set('p2', Date.now() - 74_999);
+
+    pruneDeadPeers();
+
+    expect(get(peerStore).connectedPeers.has('p2')).toBe(true);
+  });
+
+  it('pruneDeadPeers skips peers with no received heartbeat', () => {
+    setConnectedPeer('new-peer');
+
+    pruneDeadPeers();
+
+    expect(get(peerStore).connectedPeers.has('new-peer')).toBe(true);
+  });
+
+  it('HEARTBEAT records the sender timestamp', async () => {
+    await handleHeartbeatMessage({
+      from: { peerId: 'p2', username: 'bob' },
+      timestamp: Date.now(),
+      payload: {}
+    });
+
+    expect(lastHeartbeatFrom.has('p2')).toBe(true);
+  });
 });
 
 it('reconnectToKnownPeers connects to all peers in knownPeers DB (skips self + already connected)', async () => {

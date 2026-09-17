@@ -53,8 +53,10 @@ import {
   waitForChunkAck
 } from '$lib/services/imageTransfer/sender.js';
 import {
+  getCurrentConnForPeer,
   handleTransferStart,
-  handleChunk
+  handleChunk,
+  sendChunkAck
 } from '$lib/services/imageTransfer/receiver.js';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
 
@@ -843,6 +845,25 @@ describe('Router: image ACK events via event bus', () => {
 // ============================================================================
 
 describe('Image Transfer Flow (Event Bus)', () => {
+  it('getCurrentConnForPeer returns null when peer is not in store', () => {
+    expect(getCurrentConnForPeer('missing-peer')).toBeNull();
+  });
+
+  it('getCurrentConnForPeer returns the current stored connection', () => {
+    const conn = makeMockConnection();
+    setPeerState({
+      connectedPeers: new Map([
+        ['peer-current', { username: 'peer', color: '#fff', dateOfBirth: null, connection: conn }]
+      ])
+    });
+
+    expect(getCurrentConnForPeer('peer-current')).toBe(conn);
+  });
+
+  it('sendChunkAck does nothing when the peer is not connected', () => {
+    expect(() => sendChunkAck('xfer-no-peer', 0, 'missing-peer')).not.toThrow();
+  });
+
   it('getStandardConnection returns null when peer is not in store', () => {
     setPeerState({ connectedPeers: new Map() });
     expect(getStandardConnection('missing-peer')).toBeNull();
@@ -1057,10 +1078,15 @@ describe('Image Transfer Flow (Event Bus)', () => {
 describe('Receiver: fallback assembly init when START is missed', () => {
   it('handleChunk auto-inits assembly for unknown transferId', async () => {
     const conn = makeMockConnection();
+    setPeerState({
+      connectedPeers: new Map([
+        ['remote-peer', { username: 'peer', color: '#fff', dateOfBirth: null, connection: conn }]
+      ])
+    });
     const chunkData = new Uint8Array([1, 2, 3, 4]).buffer;
 
     // No handleTransferStart called — START was "missed"
-    await handleChunk('fallback-xfer-1', 0, 2, chunkData, 'remote-peer', conn);
+    await handleChunk('fallback-xfer-1', 0, 2, chunkData, 'remote-peer');
 
     // Assembly should now exist
     const entry = getAssemblyEntry('fallback-xfer-1');
@@ -1078,8 +1104,13 @@ describe('Receiver: fallback assembly init when START is missed', () => {
 
   it('handleChunk sends ACK even when assembly was freshly created by fallback', async () => {
     const conn = makeMockConnection();
+    setPeerState({
+      connectedPeers: new Map([
+        ['remote-peer', { username: 'peer', color: '#fff', dateOfBirth: null, connection: conn }]
+      ])
+    });
 
-    await handleChunk('fallback-xfer-2', 1, 3, new Uint8Array(8).buffer, 'remote-peer', conn);
+    await handleChunk('fallback-xfer-2', 1, 3, new Uint8Array(8).buffer, 'remote-peer');
 
     const ack = conn.sent.find((m) => m?.type === 'IMAGE_CHUNK_ACK');
     expect(ack).toBeDefined();

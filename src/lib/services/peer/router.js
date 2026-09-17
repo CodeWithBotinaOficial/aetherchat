@@ -110,7 +110,7 @@ export async function handleMessage(msg, fromConn, profile) {
       return await social.handleWallDataResponseMessage(msg);
 
     case 'IMAGE_TRANSFER_START':
-      return await imageTransfer.handleTransferStart(msg.payload?.meta, msg.from.peerId, fromConn);
+      return await imageTransfer.handleTransferStart(msg.payload?.meta, msg.from.peerId);
 
     case 'IMAGE_TRANSFER_START_ACK':
       // Route to sender via event bus — eliminates conn.on race condition
@@ -178,7 +178,7 @@ export async function handleMessage(msg, fromConn, profile) {
       return;
 
     case 'IMAGE_TRANSFER_COMPLETE':
-      return await imageTransfer.handleTransferComplete(msg.payload?.transferId, msg.from.peerId, fromConn);
+      return await imageTransfer.handleTransferComplete(msg.payload?.transferId, msg.from.peerId);
     case 'IMAGE_TRANSFER_CANCELLED':
       return await imageTransfer.handleTransferCancelled(msg.payload?.transferId);
 

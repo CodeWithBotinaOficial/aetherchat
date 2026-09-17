@@ -37,11 +37,20 @@ import {
 } from './shared.js';
 
 import { joinLobby } from './lobby.js';
-import { announcePresence, startHeartbeat, stopHeartbeat } from './presence.js';
+import { announcePresence, pruneDeadPeers, startHeartbeat, stopHeartbeat } from './presence.js';
 import { startGossipInterval, stopGossipInterval } from './sync.js';
 import { handleIncomingConnection, reconnectToKnownPeers, sendHandshake } from './net.connections.js';
 
 let isInitializing = false;
+let visibilityHookInstalled = false;
+
+function installVisibilityHealthCheck() {
+  if (visibilityHookInstalled || typeof document === 'undefined') return;
+  visibilityHookInstalled = true;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') pruneDeadPeers();
+  });
+}
 
 function getPeerJsDebugLevel() {
   const raw = import.meta.env?.VITE_PEERJS_DEBUG;
@@ -161,6 +170,7 @@ async function handlePeerDisconnect() {
 export async function initPeer(profile) {
   if (isInitializing) return mainPeer;
   isInitializing = true;
+  installVisibilityHealthCheck();
 
   try {
     setUserProfileRef(profile ?? null);
@@ -208,9 +218,12 @@ export async function initPeer(profile) {
 
     if (typeof window !== 'undefined' && !unloadHookInstalled) {
       setUnloadHookInstalled(true);
+      let cleanupCalled = false;
       const cleanup = () => {
+        if (cleanupCalled) return;
+        cleanupCalled = true;
         try {
-          peer.destroy?.();
+          disconnectPeer();
         } catch {
           // ignore
         }

@@ -32,10 +32,9 @@ const LOG = '[ImageReceiver]';
  *
  * @param {import('./types.js').ImageMeta} meta
  * @param {string} senderPeerId
- * @param {any} senderConn - DataConnection to sender
  * @returns {Promise<void>}
  */
-export async function handleTransferStart(meta, senderPeerId, senderConn) {
+export async function handleTransferStart(meta, senderPeerId) {
   try {
     if (!meta?.transferId) {
       console.error(`${LOG} handleTransferStart: missing transferId`);
@@ -45,13 +44,13 @@ export async function handleTransferStart(meta, senderPeerId, senderConn) {
     // Validate metadata
     if (!SUPPORTED_IMAGE_TYPES.includes(meta.mimeType)) {
       console.warn(`${LOG} Rejecting unsupported MIME type: ${meta.mimeType} (transferId=${meta.transferId})`);
-      sendTransferRejected(meta.transferId, 'Unsupported MIME type', senderPeerId, senderConn);
+      sendTransferRejected(meta.transferId, 'Unsupported MIME type', senderPeerId);
       return;
     }
 
     if (meta.sizeBytes > MAX_IMAGE_BYTES) {
       console.warn(`${LOG} Rejecting oversized image: ${meta.sizeBytes} bytes (transferId=${meta.transferId})`);
-      sendTransferRejected(meta.transferId, 'File too large', senderPeerId, senderConn);
+      sendTransferRejected(meta.transferId, 'File too large', senderPeerId);
       return;
     }
 
@@ -85,7 +84,7 @@ export async function handleTransferStart(meta, senderPeerId, senderConn) {
     }
 
     // Send ACK — always
-    sendTransferStartAck(meta.transferId, senderPeerId, senderConn);
+    sendTransferStartAck(meta.transferId, senderPeerId);
   } catch (err) {
     console.error(`${LOG} handleTransferStart failed`, err);
   }
@@ -103,10 +102,9 @@ export async function handleTransferStart(meta, senderPeerId, senderConn) {
  * @param {number} totalChunks
  * @param {ArrayBuffer} data
  * @param {string} senderPeerId
- * @param {any} senderConn
  * @returns {Promise<void>}
  */
-export async function handleChunk(transferId, chunkIndex, totalChunks, data, senderPeerId, senderConn) {
+export async function handleChunk(transferId, chunkIndex, totalChunks, data, senderPeerId) {
   try {
     const id = String(transferId ?? '').trim();
     if (!id) return;
@@ -149,7 +147,7 @@ export async function handleChunk(transferId, chunkIndex, totalChunks, data, sen
     }
 
     // Always ACK the chunk immediately (idempotent, safe to re-ACK duplicates)
-    sendChunkAck(id, chunkIndex, senderPeerId, senderConn);
+    sendChunkAck(id, chunkIndex, senderPeerId);
     // Store chunk
     const isComplete = receiveChunk(id, chunkIndex, data);
 
@@ -204,10 +202,9 @@ export async function handleChunk(transferId, chunkIndex, totalChunks, data, sen
  *
  * @param {string} transferId
  * @param {string} senderPeerId
- * @param {any} senderConn
  * @returns {Promise<void>}
  */
-export async function handleTransferComplete(transferId, senderPeerId, senderConn) {
+export async function handleTransferComplete(transferId, senderPeerId) {
   try {
     const id = String(transferId ?? '').trim();
     if (!id) return;
@@ -237,7 +234,7 @@ export async function handleTransferComplete(transferId, senderPeerId, senderCon
 
     if (missing.length > 0) {
       console.warn(`${LOG} handleTransferComplete: ${missing.length} chunks missing for ${id}, requesting retransmission`);
-      sendChunkRequest(id, missing, senderPeerId, senderConn);
+      sendChunkRequest(id, missing, senderPeerId);
     }
   } catch (err) {
     console.error(`${LOG} handleTransferComplete failed`, err);
@@ -267,66 +264,84 @@ export async function handleTransferCancelled(transferId) {
 // Helper functions for sending messages back to sender
 // ============================================================================
 
-function sendTransferStartAck(transferId, recipientPeerId, recipientConn) {
+export function getCurrentConnForPeer(peerId) {
+  const entry = get(peerStore).connectedPeers.get(peerId);
+  return entry?.connection ?? null;
+}
+
+function getOpenConnForPeer(peerId) {
+  const conn = getCurrentConnForPeer(peerId);
+  return conn?.open === true ? conn : null;
+}
+
+export function sendTransferStartAck(transferId, recipientPeerId) {
   try {
     const state = get(peerStore);
     const myPeerId = state.peerId;
     if (!myPeerId) return;
+    const conn = getOpenConnForPeer(recipientPeerId);
+    if (!conn) return;
 
     const profile = { username: 'system', color: '#000', dateOfBirth: null };
     const msg = buildMessage('IMAGE_TRANSFER_START_ACK', myPeerId, profile, { transferId });
-    safeSend(recipientConn, msg);
+    safeSend(conn, msg);
   } catch (err) {
     console.error(`${LOG} sendTransferStartAck failed`, err);
   }
 }
 
-function sendTransferRejected(transferId, reason, recipientPeerId, recipientConn) {
+export function sendTransferRejected(transferId, reason, recipientPeerId) {
   try {
     const state = get(peerStore);
     const myPeerId = state.peerId;
     if (!myPeerId) return;
+    const conn = getOpenConnForPeer(recipientPeerId);
+    if (!conn) return;
 
     const profile = { username: 'system', color: '#000', dateOfBirth: null };
     const msg = buildMessage('IMAGE_TRANSFER_REJECTED', myPeerId, profile, {
       transferId,
       reason: String(reason ?? 'Unknown error')
     });
-    safeSend(recipientConn, msg);
+    safeSend(conn, msg);
   } catch (err) {
     console.error(`${LOG} sendTransferRejected failed`, err);
   }
 }
 
-function sendChunkAck(transferId, chunkIndex, recipientPeerId, recipientConn) {
+export function sendChunkAck(transferId, chunkIndex, recipientPeerId) {
   try {
     const state = get(peerStore);
     const myPeerId = state.peerId;
     if (!myPeerId) return;
+    const conn = getOpenConnForPeer(recipientPeerId);
+    if (!conn) return;
 
     const profile = { username: 'system', color: '#000', dateOfBirth: null };
     const msg = buildMessage('IMAGE_CHUNK_ACK', myPeerId, profile, {
       transferId,
       chunkIndex: Number(chunkIndex)
     });
-    safeSend(recipientConn, msg);
+    safeSend(conn, msg);
   } catch (err) {
     console.error(`${LOG} sendChunkAck failed`, err);
   }
 }
 
-function sendChunkRequest(transferId, missingChunks, recipientPeerId, recipientConn) {
+export function sendChunkRequest(transferId, missingChunks, recipientPeerId) {
   try {
     const state = get(peerStore);
     const myPeerId = state.peerId;
     if (!myPeerId) return;
+    const conn = getOpenConnForPeer(recipientPeerId);
+    if (!conn) return;
 
     const profile = { username: 'system', color: '#000', dateOfBirth: null };
     const msg = buildMessage('IMAGE_CHUNK_REQUEST', myPeerId, profile, {
       transferId,
       missingChunks: Array.isArray(missingChunks) ? missingChunks : []
     });
-    safeSend(recipientConn, msg);
+    safeSend(conn, msg);
   } catch (err) {
     console.error(`${LOG} sendChunkRequest failed`, err);
   }

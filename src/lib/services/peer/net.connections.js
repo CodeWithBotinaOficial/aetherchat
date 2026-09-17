@@ -256,7 +256,7 @@ export function handleIncomingConnection(conn, profile) {
       if (data instanceof ArrayBuffer) {
         try {
           const { transferId, chunkIndex, totalChunks, data: chunkData } = unframeChunk(data);
-          await handleChunk(transferId, chunkIndex, totalChunks, chunkData, remotePeerId, conn);
+          await handleChunk(transferId, chunkIndex, totalChunks, chunkData, remotePeerId);
         } catch (err) {
           console.error('handleImageChunk failed', err);
         }

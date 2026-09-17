@@ -15,6 +15,8 @@ import {
   buildMessage,
   cachedProfile,
   clearKeyExchangeTimeout,
+  removeConnectedPeer,
+  safeClose,
   sendToPeer,
   startKeyExchangeTimeout,
   setCachedAvatar,
@@ -24,10 +26,13 @@ import {
 
 /** @type {ReturnType<typeof setInterval>|null} */
 let heartbeatIntervalId = null;
+export const HEARTBEAT_TIMEOUT_MS = 75_000;
+export const lastHeartbeatFrom = new Map();
 
 export function startHeartbeat(profile) {
   if (heartbeatIntervalId) clearInterval(heartbeatIntervalId);
   heartbeatIntervalId = setInterval(() => {
+    pruneDeadPeers();
     const state = get(peerStore);
     if (state.connectedPeers.size === 0) return;
     const id = state.peerId;
@@ -36,6 +41,20 @@ export function startHeartbeat(profile) {
     if (!p || p.username === 'pre-registration') return;
     broadcastToAll(buildMessage('HEARTBEAT', id, p, {}, Date.now()));
   }, 30_000);
+}
+
+export function pruneDeadPeers() {
+  const now = Date.now();
+  const state = get(peerStore);
+  for (const [peerId, entry] of state.connectedPeers) {
+    const lastSeen = lastHeartbeatFrom.get(peerId);
+    if (!lastSeen || now - lastSeen <= HEARTBEAT_TIMEOUT_MS) continue;
+    console.warn(`[Presence] Peer ${peerId} heartbeat timeout - removing`);
+    lastHeartbeatFrom.delete(peerId);
+    safeClose(entry.connection);
+    removeConnectedPeer(peerId);
+    setChatOnlineStatus(peerId, false);
+  }
 }
 
 export function stopHeartbeat() {
@@ -105,7 +124,6 @@ export async function handlePresenceAnnounceMessage(msg, fromConn) {
           if (existing) {
             await upsertPrivateChat({
               ...existing,
-              myPeerId,
               myUsername: p.username,
               theirPeerId: remotePeerId,
               theirAvatarBase64: avatarBase64 ?? existing.theirAvatarBase64 ?? null
@@ -147,6 +165,7 @@ export async function handlePresenceAnnounceMessage(msg, fromConn) {
 
 export async function handleHeartbeatMessage(msg) {
   const remotePeerId = msg.from.peerId;
+  lastHeartbeatFrom.set(remotePeerId, Date.now());
   setChatOnlineStatus(remotePeerId, true);
   await saveKnownPeer({ username: msg.from.username, peerId: remotePeerId, lastSeen: msg.timestamp ?? Date.now() });
 }

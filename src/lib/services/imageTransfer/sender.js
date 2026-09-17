@@ -18,7 +18,7 @@
 import { validateImageFile, getImageDimensions, fileToArrayBuffer } from '$lib/utils/imageValidator.js';
 import { saveImageTransfer, updateImageTransferState, saveImageAttachment } from '$lib/services/db.js';
 import { frameChunk } from './binary.js';
-import { broadcastToAll, safeSend, buildMessage } from '$lib/services/peer/shared.js';
+import { broadcastToAll, safeSend, buildMessage, removeConnectedPeer, safeClose } from '$lib/services/peer/shared.js';
 import { get } from 'svelte/store';
 import { peer as peerStore } from '$lib/stores/peerStore.js';
 import { CHUNK_SIZE, CHUNK_TIMEOUT_MS, MAX_CHUNK_RETRIES } from './types.js';
@@ -244,11 +244,20 @@ export async function sendImage(file, targetPeerIds, messageId, context, overrid
       throw new Error('No valid target peers specified');
     }
 
+    const onlinePeerIds = targets.filter((peerId) => {
+      const entry = get(peerStore).connectedPeers.get(peerId);
+      return entry?.connection?.open === true;
+    });
+
+    if (onlinePeerIds.length === 0) {
+      return { transferId, meta };
+    }
+
     // Send IMAGE_TRANSFER_START to all targets on the standard JSON connection.
     const profile = { username: 'system', color: '#000', dateOfBirth: null };
     const startMsg = buildMessage('IMAGE_TRANSFER_START', myPeerId, profile, { meta });
 
-    const targetConnsPromises = targets.map(async (peerId) => {
+    const targetConnsPromises = onlinePeerIds.map(async (peerId) => {
       const conn = getStandardConnection(peerId);
       if (!conn) return null;
       if (await waitForConnectionOpen(conn)) {
@@ -423,6 +432,9 @@ async function sendChunksToPeer(transferId, meta, buffer, peerId, _conn, _profil
   const alive = await probeChannel(peerId, 4000);
   if (!alive) {
     console.error(`${LOG} probeChannel FAILED for peerId=${peerId} transferId=${transferId}`);
+    const entry = get(peerStore).connectedPeers.get(peerId);
+    safeClose(entry?.connection);
+    removeConnectedPeer(peerId);
     throw new Error(`Connection probe failed for peer ${peerId}`);
   }
   // Pre-slice all chunks
